@@ -35,3 +35,6 @@ Cleanup запускается при обычном завершении и о�
 
 ## Pipeline дискового архива
 [Пример](../examples/provision-from-disk.yaml): preflight → archive.stage → test.infobase.restore-archive → prepare → verify → publish. Stage фиксирует байты по archiveVersionId и возвращает неизменяемый artifactId; restore не открывает исходный изменяемый путь повторно. Распознавание .dt/.bak выполняет обработчик по проверенному типу артефакта. Полный контракт — [disk-archives.md](disk-archives.md). Восстановление не имеет автоматического retry при неизвестном исходе.
+
+## Поэтапная поддержка синтаксиса
+В первом archive-срезе обязательны типизированные параметры/expressions, последовательные steps, registry, timeout и retry; непонятные поля компилятор отклоняет. finally и when: safe-to-unlock обязательны перед включением deploy существующей ИБ, а не до первого заказа архива. Пример deploy-existing относится к последующему этапу. safe-to-unlock — встроенная политика закрытого реестра, а не свободное выражение. В каждом выпуске явно указывается поддерживаемая матрица полей; см. вопрос 30 в [implementation-decisions.md](implementation-decisions.md).

@@ -11,6 +11,9 @@
 
 - Заказ тестовых баз: пустая база, архив с диска (.dt/.bak), готовая сборка/ветка Git или разрешённый SQL-шаблон; владелец, квоты и срок использования.
 
+## Порядок реализации и приёмки
+Первый приоритет — рабочий заказ из архива с диска, а не сборка EDT. Сценарии принимаются последовательно; итоговый MVP включает .dt, .bak, пустую базу и SQL-шаблон. Сведения о фактическом стенде пока не предоставлены. Базовые решения и ответы реализатору — в [implementation-decisions.md](docs/implementation-decisions.md), перечень нужных данных — в [stand-readiness.md](docs/stand-readiness.md).
+
 ## Документы
 - [Архитектура](docs/architecture.md)
 - [Агент и инструменты](docs/agent.md)
@@ -21,6 +24,8 @@
 - [Развёртывание архивов с диска — обязательный MVP](docs/disk-archives.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
+- [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
+- [Паспорт и готовность стенда](docs/stand-readiness.md)
 - [Этапы реализации](docs/roadmap.md)
 - [Пример YAML](examples/deploy-existing.yaml)
 

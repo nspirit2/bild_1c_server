@@ -1,3 +1,5 @@
+# Subsequent stage: requires finally and the built-in safe-to-unlock policy.
+# Not required for the first archive-ordering vertical slice.
 apiVersion: buildsystem/v1
 kind: Pipeline
 metadata:
