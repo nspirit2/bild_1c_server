@@ -2,6 +2,9 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
+      "buildsystem.contracts": {
+        "type": "Project"
+      },
       "buildsystem.domain": {
         "type": "Project"
       }

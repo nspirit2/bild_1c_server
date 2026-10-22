@@ -219,8 +219,12 @@
       "buildsystem.application": {
         "type": "Project",
         "dependencies": {
+          "BuildSystem.Contracts": "[1.0.0, )",
           "BuildSystem.Domain": "[1.0.0, )"
         }
+      },
+      "buildsystem.contracts": {
+        "type": "Project"
       },
       "buildsystem.domain": {
         "type": "Project"

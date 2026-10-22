@@ -13,6 +13,7 @@ public static class InfrastructureRegistration
         services.AddDbContext<BuildSystemDbContext>(options => options.UseSqlServer(connectionString,
             sql => sql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: [51001])));
         services.AddScoped<IEnvironmentOrders, SqlEnvironmentOrders>();
+        services.AddScoped<IAgentControl, SqlAgentControl>();
         return services;
     }
 }

@@ -2,6 +2,9 @@ name: SQL Server metadata integration
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/agent-control-plane
 
 permissions:
   contents: read

@@ -5,6 +5,7 @@ using BuildSystem.Infrastructure;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,7 +39,16 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.Events.OnRedirectToLogin = context => { context.Response.StatusCode = 401; return Task.CompletedTask; };
     options.Events.OnRedirectToAccessDenied = context => { context.Response.StatusCode = 403; return Task.CompletedTask; };
 });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthentication().AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AgentTokenAuthentication>("AgentToken", _ => { });
+builder.Services.AddAuthorization(options => options.AddPolicy("AgentOnly", policy =>
+    policy.AddAuthenticationSchemes("AgentToken").RequireAuthenticatedUser()));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("AgentEnrollment", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+        { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 builder.Services.AddAntiforgery(options =>
 {
     options.HeaderName = "X-CSRF-TOKEN";
@@ -88,12 +98,14 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsJsonAsync(new { code = "InvalidCsrfToken" });
     }
 });
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 // JSON endpoints still require CSRF validation: cookie authentication is ambient authority.
 app.Use(async (context, next) =>
 {
-    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api"))
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api") &&
+        context.GetEndpoint()?.Metadata.GetMetadata<AgentMachineEndpoint>() is null)
         await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context);
     await next(context);
 });
@@ -117,6 +129,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
     return Results.NoContent();
 }).RequireAuthorization();
 app.MapAdministration();
+app.MapAgentEndpoints();
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => Results.Ok(new
 {
     id = user.FindFirstValue(ClaimTypes.NameIdentifier), name = user.Identity!.Name,

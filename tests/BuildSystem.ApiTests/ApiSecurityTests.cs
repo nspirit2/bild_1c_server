@@ -15,7 +15,7 @@ using Xunit;
 namespace BuildSystem.ApiTests;
 
 // These tests replace only the application port. They do not prove SQL persistence or real Identity login.
-public sealed class ApiFactory : WebApplicationFactory<Program>
+public class ApiFactory : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {

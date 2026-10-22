@@ -21,7 +21,7 @@ public sealed class EnvironmentRecord { public bool HasUnsettledProvisioningOper
 public sealed class EnvironmentJob { public Guid Id { get; set; } public Guid RequestId { get; set; } public Guid EnvironmentId { get; set; } public string Kind { get; set; } = "ProvisionArchive"; public string State { get; set; } = "Pending"; public string SnapshotJson { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; } }
 public sealed class AuditEvent { public Guid Id { get; set; } public Guid ActorId { get; set; } public string Action { get; set; } = ""; public Guid TargetId { get; set; } public DateTimeOffset CreatedAt { get; set; } }
 
-public sealed class BuildSystemDbContext(DbContextOptions<BuildSystemDbContext> options)
+public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbContext> options)
     : IdentityDbContext<BuildSystemUser, IdentityRole<Guid>, Guid>(options)
 {
     public DbSet<Project> Projects => Set<Project>();
@@ -67,6 +67,7 @@ public sealed class BuildSystemDbContext(DbContextOptions<BuildSystemDbContext> 
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
+        ConfigureAgentModel(b);
         b.Entity<ProjectMembership>().HasKey(x => new { x.UserId, x.ProjectId });
         b.Entity<ArchiveRootProject>().HasKey(x => new { x.RootId, x.ProjectId });
         b.Entity<ProjectPool>().HasKey(x => new { x.ProjectId, x.PoolId });
