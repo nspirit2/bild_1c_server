@@ -154,7 +154,7 @@ public sealed class ProcessRunnerTests : IDisposable
         foreach (var (stream, prefix) in new[] { (ProcessOutputStream.StandardOutput, "out:"), (ProcessOutputStream.StandardError, "err:") })
         {
             var lines = string.Concat(output.Where(x => x.Stream == stream).Select(x => x.Text))
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.TrimEnd('\r')).ToArray();
+                .Split('\n').Select(x => x.TrimEnd('\r')).Where(x => x.Length > 0).ToArray();
             Assert.Equal(Enumerable.Range(0, 20).Select(x => prefix + x), lines);
         }
     }
