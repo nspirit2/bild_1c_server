@@ -21,6 +21,7 @@
 - [Архитектура](docs/architecture.md)
 - [Агент и инструменты](docs/agent.md)
 - [Pipeline Engine](docs/pipeline.md)
+- [ProcessRunner и минимальный Pipeline Engine: реализация и ограничения](docs/process-pipeline.md)
 - [База данных и API](docs/data-api.md)
 - [Безопасность и ошибки](docs/safety.md)
 - [Заказ тестовых баз](docs/test-environments.md)

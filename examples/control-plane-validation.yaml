@@ -1,0 +1,24 @@
+# Documentation-only example for the standalone compiler; not a server-enqueued job.
+# Requires a trusted registry defining diagnostic.echo@1 (input message:string, output text:string).
+apiVersion: buildsystem/v1
+kind: Pipeline
+metadata:
+  name: diagnostic-reference-validation
+parameters:
+  message:
+    type: string
+    required: true
+steps:
+  - id: first
+    uses: diagnostic.echo@1
+    timeout: 10s
+    retry:
+      maxAttempts: 1
+    with:
+      message: ${{ parameters.message }}
+  - id: second
+    uses: diagnostic.echo@1
+    timeout: 10s
+    with:
+      message: ${{ steps.first.outputs.text }}
+# end

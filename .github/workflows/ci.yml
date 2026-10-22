@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/process-pipeline-foundation]
   pull_request:
   workflow_dispatch:
 
@@ -36,7 +36,7 @@ jobs:
         env:
           BUILDSYSTEM_DESIGN_CONNECTION: 'Server=unused;Database=unused;Integrated Security=true'
         run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
-      - name: Test domain and HTTP contracts (SQL tests explicitly skipped without opt-in)
+      - name: Test domain, HTTP, SQLite, process and pipeline contracts (SQL requires opt-in)
         run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
       - name: Upload test results
         if: always()
