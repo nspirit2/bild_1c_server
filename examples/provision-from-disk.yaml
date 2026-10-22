@@ -1,0 +1,41 @@
+apiVersion: buildsystem/v1
+kind: Pipeline
+metadata:
+  name: provision-test-base-from-disk
+parameters:
+  reservationId: { type: reservation, required: true }
+  archiveVersionId: { type: archiveVersion, required: true }
+steps:
+  - id: preflight
+    uses: test.environment.preflight@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      archiveVersion: ${{ parameters.archiveVersionId }}
+  - id: stage
+    uses: archive.stage@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      archiveVersion: ${{ parameters.archiveVersionId }}
+  - id: restore
+    uses: test.infobase.restore-archive@1
+    timeout: 120m
+    retry: { maxAttempts: 1 }
+    with:
+      reservation: ${{ parameters.reservationId }}
+      artifact: ${{ steps.stage.outputs.artifactId }}
+  - id: prepare
+    uses: test.environment.prepare@1
+    retry: { maxAttempts: 1 }
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
+  - id: verify
+    uses: test.environment.verify@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
+  - id: publish
+    uses: test.environment.publish@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
