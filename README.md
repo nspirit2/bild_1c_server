@@ -15,7 +15,7 @@
 Первый приоритет — рабочий заказ из архива с диска, а не сборка EDT. Сценарии принимаются последовательно; итоговый MVP включает .dt, .bak, пустую базу и SQL-шаблон. Сведения о фактическом стенде пока не предоставлены. Базовые решения и ответы реализатору — в [implementation-decisions.md](docs/implementation-decisions.md), перечень нужных данных — в [stand-readiness.md](docs/stand-readiness.md).
 
 ## Текущая реализация
-Первый инженерный срез: доменная модель и unit-тесты в `BuildSystem.slnx`, .NET SDK 10.0.402, CI для Linux/Windows. API, UI, агент и реальные восстановления ещё не реализованы. Инструкция сборки, границы проверок и дальнейшие шаги — [Разработка](docs/development.md).
+Доменная модель и серверный срез приёма заказа архива в `BuildSystem.slnx`: ASP.NET Core API, Identity, EF Core SQL Server, миграции и Pending-задания. .NET SDK 10.0.402, unit/HTTP tests и opt-in SQL integration tests. UI, агент и реальные восстановления ещё не реализованы; готовность SQL-интеграции подтверждается отдельным прогоном, не unit-тестами. Инструкции — [Разработка](docs/development.md) и [Серверный срез](docs/server-slice.md).
 
 ## Документы
 - [Архитектура](docs/architecture.md)

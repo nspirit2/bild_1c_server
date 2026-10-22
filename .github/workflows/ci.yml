@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  domain:
-    name: Domain (${{ matrix.os }})
+  build:
+    name: Build and contracts (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -28,9 +28,15 @@ jobs:
           global-json-file: global.json
       - name: Restore pinned dependencies
         run: dotnet restore BuildSystem.slnx --locked-mode
+      - name: Restore pinned EF tooling
+        run: dotnet tool restore
       - name: Build
         run: dotnet build BuildSystem.slnx --configuration Release --no-restore
-      - name: Test domain rules (not real 1C/SQL integration)
+      - name: Verify migration model without SQL connection
+        env:
+          BUILDSYSTEM_DESIGN_CONNECTION: 'Server=unused;Database=unused;Integrated Security=true'
+        run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
+      - name: Test domain and HTTP contracts (SQL tests explicitly skipped without opt-in)
         run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
       - name: Upload test results
         if: always()
