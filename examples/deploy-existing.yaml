@@ -1,0 +1,44 @@
+apiVersion: buildsystem/v1
+kind: Pipeline
+metadata:
+  name: edt-deploy-existing
+parameters:
+  projectId: { type: project, required: true }
+  commitSha: { type: string, required: true }
+  infobaseId: { type: infobase, required: true }
+steps:
+  - id: checkout
+    uses: git.checkout@1
+    with:
+      project: ${{ parameters.projectId }}
+      commitSha: ${{ parameters.commitSha }}
+  - id: build
+    uses: vanessa.cf.compile@1
+    with:
+      source: ${{ steps.checkout.outputs.path }}
+      format: edt
+  - id: backup
+    uses: sql.backup@1
+    with:
+      infobase: ${{ parameters.infobaseId }}
+  - id: lock
+    uses: onec.sessions.lock@1
+    with:
+      infobase: ${{ parameters.infobaseId }}
+  - id: deploy
+    uses: vanessa.infobase.update@1
+    timeout: 60m
+    retry: { maxAttempts: 1 }
+    with:
+      infobase: ${{ parameters.infobaseId }}
+      artifact: ${{ steps.build.outputs.artifactId }}
+  - id: verify
+    uses: onec.infobase.verify@1
+    with:
+      infobase: ${{ parameters.infobaseId }}
+finally:
+  - id: unlock
+    uses: onec.sessions.unlock@1
+    when: safe-to-unlock
+    with:
+      infobase: ${{ parameters.infobaseId }}
