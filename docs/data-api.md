@@ -37,3 +37,40 @@ GET /api/artifacts/{id}
 ```
 
 Агентский API: register/capabilities, poll/lease, heartbeat, step events, log streaming, complete. В UI — SignalR. Сервер резолвит ветку в SHA и проверяет доступ до запуска.
+
+## TestEnvironments: данные и API
+Подробное поведение — [test-environments.md](test-environments.md).
+
+Дополнительные таблицы:
+```text
+EnvironmentPools(Id, Name, ClusterId, SqlServerId, Enabled, CapacityBytes, IsolationPolicyId)
+EnvironmentTemplates(Id, ProjectId, Name, Enabled)
+EnvironmentTemplateVersions(Id, TemplateId, Version, BackupArtifactId, PlatformVersion, ConfigVersion, IsolationPolicyId, EstimatedSizeBytes, PublishedAt)
+EnvironmentRequests(Id, OwnerId, ProjectId, Mode, TemplateVersionId, ArtifactId, CommitSha, RequestedTtl, IdempotencyKey, PayloadHash, State, EnvironmentId)
+TestEnvironments(Id, RequestId, OwnerId, ProjectId, InfobaseId, PoolId, ReservationId, State, ExpiresAt, DeleteAfter, RowVersion)
+EnvironmentReservations(Id, OwnerId, PoolId, SqlDbName, InfobaseName, ReservedBytes, State)
+EnvironmentResources(Id, EnvironmentId, ReservationId, Kind, ExternalId, OperationState, OwnershipMarker)
+EnvironmentQuotas(SubjectId, MaxActiveEnvironments, MaxConcurrentProvisioning, MaxStorageBytes, MaxTtl)
+```
+
+Уникальны (OwnerId, IdempotencyKey), TestEnvironments.RequestId, TestEnvironments.InfobaseId при ненулевом значении, (SqlServerId, DbName) и (ClusterId, Name) технических ресурсов. Reservation разрешает SqlServerId/ClusterId через неизменяемое размещение пула. Версии опубликованных шаблонов неизменяемы; их источники удерживаются на время активных заявок. Ресурсы Failed/Deleting/NeedsAttention продолжают занимать квоту до подтверждённой очистки. Квоты и резервирование проверяются транзакционно с защитой от write skew; одного rowversion отдельных заявок недостаточно.
+
+```http
+GET /api/environment-templates?projectId={id}
+POST /api/environment-requests
+GET /api/environment-requests/{id}
+POST /api/environment-requests/{id}/cancel
+GET /api/test-environments?owner=me
+GET /api/test-environments/{id}
+POST /api/test-environments/{id}/extend
+POST /api/test-environments/{id}/delete
+GET /api/test-environments/{id}/connection
+```
+
+POST заказа принимает Idempotency-Key и JSON: projectId, displayName, mode (empty/artifact/branch/template), ровно один соответствующий source (кроме empty), ttlDays. Source содержит artifactId, branch либо templateVersionId. Ветка разрешается сервером в SHA до постановки задания; выбранный источник фиксируется в заявке. Клиент не задаёт ownerId, сервер, техническое имя БД или путь backup.
+
+Успех: HTTP 202 с requestId, environmentId, jobId и Location. Повтор ключа с тем же payload возвращает ту же заявку, с другим — 409. Превышение квот — 409 с кодом QuotaExceeded; ошибки контракта — 400; запрет доступа — 403. Авторизация проверяется на каждом объекте, включая source, логи и connection. 202 означает принятие заказа, а не готовую базу. Валидация источника и резервирование должны завершиться до 202; тяжёлые проверки выполняются заданием.
+
+Продление и удаление требуют ожидаемую версию окружения (If-Match/ETag); конфликт версии — 412. Удаление возвращает 202 и идентификатор задания. Повтор удаления возвращает существующее задание или итог Deleted. Connection доступен владельцу/разрешённым участникам только в Ready и возвращает адрес подключения и способ получения учётной записи без сервисных паролей.
+
+POST /api/infobases остаётся административным API регистрации технического ресурса; разработчик заказывает базу через EnvironmentRequests.

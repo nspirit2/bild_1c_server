@@ -1,0 +1,36 @@
+apiVersion: buildsystem/v1
+kind: Pipeline
+metadata:
+  name: provision-test-base-from-template
+parameters:
+  reservationId: { type: reservation, required: true }
+  templateVersionId: { type: templateVersion, required: true }
+steps:
+  - id: preflight
+    uses: test.environment.preflight@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      templateVersion: ${{ parameters.templateVersionId }}
+  - id: restore
+    uses: test.infobase.restore-template@1
+    timeout: 120m
+    retry: { maxAttempts: 1 }
+    with:
+      reservation: ${{ parameters.reservationId }}
+      templateVersion: ${{ parameters.templateVersionId }}
+  - id: prepare
+    uses: test.environment.prepare@1
+    retry: { maxAttempts: 1 }
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
+  - id: verify
+    uses: test.environment.verify@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
+  - id: publish
+    uses: test.environment.publish@1
+    with:
+      reservation: ${{ parameters.reservationId }}
+      infobase: ${{ steps.restore.outputs.infobaseId }}
