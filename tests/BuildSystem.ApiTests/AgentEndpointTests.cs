@@ -21,6 +21,8 @@ public sealed class AgentApiFactory : ApiFactory
             services.AddScoped<IAgentControl, StubAgentControl>();
             services.RemoveAll<IArchiveCatalog>();
             services.AddScoped<IArchiveCatalog, StubArchiveCatalog>();
+            services.RemoveAll<IArtifactReceipts>();
+            services.AddScoped<IArtifactReceipts, StubArtifactReceipts>();
         });
     }
 }
@@ -46,6 +48,15 @@ public sealed class StubArchiveCatalog : IArchiveCatalog
     {
         if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
         return Task.FromResult(new ArchiveInventoryReceipt(report.RootId, []));
+    }
+}
+
+public sealed class StubArtifactReceipts : IArtifactReceipts
+{
+    public Task<StagedArtifactReceipt> ReportAsync(string credential, ReportStagedArtifact report, CancellationToken ct)
+    {
+        if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
+        return Task.FromResult(new StagedArtifactReceipt(report.ArtifactId, "ContentVerified"));
     }
 }
 
@@ -101,6 +112,25 @@ public sealed class AgentEndpointTests : IClassFixture<AgentApiFactory>
         client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
         Assert.Equal(HttpStatusCode.OK,
             (await client.PostAsJsonAsync("/api/agent/archives/inventory", report)).StatusCode);
+    }
+    [Fact]
+    public async Task ArtifactReceiptIsAgentOnlyAndHttpsOnly()
+    {
+        var report = new ReportStagedArtifact(Guid.NewGuid(), 1, Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), new string('A', 64), 100, "dt");
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.PostAsJsonAsync("/api/agent/artifacts/staged", report)).StatusCode);
+        client.DefaultRequestHeaders.Remove("X-Test-User");
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        var response = await client.PostAsJsonAsync("/api/agent/artifacts/staged", report);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(report.ArtifactId, (await response.Content.ReadFromJsonAsync<StagedArtifactReceipt>())!.ArtifactId);
+        using var plain = Client("http");
+        plain.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        Assert.NotEqual(HttpStatusCode.OK,
+            (await plain.PostAsJsonAsync("/api/agent/artifacts/staged", report)).StatusCode);
     }
     [Fact]
     public async Task EnrollmentAcceptsMachineJsonWithoutCookieCsrf()

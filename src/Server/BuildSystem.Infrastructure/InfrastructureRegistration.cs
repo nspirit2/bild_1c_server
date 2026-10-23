@@ -15,6 +15,7 @@ public static class InfrastructureRegistration
         services.AddScoped<IEnvironmentOrders, SqlEnvironmentOrders>();
         services.AddScoped<IAgentControl, SqlAgentControl>();
         services.AddScoped<IArchiveCatalog, SqlArchiveCatalog>();
+        services.AddScoped<IArtifactReceipts, SqlArtifactReceipts>();
         return services;
     }
 }
