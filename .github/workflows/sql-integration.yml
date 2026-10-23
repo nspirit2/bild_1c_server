@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/agent-control-plane
+      - feat/archive-staging
 
 permissions:
   contents: read
@@ -39,6 +40,18 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore BuildSystem.slnx --locked-mode
       - run: dotnet test tests/BuildSystem.IntegrationTests/BuildSystem.IntegrationTests.csproj --configuration Release --no-restore --logger trx --results-directory TestResults
+      - name: Verify SQL tests executed without skips
+        shell: python
+        run: |
+          import glob, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          results = []
+          for path in glob.glob('TestResults/*.trx'):
+              results.extend(ET.parse(path).getroot().findall('t:Results/t:UnitTestResult', ns))
+          passed = sum(r.get('outcome') == 'Passed' for r in results)
+          print(f'SQL TRX: {passed} passed / {len(results)} total')
+          assert len(results) >= 20, 'SQL suite missing expected test coverage'
+          assert passed == len(results), 'SQL tests failed or were skipped'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

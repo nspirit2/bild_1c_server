@@ -305,7 +305,8 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.Property<string>("RelativePath")
                         .IsRequired()
                         .HasMaxLength(400)
-                        .HasColumnType("nvarchar(400)");
+                        .HasColumnType("nvarchar(400)")
+                        .UseCollation("Latin1_General_100_CI_AS_KS_WS");
 
                     b.Property<Guid>("RootId")
                         .HasColumnType("uniqueidentifier");

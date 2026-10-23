@@ -62,6 +62,12 @@ internal static class AgentEndpoints
             service.HeartbeatAsync(Id(user), input, ct));
         machine.MapPost("/events", (ReportAgentEvent input, ClaimsPrincipal user, IAgentControl service, CancellationToken ct) =>
             service.ReportAsync(Id(user), input, ct));
+        machine.MapPost("/archives/inventory", async (HttpContext context, ArchiveInventoryReport input,
+            IArchiveCatalog service, CancellationToken ct) =>
+        {
+            var credential = context.Request.Headers.Authorization.ToString()[7..];
+            return Results.Ok(await service.ReportAsync(credential, input, ct));
+        });
     }
 
     private static Guid Id(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue("agent_id")!);

@@ -14,6 +14,7 @@ public static class InfrastructureRegistration
             sql => sql.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: [51001])));
         services.AddScoped<IEnvironmentOrders, SqlEnvironmentOrders>();
         services.AddScoped<IAgentControl, SqlAgentControl>();
+        services.AddScoped<IArchiveCatalog, SqlArchiveCatalog>();
         return services;
     }
 }

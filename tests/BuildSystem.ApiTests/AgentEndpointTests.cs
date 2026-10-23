@@ -19,6 +19,8 @@ public sealed class AgentApiFactory : ApiFactory
         {
             services.RemoveAll<IAgentControl>();
             services.AddScoped<IAgentControl, StubAgentControl>();
+            services.RemoveAll<IArchiveCatalog>();
+            services.AddScoped<IArchiveCatalog, StubArchiveCatalog>();
         });
     }
 }
@@ -36,6 +38,15 @@ public sealed class StubAgentControl : IAgentControl
     public Task RevokeAsync(Actor actor, Guid id, CancellationToken ct) => throw new NotSupportedException();
     public Task<AgentCredential> RotateAsync(Actor actor, Guid id, CancellationToken ct) => throw new NotSupportedException();
     public Task<IReadOnlyList<AgentView>> ListAsync(Actor actor, CancellationToken ct) => throw new NotSupportedException();
+}
+
+public sealed class StubArchiveCatalog : IArchiveCatalog
+{
+    public Task<ArchiveInventoryReceipt> ReportAsync(string credential, ArchiveInventoryReport report, CancellationToken ct)
+    {
+        if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
+        return Task.FromResult(new ArchiveInventoryReceipt(report.RootId, []));
+    }
 }
 
 public sealed class AgentEndpointTests : IClassFixture<AgentApiFactory>
@@ -75,6 +86,21 @@ public sealed class AgentEndpointTests : IClassFixture<AgentApiFactory>
         using var client = Client();
         client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync($"/api/admin/agents/{Guid.NewGuid()}/approve", null)).StatusCode);
+    }
+    [Fact]
+    public async Task InventoryRequiresAgentTokenButDoesNotRequireCookieCsrf()
+    {
+        using var client = Client();
+        var report = new ArchiveInventoryReport(Guid.NewGuid(), []);
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.PostAsJsonAsync("/api/agent/archives/inventory", report)).StatusCode);
+        client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.PostAsJsonAsync("/api/agent/archives/inventory", report)).StatusCode);
+        client.DefaultRequestHeaders.Remove("X-Test-User");
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsJsonAsync("/api/agent/archives/inventory", report)).StatusCode);
     }
     [Fact]
     public async Task EnrollmentAcceptsMachineJsonWithoutCookieCsrf()

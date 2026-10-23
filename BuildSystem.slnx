@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/" />
   <Folder Name="/src/Agent/">
+    <Project Path="src/Agent/BuildSystem.Agent.Archives/BuildSystem.Agent.Archives.csproj" />
     <Project Path="src/Agent/BuildSystem.Agent.Execution/BuildSystem.Agent.Execution.csproj" />
     <Project Path="src/Agent/BuildSystem.Agent.Tools/BuildSystem.Agent.Tools.csproj" />
     <Project Path="src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" />
@@ -17,6 +18,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/BuildSystem.AgentTests/BuildSystem.AgentTests.csproj" />
     <Project Path="tests/BuildSystem.ApiTests/BuildSystem.ApiTests.csproj" />
+    <Project Path="tests/BuildSystem.ArchiveTests/BuildSystem.ArchiveTests.csproj" />
     <Project Path="tests/BuildSystem.IntegrationTests/BuildSystem.IntegrationTests.csproj" />
     <Project Path="tests/BuildSystem.PipelineTests/BuildSystem.PipelineTests.csproj" />
     <Project Path="tests/BuildSystem.ProcessFixture/BuildSystem.ProcessFixture.csproj" />

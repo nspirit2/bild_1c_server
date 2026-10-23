@@ -91,7 +91,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         b.Entity<DiskArchiveVersion>().Property(x => x.Format).HasMaxLength(16);
         b.Entity<EnvironmentReservation>().Property(x => x.SqlDbName).HasMaxLength(128);
         b.Entity<EnvironmentReservation>().Property(x => x.InfobaseName).HasMaxLength(128);
-        b.Entity<DiskArchive>().Property(x => x.RelativePath).HasMaxLength(400);
+        b.Entity<DiskArchive>().Property(x => x.RelativePath).HasMaxLength(400).UseCollation("Latin1_General_100_CI_AS_KS_WS");
         b.Entity<ProjectMembership>().HasOne<Project>().WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<ProjectMembership>().HasOne<BuildSystemUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<ArchiveRootProject>().HasOne<Project>().WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);

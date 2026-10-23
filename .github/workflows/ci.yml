@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main, feat/process-pipeline-foundation]
+    branches: [main, feat/process-pipeline-foundation, feat/archive-staging]
   pull_request:
   workflow_dispatch:
 

@@ -27,6 +27,7 @@
 - [Безопасность и ошибки](docs/safety.md)
 - [Заказ тестовых баз](docs/test-environments.md)
 - [Развёртывание архивов с диска — обязательный MVP](docs/disk-archives.md)
+- [Inventory каталога и content staging: реализация и ограничения](docs/archive-staging.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
