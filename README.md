@@ -4,6 +4,7 @@
 
 ## Зафиксированные решения
 - Backend ASP.NET Core, Agent .NET Worker Service, UI React + TypeScript.
+- Целевое развёртывание — **Windows-only для сервера и агентов**. Linux/Unix deployment не входит в текущий scope; Linux CI остаётся дополнительной проверкой библиотек. Подробности и подготовка стенда — [Windows deployment](docs/windows-deployment.md).
 - Исходники фиксируются конкретным Git commit SHA.
 - Сборка CF — Vanessa Runner / EDT CLI; обновление существующей базы — полная загрузка CF.
 - Pipeline — декларативный YAML с готовыми версионированными шагами.
