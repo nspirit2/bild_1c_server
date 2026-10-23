@@ -4,10 +4,10 @@ using Microsoft.Data.Sqlite;
 
 namespace BuildSystem.Agent;
 
-public sealed record JournalLease(Guid JobId, long FencingToken, DateTimeOffset ExpiresAt);
+public sealed record JournalLease(Guid JobId, long FencingToken, DateTimeOffset ExpiresAt, string Kind = "Unknown");
 
-/// <summary>Only lease identity/expiry and allowlisted structured events are durable. Never stores snapshots or credentials.</summary>
-public sealed class AgentJournal : IDisposable
+/// <summary>Durable lease metadata and allowlisted outboxes, never snapshots or credentials. Callers must serialize all access to this single-owner journal.</summary>
+public sealed partial class AgentJournal : IDisposable
 {
     private readonly SqliteConnection _db;
     private readonly FileStream _lock;
@@ -31,6 +31,7 @@ public sealed class AgentJournal : IDisposable
         _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         _db.Open();
         Execute("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS leases(job TEXT NOT NULL,fence INTEGER NOT NULL,expiry TEXT NOT NULL,settled INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job,fence)); CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,job TEXT NOT NULL,fence INTEGER NOT NULL,code TEXT NOT NULL,acked INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(job,fence) REFERENCES leases(job,fence));");
+        InitializeArtifacts();
         }
         catch { _db?.Dispose(); _lock.Dispose(); throw; }
     }
@@ -48,26 +49,30 @@ public sealed class AgentJournal : IDisposable
     {
         if (grant.JobId == Guid.Empty || grant.FencingToken <= 0) throw new ArgumentException("Invalid grant identity.");
         using var transaction = _db.BeginTransaction();
-        using var read = Command("SELECT expiry FROM leases WHERE job=$0 AND fence=$1", grant.JobId.ToString(), grant.FencingToken);
-        var existing = read.ExecuteScalar();
-        if (existing is not null)
+        using var read = Command("SELECT expiry,kind FROM leases WHERE job=$0 AND fence=$1", grant.JobId.ToString(), grant.FencingToken);
+        bool exists;
+        using (var reader = read.ExecuteReader())
         {
-            if ((string)existing != Stamp(grant.ExpiresAt)) throw new InvalidOperationException("Conflicting grant.");
+            exists = reader.Read();
+            if (exists && (reader.GetString(0) != Stamp(grant.ExpiresAt) ||
+                (reader.GetString(1) != "Unknown" && reader.GetString(1) != grant.Kind)))
+                throw new InvalidOperationException("Conflicting grant.");
+            // Legacy Unknown rows cannot be upgraded by replaying a grant.
         }
-        else
+        if (!exists)
         {
             using var active = Command("SELECT COUNT(*) FROM leases WHERE settled=0");
             if ((long)active.ExecuteScalar()! != 0) throw new InvalidOperationException("Unsettled lease blocks a new grant.");
-            Execute("INSERT INTO leases(job,fence,expiry) VALUES($0,$1,$2)", grant.JobId.ToString(), grant.FencingToken, Stamp(grant.ExpiresAt));
+            Execute("INSERT INTO leases(job,fence,expiry,kind) VALUES($0,$1,$2,$3)", grant.JobId.ToString(), grant.FencingToken, Stamp(grant.ExpiresAt), grant.Kind ?? "Unknown");
         }
         transaction.Commit();
     }
 
     public IReadOnlyList<JournalLease> Unsettled()
     {
-        using var command = Command("SELECT job,fence,expiry FROM leases WHERE settled=0 ORDER BY job,fence");
+        using var command = Command("SELECT job,fence,expiry,kind FROM leases WHERE settled=0 ORDER BY job,fence");
         using var reader = command.ExecuteReader(); var result = new List<JournalLease>();
-        while (reader.Read()) result.Add(new(Guid.Parse(reader.GetString(0)), reader.GetInt64(1), DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture)));
+        while (reader.Read()) result.Add(new(Guid.Parse(reader.GetString(0)), reader.GetInt64(1), DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture), reader.GetString(3)));
         return result;
     }
 
@@ -129,7 +134,7 @@ public sealed class AgentJournal : IDisposable
             job = reader.GetString(0); fence = reader.GetInt64(1); code = reader.GetString(2);
         }
         Execute("UPDATE events SET acked=1 WHERE id=$0", eventId.ToString());
-        if (code == "ProbeCompleted") Execute("UPDATE leases SET settled=1 WHERE job=$0 AND fence=$1", job, fence);
+        if (code == "ProbeCompleted") Execute("UPDATE leases SET settled=1 WHERE job=$0 AND fence=$1 AND NOT EXISTS (SELECT 1 FROM artifacts WHERE job=$0 AND fence=$1)", job, fence);
         transaction.Commit();
     }
 
@@ -139,6 +144,7 @@ public sealed class AgentJournal : IDisposable
         using var transaction = _db.BeginTransaction();
         Execute("UPDATE leases SET settled=1 WHERE job=$0 AND fence=$1", jobId.ToString(), fence);
         Execute("UPDATE events SET acked=1 WHERE job=$0 AND fence=$1", jobId.ToString(), fence);
+        Execute("UPDATE artifacts SET state='Blocked',failure='LeaseRejected' WHERE job=$0 AND fence=$1 AND state='Pending'", jobId.ToString(), fence);
         transaction.Commit();
     }
     public void Dispose() { _db.Dispose(); _lock.Dispose(); }

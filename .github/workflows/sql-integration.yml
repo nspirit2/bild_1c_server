@@ -7,6 +7,7 @@ on:
       - feat/agent-control-plane
       - feat/archive-staging
       - feat/artifact-receipts
+      - feat/artifact-outbox
 
 permissions:
   contents: read

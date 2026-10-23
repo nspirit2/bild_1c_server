@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using BuildSystem.Application;
+using BuildSystem.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildSystem.Infrastructure;

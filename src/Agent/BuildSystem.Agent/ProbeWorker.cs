@@ -4,7 +4,8 @@ using Microsoft.Extensions.Logging;
 
 namespace BuildSystem.Agent;
 
-public sealed class ProbeWorker(IAgentTransport transport, AgentJournal journal, ILogger<ProbeWorker> logger) : BackgroundService
+public sealed class ProbeWorker(IAgentTransport transport, AgentJournal journal, ILogger<ProbeWorker> logger,
+    ArtifactDelivery? artifacts = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -28,6 +29,13 @@ public sealed class ProbeWorker(IAgentTransport transport, AgentJournal journal,
     {
         // Capability advertisement gives NO authorization beyond the admin-approved pool.
         await transport.CapabilitiesAsync(ct);
+        // Existing artifact reports take precedence over probe recovery or polling.
+        // Even an acknowledged artifact does NOT settle its provisioning lease.
+        if (journal.PendingArtifacts().Count > 0)
+        {
+            if (artifacts is not null) await artifacts.FlushAsync(ct);
+            return;
+        }
         foreach (var pending in journal.Pending())
         {
             // Do not replay a stale/expired event. A fenced-out lease is an operator reconciliation case.
@@ -41,6 +49,8 @@ public sealed class ProbeWorker(IAgentTransport transport, AgentJournal journal,
         {
             // On restart never repeat even a probe. Report unknown, keep journal until operator reconciliation.
             var lease = existing[0];
+            // Unknown/upgraded or provisioning leases are not part of the probe event protocol.
+            if (lease.Kind != "ControlPlaneProbe") return;
             if (lease.ExpiresAt > DateTimeOffset.UtcNow && !journal.HasEvent(lease.JobId, lease.FencingToken, "LeaseOutcomeUnknown"))
             {
                 var report = new ReportAgentEvent(Guid.NewGuid(), lease.JobId, lease.FencingToken, "LeaseOutcomeUnknown");

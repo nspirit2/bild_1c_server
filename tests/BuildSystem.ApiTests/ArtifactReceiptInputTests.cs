@@ -1,4 +1,5 @@
 using BuildSystem.Application;
+using BuildSystem.Contracts;
 using BuildSystem.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;

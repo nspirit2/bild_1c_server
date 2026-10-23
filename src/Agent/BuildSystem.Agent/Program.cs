@@ -32,8 +32,11 @@ if (args.Length == 1 && args[0] == "import-token")
 }
 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("This worker requires Windows DPAPI.");
 var origin = builder.Configuration["Agent:ApiOrigin"] ?? throw new InvalidOperationException("Configure Agent__ApiOrigin.");
-builder.Services.AddSingleton<IAgentTransport>(new AgentTransport(new Uri(origin), TokenStore.Load(tokenPath)));
+builder.Services.AddSingleton(new AgentTransport(new Uri(origin), TokenStore.Load(tokenPath)));
+builder.Services.AddSingleton<IAgentTransport>(sp => sp.GetRequiredService<AgentTransport>());
+builder.Services.AddSingleton<IArtifactTransport>(sp => sp.GetRequiredService<AgentTransport>());
 builder.Services.AddSingleton(new AgentJournal(directory));
+builder.Services.AddSingleton<ArtifactDelivery>();
 builder.Services.AddHostedService<ProbeWorker>();
 // Avoid default HTTP request logging; credentials and server snapshots are never logged by this host.
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
