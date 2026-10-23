@@ -4,6 +4,7 @@
 
 ## Зафиксированные решения
 - Backend ASP.NET Core, Agent .NET Worker Service, UI React + TypeScript.
+- Целевое развёртывание — **Windows-only для сервера и агентов**. Linux/Unix deployment не входит в текущий scope; Linux CI остаётся дополнительной проверкой библиотек. Подробности и подготовка стенда — [Windows deployment](docs/windows-deployment.md).
 - Исходники фиксируются конкретным Git commit SHA.
 - Сборка CF — Vanessa Runner / EDT CLI; обновление существующей базы — полная загрузка CF.
 - Pipeline — декларативный YAML с готовыми версионированными шагами.
@@ -14,10 +15,14 @@
 ## Порядок реализации и приёмки
 Первый приоритет — рабочий заказ из архива с диска, а не сборка EDT. Сценарии принимаются последовательно; итоговый MVP включает .dt, .bak, пустую базу и SQL-шаблон. Сведения о фактическом стенде пока не предоставлены. Базовые решения и ответы реализатору — в [implementation-decisions.md](docs/implementation-decisions.md), перечень нужных данных — в [stand-readiness.md](docs/stand-readiness.md).
 
+## Текущая реализация
+Доменная модель и серверный срез приёма заказа архива в `BuildSystem.slnx`: ASP.NET Core API, Identity, EF Core SQL Server, миграции и Pending-задания. .NET SDK 10.0.402, unit/HTTP tests и opt-in SQL integration tests. Добавлен [агентский control-plane и Worker skeleton](docs/agent-control-plane.md) только для безопасного probe. UI, исполнение archive pipeline и реальные восстановления ещё не реализованы; готовность SQL-интеграции подтверждается отдельным прогоном, не unit-тестами. Инструкции — [Разработка](docs/development.md) и [Серверный срез](docs/server-slice.md).
+
 ## Документы
 - [Архитектура](docs/architecture.md)
 - [Агент и инструменты](docs/agent.md)
 - [Pipeline Engine](docs/pipeline.md)
+- [ProcessRunner и минимальный Pipeline Engine: реализация и ограничения](docs/process-pipeline.md)
 - [База данных и API](docs/data-api.md)
 - [Безопасность и ошибки](docs/safety.md)
 - [Заказ тестовых баз](docs/test-environments.md)
@@ -27,6 +32,6 @@
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
 - [Паспорт и готовность стенда](docs/stand-readiness.md)
 - [Этапы реализации](docs/roadmap.md)
-- [Пример YAML](examples/deploy-existing.yaml)
+- [Пример YAML обновления существующей базы — последующий этап](examples/deploy-existing.yaml)
 
 Документация — проектная спецификация. Точный синтаксис Vanessa Runner и EDT CLI требуется проверить на целевых версиях до реализации.

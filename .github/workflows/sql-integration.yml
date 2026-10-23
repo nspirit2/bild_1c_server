@@ -1,0 +1,48 @@
+name: SQL Server metadata integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/agent-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  sql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-CU20-ubuntu-22.04
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: 'BsCi_Only_Ephemeral_739!'
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'BsCi_Only_Ephemeral_739!' -C -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+          --health-start-period=20s
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      BUILDSYSTEM_TEST_SQL_ALLOW_CREATE: 'true'
+      # Disposable job-local service only. This is not an internal/production credential.
+      BUILDSYSTEM_TEST_SQL: 'Server=localhost,1433;Initial Catalog=master;User ID=sa;Password=BsCi_Only_Ephemeral_739!;Encrypt=true;TrustServerCertificate=true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet restore BuildSystem.slnx --locked-mode
+      - run: dotnet test tests/BuildSystem.IntegrationTests/BuildSystem.IntegrationTests.csproj --configuration Release --no-restore --logger trx --results-directory TestResults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sql-integration-results
+          path: TestResults/*.trx
+          if-no-files-found: error
+# End.

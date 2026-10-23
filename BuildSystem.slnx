@@ -1,0 +1,26 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Agent/">
+    <Project Path="src/Agent/BuildSystem.Agent.Execution/BuildSystem.Agent.Execution.csproj" />
+    <Project Path="src/Agent/BuildSystem.Agent.Tools/BuildSystem.Agent.Tools.csproj" />
+    <Project Path="src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" />
+  </Folder>
+  <Folder Name="/src/Contracts/">
+    <Project Path="src/Contracts/BuildSystem.Contracts/BuildSystem.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/src/Server/">
+    <Project Path="src/Server/BuildSystem.Api/BuildSystem.Api.csproj" />
+    <Project Path="src/Server/BuildSystem.Application/BuildSystem.Application.csproj" />
+    <Project Path="src/Server/BuildSystem.Domain/BuildSystem.Domain.csproj" />
+    <Project Path="src/Server/BuildSystem.Infrastructure/BuildSystem.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BuildSystem.AgentTests/BuildSystem.AgentTests.csproj" />
+    <Project Path="tests/BuildSystem.ApiTests/BuildSystem.ApiTests.csproj" />
+    <Project Path="tests/BuildSystem.IntegrationTests/BuildSystem.IntegrationTests.csproj" />
+    <Project Path="tests/BuildSystem.PipelineTests/BuildSystem.PipelineTests.csproj" />
+    <Project Path="tests/BuildSystem.ProcessFixture/BuildSystem.ProcessFixture.csproj" />
+    <Project Path="tests/BuildSystem.ProcessTests/BuildSystem.ProcessTests.csproj" />
+    <Project Path="tests/BuildSystem.UnitTests/BuildSystem.UnitTests.csproj" />
+  </Folder>
+</Solution>
