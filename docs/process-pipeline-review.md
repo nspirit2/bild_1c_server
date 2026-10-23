@@ -32,7 +32,7 @@ Managed-handler timeout кооперативный; нет гарантии ос
 
 Новые 48 тестов выполнялись реально, ProcessRunner использовал отдельные процессы .NET fixture. SQL skipped не подменяются успехом: предыдущий коммит `22715d7` имеет отдельно подтверждённые 16/16 SQL passed, новый remote SQL-прогон не запускался.
 
-EF `has-pending-model-changes`: изменений нет. NuGet audit всех 15 проектов с transitive dependencies: известных уязвимостей в текущем источнике не найдено. `git diff --check` проходит. Общий CI уже содержит Linux/Windows matrix и solution-wide tests; текущая ветка не отправлялась, Windows runtime verification нового пакета ещё нет.
+EF `has-pending-model-changes`: изменений нет. NuGet audit всех 15 проектов с transitive dependencies: известных уязвимостей в текущем источнике не найдено. `git diff --check` проходит. Общий CI содержит Linux/Windows matrix и solution-wide tests. Ветка отправлена; подтверждённый remote результат приведён ниже.
 
 ## Исправления по ревью
 
@@ -44,4 +44,24 @@ EF `has-pending-model-changes`: изменений нет. NuGet audit всех 
 - Вывод продолжает дренироваться после cap; секреты маскируются до разбиения на строки/chunks публикации.
 - Detached/reparented descendant escape остаётся ограничением .NET tree kill, а не скрытой гарантией OS containment.
 
-Изменения пакета пока локальные и не закоммичены. Отчёт предыдущего SQL-прогона закоммичен отдельно как `6b63e84`, не отправлен. Слияний в main нет.
+## Подтверждённый Linux/Windows CI
+
+Пакет отправлен коммитом `a866481`. Первый прогон выявил дефект CRLF-нормализации в тесте порядка вывода на Windows: пустая строка stderr от fixture удалялась до очистки CR. Исправлен только тест, коммит `37cec5bcb582f258f08d2edcd64bbd78b4832b8c`.
+
+Повторный [Build and test 39800065762](https://github.com/nspirit2/bild_1c_server/actions/runs/39800065762) завершился success. Предоставленные пользователем ZIP/TRX обеих ОС прочитаны непосредственно; в каждой платформе 6 TRX:
+
+| Платформа | Всего | Выполнено | Passed | Failed | NotExecuted по UnitTestResult |
+|---|---:|---:|---:|---:|---:|
+| Windows | 140 | 124 | 124 | 0 | 16 SQL |
+| Ubuntu | 140 | 124 | 124 | 0 | 16 SQL |
+
+В обеих платформах: domain39, API26, Worker/SQLite11, ProcessRunner22, Pipeline26. Error/timeout/aborted = 0. У SQL TRX Counters.notExecuted=0 при executed=0, но все 16 UnitTestResult имеют outcome NotExecuted; пропуски определены по фактическим результатам тестов, а не этому счётчику.
+
+SHA-256 исходных архивов:
+
+- Windows `d3bfe0f37ff7237b1fe05ce768fb5efcf4ba7ddf8a9a3e7050f33d0fa759cdeb`;
+- Ubuntu `1155804f1df66d34ad18f0a2ee1cbc215a4fd248bdc3fdb09f449ae21dd17af6`.
+
+Это подтверждает process/pipeline tests под Windows и Ubuntu, но не установку Windows-службы, DPAPI roundtrip, service account ACL или реальные providers 1С/SQL. SQL отдельно подтверждён 16/16 для предыдущего пакета, новый SQL-прогон здесь не заявляется.
+
+Отчёт предыдущего SQL-прогона `6b63e84` также отправлен в агентскую ветку. Слияний в main нет.
