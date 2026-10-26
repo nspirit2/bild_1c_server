@@ -17,24 +17,34 @@ public sealed class StageLeaseRenewalTests
     public async Task PeriodicAcceptedHeartbeatAllowsCopyBeyondInitialDeadline()
     {
         using var f = new Fixture();
-        var initialDeadline = DateTimeOffset.UtcNow.AddSeconds(1);
-        var renewed = Signal(); var calls = 0;
-        var coordinator = f.Coordinator(async (request, ct) =>
+        var clock = new ControlledClock();
+        var initialDeadline = clock.GetUtcNow().AddSeconds(1);
+        var copying = Signal(); var releaseCopy = Signal(); var renewed = Signal(); var calls = 0;
+        var coordinator = new StageCoordinator(f.Journal, async (request, ct) =>
         {
-            await renewed.Task.WaitAsync(Timeout, ct);
-            // Cross the original deadline, not merely a timer tick. Later grants remain live.
-            var remaining = initialDeadline - DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(150);
-            if (remaining > TimeSpan.Zero) await Task.Delay(remaining, ct);
+            copying.TrySetResult();
+            await releaseCopy.Task.WaitAsync(Timeout, ct);
             return await f.Staging.StageAsync(request, ct);
         }, (_, _) =>
         {
             var call = Interlocked.Increment(ref calls);
             if (call > 1) renewed.TrySetResult();
-            return Task.FromResult(new LeaseStatus(call == 1 ? initialDeadline : DateTimeOffset.UtcNow.AddSeconds(5)));
-        });
+            return Task.FromResult(new LeaseStatus(call == 1 ? initialDeadline : clock.GetUtcNow().AddMinutes(5)));
+        }, clock, Interval);
 
-        Assert.Equal(StageOutcome.Enqueued, await coordinator.ExecuteAsync(f.Intent, default).WaitAsync(Timeout));
-        Assert.True(DateTimeOffset.UtcNow > initialDeadline);
+        var execution = coordinator.ExecuteAsync(f.Intent, default);
+        try
+        {
+            await copying.Task.WaitAsync(Timeout);
+            await clock.TickArmed.Task.WaitAsync(Timeout);
+            clock.Advance(Interval);
+            await renewed.Task.WaitAsync(Timeout);
+            await clock.DeadlineExtended.Task.WaitAsync(Timeout); // Wait for persisted renewal and timer reset.
+            clock.Advance(TimeSpan.FromSeconds(2));
+            Assert.True(clock.GetUtcNow() > initialDeadline);
+        }
+        finally { releaseCopy.TrySetResult(); }
+        Assert.Equal(StageOutcome.Enqueued, await execution.WaitAsync(Timeout));
         Assert.True(calls >= 3); // Initial, at least one renewal, final guard.
         Assert.Single(f.Journal.PendingArtifacts());
         Assert.Single(f.Journal.Unsettled());
@@ -217,6 +227,68 @@ public sealed class StageLeaseRenewalTests
         await Task.Delay(Interval * 3);
         Assert.Equal(completedCalls, calls);
         Assert.Single(f.Journal.PendingArtifacts());
+    }
+
+    // This test clock drives Task.Delay and CTS timers together; wall time is only a hang watchdog.
+    private sealed class ControlledClock : TimeProvider
+    {
+        private readonly object gate = new();
+        private DateTimeOffset now = DateTimeOffset.UtcNow;
+        private readonly List<ControlledTimer> timers = [];
+        public TaskCompletionSource DeadlineExtended { get; } = Signal();
+        public TaskCompletionSource TickArmed { get; } = Signal();
+        public override DateTimeOffset GetUtcNow() { lock (gate) return now; }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (gate)
+            {
+                var timer = new ControlledTimer(this, callback, state);
+                timers.Add(timer);
+                timer.Set(dueTime, period);
+                if (dueTime == Interval) TickArmed.TrySetResult();
+                return timer;
+            }
+        }
+        public void Advance(TimeSpan delta)
+        {
+            List<(TimerCallback Callback, object? State)> callbacks = [];
+            lock (gate)
+            {
+                now += delta;
+                foreach (var timer in timers)
+                {
+                    if (timer.Disposed || timer.Due is not { } due || due > now) continue;
+                    callbacks.Add((timer.Callback, timer.State));
+                    timer.Due = timer.Period > TimeSpan.Zero ? now + timer.Period : null;
+                }
+            }
+            foreach (var callback in callbacks) callback.Callback(callback.State);
+        }
+        private sealed class ControlledTimer(ControlledClock owner, TimerCallback callback, object? state) : ITimer
+        {
+            public TimerCallback Callback { get; } = callback;
+            public object? State { get; } = state;
+            public DateTimeOffset? Due;
+            public TimeSpan Period;
+            public bool Disposed;
+            public void Set(TimeSpan due, TimeSpan period)
+            {
+                Due = due == global::System.Threading.Timeout.InfiniteTimeSpan ? null : owner.now + due;
+                Period = period;
+            }
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                lock (owner.gate)
+                {
+                    if (Disposed) return false;
+                    Set(dueTime, period);
+                    if (dueTime > TimeSpan.FromMinutes(1)) owner.DeadlineExtended.TrySetResult();
+                    return true;
+                }
+            }
+            public void Dispose() { lock (owner.gate) { Disposed = true; Due = null; } }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private sealed class Fixture : IDisposable
