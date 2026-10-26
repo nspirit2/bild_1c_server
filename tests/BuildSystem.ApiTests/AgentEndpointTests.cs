@@ -25,6 +25,8 @@ public sealed class AgentApiFactory : ApiFactory
             services.AddScoped<IArtifactReceipts, StubArtifactReceipts>();
             services.RemoveAll<IArchiveStageControl>();
             services.AddScoped<IArchiveStageControl, StubStageControl>();
+            services.RemoveAll<IStageCompletion>();
+            services.AddScoped<IStageCompletion, StubStageCompletion>();
         });
     }
 }
@@ -76,12 +78,39 @@ public sealed class StubStageControl : IArchiveStageControl
     }
 }
 
+public sealed class StubStageCompletion : IStageCompletion
+{
+    public Task<StageCompletionReceipt> CompleteAsync(string credential, CompleteStage input, CancellationToken ct)
+    {
+        if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
+        return Task.FromResult(new StageCompletionReceipt(input.JobId, input.FencingToken, input.ArtifactId, "StageCompleted"));
+    }
+}
+
 public sealed class AgentEndpointTests : IClassFixture<AgentApiFactory>
 {
     private readonly AgentApiFactory factory;
     public AgentEndpointTests(AgentApiFactory factory) => this.factory = factory;
     private HttpClient Client(string scheme = "https") => factory.CreateClient(new WebApplicationFactoryClientOptions
     { BaseAddress = new Uri(scheme + "://localhost"), AllowAutoRedirect = false });
+
+    [Fact]
+    public async Task CompletionRequiresHttpsAgentAndReturnsExactIdentity()
+    {
+        var input = new CompleteStage(Guid.NewGuid(), 3, Guid.NewGuid());
+        using var client = Client();
+        client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/agent/stage/complete", input)).StatusCode);
+        client.DefaultRequestHeaders.Remove("X-Test-User");
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        var response = await client.PostAsJsonAsync("/api/agent/stage/complete", input);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new StageCompletionReceipt(input.JobId, input.FencingToken, input.ArtifactId, "StageCompleted"),
+            await response.Content.ReadFromJsonAsync<StageCompletionReceipt>());
+        using var plain = Client("http");
+        plain.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        Assert.NotEqual(HttpStatusCode.OK, (await plain.PostAsJsonAsync("/api/agent/stage/complete", input)).StatusCode);
+    }
 
     [Theory]
     [InlineData("/api/agent/stage/poll")]

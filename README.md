@@ -33,6 +33,7 @@
 - [Lease-aware stage coordinator и crash recovery](docs/lease-aware-staging.md)
 - [Stage-only control plane и ограничения включения](docs/stage-only-control-plane.md)
 - [Stage lease renewal во время долгого копирования](docs/stage-lease-renewal.md)
+- [Stage-only completion и replay подтверждения](docs/stage-completion.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

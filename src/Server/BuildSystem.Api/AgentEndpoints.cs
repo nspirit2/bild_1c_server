@@ -69,6 +69,8 @@ internal static class AgentEndpoints
         });
         machine.MapPost("/stage/heartbeat", (HttpContext context, LeaseHeartbeat input, IArchiveStageControl service, CancellationToken ct) =>
             service.HeartbeatAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct));
+        machine.MapPost("/stage/complete", (HttpContext context, CompleteStage input, IStageCompletion service, CancellationToken ct) =>
+            service.CompleteAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct));
         machine.MapPost("/artifacts/staged", async (HttpContext context, ReportStagedArtifact input,
             IArtifactReceipts service, CancellationToken ct) =>
         {

@@ -38,6 +38,24 @@ public sealed class StageWorkerTests : IDisposable
     }
 
     [Fact]
+    public async Task MatchingCompletionSettlesAndPermitsNextPollOnlyOnLaterIteration()
+    {
+        var worker = new StageWorker(journal, transport, new StageCoordinator(journal, staging, transport.HeartbeatStageAsync),
+            new(journal, transport), new(journal, transport));
+        await worker.WorkOnce(default); // Stage.
+        await worker.WorkOnce(default); // Content receipt.
+        Assert.Single(journal.Unsettled());
+        await worker.WorkOnce(default); // Durable completion and matching receipt.
+        Assert.Empty(journal.Unsettled());
+        Assert.Equal(1, transport.Completions);
+        Assert.Equal(1, transport.Polls);
+        Assert.Empty(journal.Pending());
+        transport.Grant = null;
+        await worker.WorkOnce(default);
+        Assert.Equal(2, transport.Polls);
+    }
+
+    [Fact]
     public async Task LostPollAfterStoredGrantRecoversSameLeaseBeforeIntent()
     {
         Store(); await Worker().WorkOnce(default);
@@ -109,9 +127,11 @@ public sealed class StageWorkerTests : IDisposable
         Assert.Equal(0, transport.Polls); Assert.Empty(journal.Unsettled());
     }
 
-    private sealed class Fake : IStageTransport, IArtifactTransport
+    private sealed class Fake : IStageTransport, IArtifactTransport, IStageCompletionTransport
     {
-        public StageLeaseGrant? Grant; public int Polls; public int Beats; public int Reports;
+        public StageLeaseGrant? Grant; public int Polls; public int Beats; public int Reports; public int Completions;
+        public Task<StageCompletionReceipt> CompleteStageAsync(CompleteStage report, CancellationToken ct)
+        { Completions++; return Task.FromResult(new StageCompletionReceipt(report.JobId, report.FencingToken, report.ArtifactId, "StageCompleted")); }
         public Task<StageLeaseGrant?> PollStageAsync(CancellationToken ct) { Polls++; return Task.FromResult(Grant); }
         public Task<LeaseStatus> HeartbeatStageAsync(LeaseHeartbeat heartbeat, CancellationToken ct)
         { Beats++; return Task.FromResult(new LeaseStatus(DateTimeOffset.UtcNow.AddMinutes(2))); }

@@ -34,7 +34,7 @@ StageWorker сериализует работу: сначала artifact outbox,
 
 ## Receipt и завершение
 
-ContentVerified receipt сохраняется существующим серверным API после проверки active lease. Он не ставит Ready, не завершает stage/provisioning lease/job, не освобождает quota/reservation и не доказывает форматную корректность. После receipt нет бесконечного renewal: сохраняется блокирующий unresolved lease; expiry sweep/reconciliation должны разобрать операцию. Нет restore, SQL VERIFYONLY, вызова 1С или удаления staged bytes.
+ContentVerified receipt сохраняется существующим серверным API после проверки active lease. Он не ставит Ready, не завершает stage/provisioning lease/job, не освобождает quota/reservation и не доказывает форматную корректность. В исходном protocol-пакете после receipt сохранялся unresolved lease. Следующий [stage completion](stage-completion.md) добавляет отдельное подтверждение завершения stage lease/job; сам ContentVerified по-прежнему не завершает lease. Expired/Blocked/неизвестные исходы требуют reconciliation. Нет restore, SQL VERIFYONLY, вызова 1С или удаления staged bytes.
 
 Нельзя включать stage flag в рабочем окружении до Windows+SQL CI и управляемого стендового прогона. Новый SQL schema migration не нужен. Тестовые fake guards/HTTP не являются proof реального TLS/UNC/DPAPI/SCM.
 

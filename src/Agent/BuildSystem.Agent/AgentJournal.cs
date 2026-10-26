@@ -33,6 +33,7 @@ public sealed partial class AgentJournal : IDisposable
         Execute("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS leases(job TEXT NOT NULL,fence INTEGER NOT NULL,expiry TEXT NOT NULL,settled INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job,fence)); CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,job TEXT NOT NULL,fence INTEGER NOT NULL,code TEXT NOT NULL,acked INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(job,fence) REFERENCES leases(job,fence));");
         InitializeArtifacts();
         InitializeStageIntents();
+        InitializeStageCompletions();
         }
         catch { _db?.Dispose(); _lock.Dispose(); throw; }
     }
@@ -146,6 +147,7 @@ public sealed partial class AgentJournal : IDisposable
         Execute("UPDATE leases SET settled=1 WHERE job=$0 AND fence=$1", jobId.ToString(), fence);
         Execute("UPDATE events SET acked=1 WHERE job=$0 AND fence=$1", jobId.ToString(), fence);
         Execute("UPDATE artifacts SET state='Blocked',failure='LeaseRejected' WHERE job=$0 AND fence=$1 AND state='Pending'", jobId.ToString(), fence);
+        Execute("UPDATE stage_completions SET state='Blocked',failure='LeaseRejected' WHERE job=$0 AND fence=$1 AND state='Pending'", jobId.ToString(), fence);
         transaction.Commit();
     }
     public void Dispose() { _db.Dispose(); _lock.Dispose(); }

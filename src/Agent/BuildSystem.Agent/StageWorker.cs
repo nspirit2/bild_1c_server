@@ -3,9 +3,10 @@ using BuildSystem.Contracts;
 namespace BuildSystem.Agent;
 
 /// <summary>Opt-in stage-only step. Caller serializes this worker with all journal/dispatcher use.
-/// No capability announcement, probe fallback, restoration, lease settlement, or automatic reconciliation.</summary>
+/// No capability announcement, probe fallback, restoration, or automatic reconciliation.
+/// A matching stage-completion receipt is the only automatic local stage lease settlement.</summary>
 public sealed class StageWorker(AgentJournal journal, IStageTransport transport, StageCoordinator coordinator,
-    ArtifactDelivery delivery)
+    ArtifactDelivery delivery, StageCompletionDelivery? completions = null)
 {
     public async Task WorkOnce(CancellationToken ct)
     {
@@ -15,12 +16,26 @@ public sealed class StageWorker(AgentJournal journal, IStageTransport transport,
             await delivery.FlushAsync(ct);
             return;
         }
+        if (journal.PendingCompletions().Count != 0)
+        {
+            if (completions is not null) await completions.FlushAsync(ct);
+            return;
+        }
         var prior = journal.Unsettled().SingleOrDefault();
         if (prior is not null)
         {
-            if (prior.Kind != "ArchiveStageOnly" || prior.ExpiresAt <= DateTimeOffset.UtcNow) return;
-            // Acked artifact does not complete its lease. Never re-stage or poll a new job afterward.
-            if (journal.HasArtifactForLease(prior.JobId, prior.FencingToken)) return;
+            if (prior.Kind != "ArchiveStageOnly") return;
+            // Artifact ack alone is not settlement; persist completion before its first HTTP call.
+            if (journal.AckedArtifactForLease(prior.JobId, prior.FencingToken) is { } acknowledged)
+            {
+                if (completions is not null)
+                {
+                    journal.EnqueueCompletion(new(prior.JobId, prior.FencingToken, acknowledged.ArtifactId));
+                    await completions.FlushAsync(ct);
+                }
+                return;
+            }
+            if (prior.ExpiresAt <= DateTimeOffset.UtcNow || journal.HasArtifactForLease(prior.JobId, prior.FencingToken)) return;
             if (journal.GetStageIntent(prior.JobId, prior.FencingToken) is not null)
             {
                 await coordinator.ResumeAsync(prior.JobId, prior.FencingToken, ct);

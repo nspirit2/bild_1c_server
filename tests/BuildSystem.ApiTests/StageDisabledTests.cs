@@ -20,6 +20,11 @@ public sealed class StageDisabledTests
         Assert.Equal(409, beat.StatusCode);
         Assert.Equal("StageDisabled", poll.Code);
         Assert.Equal("StageDisabled", beat.Code);
+        var completion = new SqlStageCompletion(db, new ArchiveStageOptions());
+        var end = await Assert.ThrowsAsync<RequestRejectedException>(async () => await completion.CompleteAsync("credential",
+            new CompleteStage(Guid.NewGuid(), 1, Guid.NewGuid()), default));
+        Assert.Equal(409, end.StatusCode);
+        Assert.Equal("StageDisabled", end.Code);
     }
 }
 // end

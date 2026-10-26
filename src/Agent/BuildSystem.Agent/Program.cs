@@ -50,6 +50,8 @@ if (builder.Configuration.GetValue<bool>("Agent:ArchiveStageEnabled"))
     builder.Services.AddSingleton(new BuildSystem.Agent.Archives.ArchiveStaging(roots, staging,
         builder.Configuration.GetValue<long>("Agent:MaxArchiveBytes"), builder.Configuration.GetValue<long>("Agent:MaxStagingBytes")));
     builder.Services.AddSingleton<IStageTransport>(sp => sp.GetRequiredService<AgentTransport>());
+    builder.Services.AddSingleton<IStageCompletionTransport>(sp => sp.GetRequiredService<AgentTransport>());
+    builder.Services.AddSingleton<StageCompletionDelivery>();
     builder.Services.AddSingleton(sp => new StageCoordinator(sp.GetRequiredService<AgentJournal>(),
         sp.GetRequiredService<BuildSystem.Agent.Archives.ArchiveStaging>(), sp.GetRequiredService<IStageTransport>().HeartbeatStageAsync));
     builder.Services.AddSingleton<StageWorker>();
