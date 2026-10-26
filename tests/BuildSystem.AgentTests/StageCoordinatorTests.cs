@@ -177,8 +177,9 @@ public sealed class StageCoordinatorTests
         using var cancellation = new CancellationTokenSource();
         var coordinator = fixture.Coordinator((_, token) =>
         {
-            Assert.Equal(cancellation.Token, token);
+            Assert.True(token.CanBeCanceled); // Linked caller + current lease deadline.
             cancellation.Cancel();
+            Assert.True(token.IsCancellationRequested);
             return Task.FromResult(new LeaseStatus(DateTimeOffset.UtcNow.AddMinutes(1)));
         });
 

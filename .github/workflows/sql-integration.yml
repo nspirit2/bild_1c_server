@@ -10,6 +10,7 @@ on:
       - feat/artifact-outbox
       - feat/lease-aware-staging
       - feat/stage-only-control-plane
+      - feat/stage-lease-renewal
 
 permissions:
   contents: read
