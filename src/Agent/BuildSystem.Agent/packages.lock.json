@@ -358,6 +358,9 @@
           "System.Diagnostics.EventLog": "10.0.13"
         }
       },
+      "buildsystem.agent.archives": {
+        "type": "Project"
+      },
       "buildsystem.contracts": {
         "type": "Project"
       }

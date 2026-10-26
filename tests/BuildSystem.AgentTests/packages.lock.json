@@ -442,12 +442,16 @@
       "buildsystem.agent": {
         "type": "Project",
         "dependencies": {
+          "BuildSystem.Agent.Archives": "[1.0.0, )",
           "BuildSystem.Contracts": "[1.0.0, )",
           "Microsoft.Data.Sqlite": "[10.0.13, )",
           "Microsoft.Extensions.Hosting": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.WindowsServices": "[10.0.13, )",
           "System.Security.Cryptography.ProtectedData": "[10.0.13, )"
         }
+      },
+      "buildsystem.agent.archives": {
+        "type": "Project"
       },
       "buildsystem.contracts": {
         "type": "Project"

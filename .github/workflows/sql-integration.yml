@@ -8,6 +8,7 @@ on:
       - feat/archive-staging
       - feat/artifact-receipts
       - feat/artifact-outbox
+      - feat/lease-aware-staging
 
 permissions:
   contents: read

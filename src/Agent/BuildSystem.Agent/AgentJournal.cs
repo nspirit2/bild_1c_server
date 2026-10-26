@@ -32,6 +32,7 @@ public sealed partial class AgentJournal : IDisposable
         _db.Open();
         Execute("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS leases(job TEXT NOT NULL,fence INTEGER NOT NULL,expiry TEXT NOT NULL,settled INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job,fence)); CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,job TEXT NOT NULL,fence INTEGER NOT NULL,code TEXT NOT NULL,acked INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(job,fence) REFERENCES leases(job,fence));");
         InitializeArtifacts();
+        InitializeStageIntents();
         }
         catch { _db?.Dispose(); _lock.Dispose(); throw; }
     }

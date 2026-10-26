@@ -59,6 +59,7 @@ public sealed partial class AgentJournal
                 reader.Close(); transaction.Commit(); return;
             }
         }
+        ValidateStageArtifact(report);
         using (var lease = Command("SELECT expiry,kind,settled FROM leases WHERE job=$0 AND fence=$1", report.JobId.ToString(), report.FencingToken))
         using (var reader = lease.ExecuteReader())
         {
