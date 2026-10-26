@@ -13,6 +13,7 @@ on:
       - feat/stage-lease-renewal
       - feat/stage-completion
       - feat/stage-status
+      - feat/stage-operations-list
 
 permissions:
   contents: read
@@ -57,7 +58,7 @@ jobs:
               results.extend(ET.parse(path).getroot().findall('t:Results/t:UnitTestResult', ns))
           passed = sum(r.get('outcome') == 'Passed' for r in results)
           print(f'SQL TRX: {passed} passed / {len(results)} total')
-          assert len(results) >= 47, 'SQL suite missing expected test coverage'
+          assert len(results) >= 53, 'SQL suite missing expected test coverage'
           assert passed == len(results), 'SQL tests failed or were skipped'
       - uses: actions/upload-artifact@v4
         if: always()

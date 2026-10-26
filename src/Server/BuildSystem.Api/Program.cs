@@ -167,6 +167,10 @@ app.MapGet("/api/test-environments/{id:guid}/stage-status", async (Guid id, Clai
     var value = await status.GetAsync(CurrentActor(user), id, ct);
     return value is null ? Results.NotFound() : Results.Ok(value);
 }).RequireAuthorization();
+app.MapGet("/api/stage-operations", async (int? limit, string? cursor, string? state,
+    ClaimsPrincipal user, IStageOperations operations, CancellationToken ct) =>
+    Results.Ok(await operations.ListAsync(CurrentActor(user), new StageOperationsQuery(limit ?? 25, cursor, state), ct)))
+    .RequireAuthorization();
 app.Run();
 
 static Actor CurrentActor(ClaimsPrincipal user) => new(
