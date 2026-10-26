@@ -16,6 +16,8 @@ public static class InfrastructureRegistration
         services.AddScoped<IAgentControl, SqlAgentControl>();
         services.AddScoped<IArchiveCatalog, SqlArchiveCatalog>();
         services.AddScoped<IArtifactReceipts, SqlArtifactReceipts>();
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new ArchiveStageOptions());
+        services.AddScoped<IArchiveStageControl, SqlArchiveStageControl>();
         return services;
     }
 }

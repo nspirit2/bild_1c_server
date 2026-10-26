@@ -247,7 +247,7 @@ public sealed class StageCoordinatorTests
         public StageIntent Intent { get; }
         public int GuardCalls { get; private set; }
 
-        public Fixture(string kind = "ProvisionArchive")
+        public Fixture(string kind = "ArchiveStageOnly")
         {
             var sourceRoot = Path.Combine(directory, "source");
             Directory.CreateDirectory(sourceRoot);

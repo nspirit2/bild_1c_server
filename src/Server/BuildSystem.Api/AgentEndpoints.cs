@@ -62,6 +62,13 @@ internal static class AgentEndpoints
             service.HeartbeatAsync(Id(user), input, ct));
         machine.MapPost("/events", (ReportAgentEvent input, ClaimsPrincipal user, IAgentControl service, CancellationToken ct) =>
             service.ReportAsync(Id(user), input, ct));
+        machine.MapPost("/stage/poll", async (HttpContext context, IArchiveStageControl service, CancellationToken ct) =>
+        {
+            var grant = await service.PollAsync(context.Request.Headers.Authorization.ToString()[7..], ct);
+            return grant is null ? Results.NoContent() : Results.Ok(grant);
+        });
+        machine.MapPost("/stage/heartbeat", (HttpContext context, LeaseHeartbeat input, IArchiveStageControl service, CancellationToken ct) =>
+            service.HeartbeatAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct));
         machine.MapPost("/artifacts/staged", async (HttpContext context, ReportStagedArtifact input,
             IArtifactReceipts service, CancellationToken ct) =>
         {

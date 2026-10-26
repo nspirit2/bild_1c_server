@@ -24,7 +24,7 @@ public sealed partial class AgentJournal
     }
 
     /// <summary>Persist before staging file I/O. Exact replays retain terminal failures, even after expiry or settlement.</summary>
-    public StageIntent SaveStageIntent(StageIntent intent)
+    internal static void ValidateStageIntent(StageIntent intent)
     {
         if (intent is null || intent.JobId == Guid.Empty || intent.FencingToken <= 0 ||
             intent.ReservationId == Guid.Empty || intent.ArchiveVersionId == Guid.Empty || intent.RootId == Guid.Empty ||
@@ -32,6 +32,11 @@ public sealed partial class AgentJournal
             intent.Sha256.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F')))
             throw new ArgumentException("Invalid stage intent metadata.", nameof(intent));
         ValidateStageRelativePath(intent.RelativePath, intent.Format);
+    }
+
+    public StageIntent SaveStageIntent(StageIntent intent)
+    {
+        ValidateStageIntent(intent);
         intent = intent with { Sha256 = intent.Sha256.ToUpperInvariant() };
         using var transaction = _db.BeginTransaction();
         var existing = GetStageIntent(intent.JobId, intent.FencingToken);
@@ -43,9 +48,9 @@ public sealed partial class AgentJournal
         using (var lease = Command("SELECT expiry,kind,settled FROM leases WHERE job=$0 AND fence=$1", intent.JobId.ToString(), intent.FencingToken))
         using (var reader = lease.ExecuteReader())
         {
-            if (!reader.Read() || reader.GetString(1) != "ProvisionArchive" || reader.GetInt64(2) != 0 ||
+            if (!reader.Read() || reader.GetString(1) != "ArchiveStageOnly" || reader.GetInt64(2) != 0 ||
                 DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture) <= DateTimeOffset.UtcNow)
-                throw new InvalidOperationException("Stage intent requires an unexpired unsettled ProvisionArchive lease.");
+                throw new InvalidOperationException("Stage intent requires an unexpired unsettled ArchiveStageOnly lease.");
         }
         using (var artifact = Command("SELECT COUNT(*) FROM artifacts WHERE job=$0 AND fence=$1 AND (reservation<>$2 OR version<>$3 OR sha<>$4 OR size<>$5 OR format<>$6)",
             intent.JobId.ToString(), intent.FencingToken, intent.ReservationId.ToString(), intent.ArchiveVersionId.ToString(), intent.Sha256, intent.SizeBytes, intent.Format))

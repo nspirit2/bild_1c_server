@@ -63,9 +63,9 @@ public sealed partial class AgentJournal
         using (var lease = Command("SELECT expiry,kind,settled FROM leases WHERE job=$0 AND fence=$1", report.JobId.ToString(), report.FencingToken))
         using (var reader = lease.ExecuteReader())
         {
-            if (!reader.Read() || reader.GetString(1) != "ProvisionArchive" || reader.GetInt64(2) != 0 ||
+            if (!reader.Read() || reader.GetString(1) != "ArchiveStageOnly" || reader.GetInt64(2) != 0 ||
                 DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture) <= DateTimeOffset.UtcNow)
-                throw new InvalidOperationException("Artifact requires an unexpired unsettled ProvisionArchive lease.");
+                throw new InvalidOperationException("Artifact requires an unexpired unsettled ArchiveStageOnly lease.");
         }
         // Unique constraints retain identity and slot bindings even after acknowledgement.
         Execute("INSERT INTO artifacts(id,job,fence,reservation,version,sha,size,format) VALUES($0,$1,$2,$3,$4,$5,$6,$7)",
@@ -104,6 +104,12 @@ public sealed partial class AgentJournal
                 reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10)));
         }
         reader.Close(); transaction.Commit(); return result;
+    }
+
+    public bool HasArtifactForLease(Guid jobId, long fence)
+    {
+        using var command = Command("SELECT COUNT(*) FROM artifacts WHERE job=$0 AND fence=$1", jobId.ToString(), fence);
+        return (long)command.ExecuteScalar()! != 0;
     }
 
     public string? ArtifactState(Guid artifactId)

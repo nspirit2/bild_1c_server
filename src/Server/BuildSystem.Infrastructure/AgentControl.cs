@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BuildSystem.Infrastructure;
 
 /// <summary>SQL-authoritative probe-only control plane. All writers use the same transaction-owned scheduling lock.</summary>
-public sealed class SqlAgentControl(BuildSystemDbContext db) : IAgentControl
+public sealed partial class SqlAgentControl(BuildSystemDbContext db) : IAgentControl
 {
     private const string Probe = "ControlPlaneProbe";
     private readonly Dictionary<Guid, string> authenticated = new();
@@ -153,7 +153,7 @@ public sealed class SqlAgentControl(BuildSystemDbContext db) : IAgentControl
             var lease = await RequireLease(agentId, heartbeat.JobId, heartbeat.FencingToken, now, ct);
             if (lease.State != "Active") throw Reject(409, "LeaseNotActive");
             var job = await db.EnvironmentJobs.SingleAsync(x => x.Id == lease.JobId, ct);
-            if (job.State != "Running") throw Reject(409, "LeaseNotActive");
+            if (job.State != "Running" || job.Kind != Probe) throw Reject(409, "LeaseNotActive");
             lease.ExpiresAt = now.AddMinutes(2);
             agent.LastHeartbeat = now;
             return new LeaseStatus(lease.ExpiresAt);

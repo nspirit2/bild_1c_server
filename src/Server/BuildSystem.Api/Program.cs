@@ -21,6 +21,7 @@ else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironm
     throw new InvalidOperationException("Production key protection is configured for Windows only.");
 
 builder.Services.AddBuildSystemInfrastructure(connection);
+builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Configuration.GetValue<bool>("ArchiveStage:Enabled") });
 builder.Services.AddIdentity<BuildSystemUser, IdentityRole<Guid>>(options =>
 {
     options.Password.RequiredLength = 12;

@@ -23,6 +23,8 @@ public sealed class AgentApiFactory : ApiFactory
             services.AddScoped<IArchiveCatalog, StubArchiveCatalog>();
             services.RemoveAll<IArtifactReceipts>();
             services.AddScoped<IArtifactReceipts, StubArtifactReceipts>();
+            services.RemoveAll<IArchiveStageControl>();
+            services.AddScoped<IArchiveStageControl, StubStageControl>();
         });
     }
 }
@@ -60,12 +62,46 @@ public sealed class StubArtifactReceipts : IArtifactReceipts
     }
 }
 
+public sealed class StubStageControl : IArchiveStageControl
+{
+    public Task<StageLeaseGrant?> PollAsync(string credential, CancellationToken ct)
+    {
+        if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
+        return Task.FromResult<StageLeaseGrant?>(null);
+    }
+    public Task<LeaseStatus> HeartbeatAsync(string credential, LeaseHeartbeat input, CancellationToken ct)
+    {
+        if (credential != "valid-test-token") throw new InvalidOperationException("Unexpected credential");
+        return Task.FromResult(new LeaseStatus(DateTimeOffset.UtcNow.AddMinutes(1)));
+    }
+}
+
 public sealed class AgentEndpointTests : IClassFixture<AgentApiFactory>
 {
     private readonly AgentApiFactory factory;
     public AgentEndpointTests(AgentApiFactory factory) => this.factory = factory;
     private HttpClient Client(string scheme = "https") => factory.CreateClient(new WebApplicationFactoryClientOptions
     { BaseAddress = new Uri(scheme + "://localhost"), AllowAutoRedirect = false });
+
+    [Theory]
+    [InlineData("/api/agent/stage/poll")]
+    [InlineData("/api/agent/stage/heartbeat")]
+    public async Task StageRoutesRequireHttpsMachineIdentityAndForwardCurrentBearer(string path)
+    {
+        using var client = Client();
+        var heartbeat = new LeaseHeartbeat(Guid.NewGuid(), 1);
+        client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync(path, heartbeat)).StatusCode);
+        client.DefaultRequestHeaders.Remove("X-Test-User");
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        Assert.Equal(path.EndsWith("poll") ? HttpStatusCode.NoContent : HttpStatusCode.OK,
+            (await client.PostAsJsonAsync(path, heartbeat)).StatusCode);
+        using var plain = Client("http");
+        plain.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        var response = await plain.PostAsJsonAsync(path, heartbeat);
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotEqual(HttpStatusCode.NoContent, response.StatusCode);
+    }
 
     [Fact]
     public async Task CookieUserCannotPollAsAgent()

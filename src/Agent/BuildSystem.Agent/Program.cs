@@ -1,5 +1,6 @@
 using BuildSystem.Agent;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -37,7 +38,24 @@ builder.Services.AddSingleton<IAgentTransport>(sp => sp.GetRequiredService<Agent
 builder.Services.AddSingleton<IArtifactTransport>(sp => sp.GetRequiredService<AgentTransport>());
 builder.Services.AddSingleton(new AgentJournal(directory));
 builder.Services.AddSingleton<ArtifactDelivery>();
-builder.Services.AddHostedService<ProbeWorker>();
+if (builder.Configuration.GetValue<bool>("Agent:ArchiveStageEnabled"))
+{
+    // A separate loop, not a provisioning capability on the general probe dispatcher.
+    var rootSection = builder.Configuration.GetSection("Agent:ArchiveRoots").GetChildren();
+    var roots = rootSection.Select(section => new BuildSystem.Agent.Archives.ArchiveRoot(
+        Guid.Parse(section["Id"] ?? throw new InvalidOperationException("Configure archive root ID.")),
+        section["AbsolutePath"] ?? throw new InvalidOperationException("Configure approved archive root path."),
+        section.GetValue<bool>("AtomicPublication"))).ToArray();
+    var staging = builder.Configuration["Agent:StagingDirectory"] ?? throw new InvalidOperationException("Configure Agent__StagingDirectory.");
+    builder.Services.AddSingleton(new BuildSystem.Agent.Archives.ArchiveStaging(roots, staging,
+        builder.Configuration.GetValue<long>("Agent:MaxArchiveBytes"), builder.Configuration.GetValue<long>("Agent:MaxStagingBytes")));
+    builder.Services.AddSingleton<IStageTransport>(sp => sp.GetRequiredService<AgentTransport>());
+    builder.Services.AddSingleton(sp => new StageCoordinator(sp.GetRequiredService<AgentJournal>(),
+        sp.GetRequiredService<BuildSystem.Agent.Archives.ArchiveStaging>(), sp.GetRequiredService<IStageTransport>().HeartbeatStageAsync));
+    builder.Services.AddSingleton<StageWorker>();
+    builder.Services.AddHostedService<StageHostedWorker>();
+}
+else builder.Services.AddHostedService<ProbeWorker>();
 // Avoid default HTTP request logging; credentials and server snapshots are never logged by this host.
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 await builder.Build().RunAsync();

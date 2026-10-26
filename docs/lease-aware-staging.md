@@ -1,5 +1,9 @@
 # Lease-aware stage coordinator
 
+## Статус документа
+
+Ниже зафиксирован scope coordinator-пакета f917cac. В следующем пакете [stage-only control plane](stage-only-control-plane.md) добавлен отдельный opt-in host loop и локальный kind ужесточён до ArchiveStageOnly; упоминания ProvisionArchive/local-only ниже относятся к предыдущему этапу.
+
 ## Назначение и границы
 
 StageCoordinator связывает существующие fingerprint/staging и artifact outbox. Это standalone API для будущего закрытого обработчика archive.stage, не включение ProvisionArchive dispatcher. Production Worker по-прежнему только ControlPlaneProbe: coordinator не зарегистрирован в его loop/registry/DI и не получает пользовательские JSON snapshot напрямую. Входной StageIntent должен построить будущий проверенный compiler/dispatcher из серверного immutable intent, не браузер.

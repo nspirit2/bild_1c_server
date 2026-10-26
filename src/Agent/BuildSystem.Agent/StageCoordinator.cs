@@ -23,7 +23,7 @@ public sealed class StageCoordinator(AgentJournal journal, ArchiveStaging stagin
         var intent = journal.GetStageIntent(jobId, fence) ?? throw new InvalidOperationException("No durable stage intent.");
         if (journal.StageIntentFailure(jobId, fence) is not null) return StageOutcome.Blocked;
         var lease = journal.Unsettled().SingleOrDefault(x => x.JobId == jobId && x.FencingToken == fence);
-        if (lease is null || lease.Kind != "ProvisionArchive") return Block("LeaseRejected");
+        if (lease is null || lease.Kind != "ArchiveStageOnly") return Block("LeaseRejected");
         if (lease.ExpiresAt <= DateTimeOffset.UtcNow) return Block("LeaseExpired");
         try
         {
@@ -72,7 +72,7 @@ public sealed class StageCoordinator(AgentJournal journal, ArchiveStaging stagin
         {
             ct.ThrowIfCancellationRequested();
             var current = journal.Unsettled().SingleOrDefault(x => x.JobId == jobId && x.FencingToken == fence);
-            if (current is null || current.Kind != "ProvisionArchive" || current.ExpiresAt <= DateTimeOffset.UtcNow) return false;
+            if (current is null || current.Kind != "ArchiveStageOnly" || current.ExpiresAt <= DateTimeOffset.UtcNow) return false;
             var status = await leaseGuard(new(jobId, fence), ct);
             ct.ThrowIfCancellationRequested();
             if (status is null || status.ExpiresAt <= DateTimeOffset.UtcNow) return false;

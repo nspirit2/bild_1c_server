@@ -24,7 +24,7 @@ public sealed class ArtifactDeliveryTests
     private static ReportStagedArtifact Prepare(AgentJournal journal)
     {
         var report = new ReportStagedArtifact(Guid.NewGuid(), 1, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new string('A', 64), 10, "dt");
-        journal.StoreGrant(new(report.JobId, 1, DateTimeOffset.UtcNow.AddMinutes(2), "ProvisionArchive", "{}"));
+        journal.StoreGrant(new(report.JobId, 1, DateTimeOffset.UtcNow.AddMinutes(2), "ArchiveStageOnly", "{}"));
         journal.EnqueueArtifact(report);
         return report;
     }

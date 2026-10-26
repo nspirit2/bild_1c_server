@@ -31,6 +31,7 @@
 - [Серверные staged artifact receipts](docs/artifact-receipts.md)
 - [Durable доставка artifact receipts](docs/artifact-outbox.md)
 - [Lease-aware stage coordinator и crash recovery](docs/lease-aware-staging.md)
+- [Stage-only control plane и ограничения включения](docs/stage-only-control-plane.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

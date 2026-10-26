@@ -8,7 +8,7 @@ namespace BuildSystem.AgentTests;
 public sealed class StageIntentJournalTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "stage-intent-tests", Guid.NewGuid().ToString("N"));
-    private static LeaseGrant Grant(string kind = "ProvisionArchive") => new(Guid.NewGuid(), 42, DateTimeOffset.UtcNow.AddMinutes(5), kind, "never-store-snapshot");
+    private static LeaseGrant Grant(string kind = "ArchiveStageOnly") => new(Guid.NewGuid(), 42, DateTimeOffset.UtcNow.AddMinutes(5), kind, "never-store-snapshot");
     private static StageIntent Intent(LeaseGrant grant) => new(grant.JobId, grant.FencingToken, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "folder/archive.dt", new string('a', 64), 123, "dt");
     private static ReportStagedArtifact Report(StageIntent intent) => new(intent.JobId, intent.FencingToken, intent.ReservationId, intent.ArchiveVersionId, Guid.NewGuid(), intent.Sha256, intent.SizeBytes, intent.Format);
     public void Dispose() { if (Directory.Exists(_directory)) Directory.Delete(_directory, true); }

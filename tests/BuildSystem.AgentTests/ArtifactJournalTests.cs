@@ -8,7 +8,7 @@ namespace BuildSystem.AgentTests;
 public sealed class ArtifactJournalTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "artifact-journal-tests", Guid.NewGuid().ToString("N"));
-    private static LeaseGrant Grant(string kind = "ProvisionArchive") => new(Guid.NewGuid(), 42, DateTimeOffset.UtcNow.AddMinutes(5), kind, "never-store-snapshot");
+    private static LeaseGrant Grant(string kind = "ArchiveStageOnly") => new(Guid.NewGuid(), 42, DateTimeOffset.UtcNow.AddMinutes(5), kind, "never-store-snapshot");
     private static ReportStagedArtifact Report(LeaseGrant grant) => new(grant.JobId, grant.FencingToken,
         Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new string('a', 64), 123, "dt");
     public void Dispose() { if (Directory.Exists(_directory)) Directory.Delete(_directory, true); }
@@ -21,7 +21,7 @@ public sealed class ArtifactJournalTests : IDisposable
         {
             journal.StoreGrant(grant); journal.EnqueueArtifact(report);
             journal.Enqueue(new(eventId, grant.JobId, grant.FencingToken, "LeaseOutcomeUnknown"));
-            Assert.Equal("ProvisionArchive", Assert.Single(journal.Unsettled()).Kind);
+            Assert.Equal("ArchiveStageOnly", Assert.Single(journal.Unsettled()).Kind);
         }
         using (var journal = new AgentJournal(_directory))
         {

@@ -9,7 +9,7 @@ using BuildSystem.Contracts;
 
 namespace BuildSystem.Agent;
 
-public sealed class AgentTransport : IAgentTransport, IArtifactTransport, IDisposable
+public sealed partial class AgentTransport : IAgentTransport, IArtifactTransport, IStageTransport, IDisposable
 {
     private readonly HttpClient client;
     public AgentTransport(Uri baseAddress, string token)
