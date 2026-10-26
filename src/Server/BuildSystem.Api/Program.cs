@@ -161,6 +161,12 @@ app.MapGet("/api/test-environments/{id:guid}", async (Guid id, ClaimsPrincipal u
     var value = await orders.GetEnvironmentAsync(CurrentActor(user), id, ct);
     return value is null ? Results.NotFound() : Results.Ok(value);
 }).RequireAuthorization();
+app.MapGet("/api/test-environments/{id:guid}/stage-status", async (Guid id, ClaimsPrincipal user,
+    IStageStatus status, CancellationToken ct) =>
+{
+    var value = await status.GetAsync(CurrentActor(user), id, ct);
+    return value is null ? Results.NotFound() : Results.Ok(value);
+}).RequireAuthorization();
 app.Run();
 
 static Actor CurrentActor(ClaimsPrincipal user) => new(
