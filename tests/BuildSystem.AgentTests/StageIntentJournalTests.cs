@@ -94,11 +94,16 @@ public sealed class StageIntentJournalTests : IDisposable
     {
         var grant = Grant(); var intent = Intent(grant);
         using (var journal = new AgentJournal(_directory)) { journal.StoreGrant(grant); journal.SaveStageIntent(intent); }
-        using var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(_directory, "agent-journal.sqlite"), Pooling = false }.ToString()); db.Open();
-        using var command = db.CreateCommand(); command.CommandText = "PRAGMA table_info(stage_intents)";
-        var columns = new List<string>(); using (var reader = command.ExecuteReader()) while (reader.Read()) columns.Add(reader.GetString(1));
-        Assert.Equal(new[] { "job", "fence", "reservation", "version", "root", "relative_path", "sha", "size", "format", "failure" }, columns);
-        command.CommandText = "PRAGMA foreign_key_list(stage_intents)"; using (var reader = command.ExecuteReader()) { Assert.True(reader.Read()); Assert.Equal("leases", reader.GetString(2)); }
+        // Windows denies direct file reads while SQLite owns an open handle. Close all DB
+        // resources before the independent byte-level assertion; do not weaken journal locking.
+        using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(_directory, "agent-journal.sqlite"), Pooling = false }.ToString()))
+        {
+            db.Open();
+            using var command = db.CreateCommand(); command.CommandText = "PRAGMA table_info(stage_intents)";
+            var columns = new List<string>(); using (var reader = command.ExecuteReader()) while (reader.Read()) columns.Add(reader.GetString(1));
+            Assert.Equal(new[] { "job", "fence", "reservation", "version", "root", "relative_path", "sha", "size", "format", "failure" }, columns);
+            command.CommandText = "PRAGMA foreign_key_list(stage_intents)"; using (var reader = command.ExecuteReader()) { Assert.True(reader.Read()); Assert.Equal("leases", reader.GetString(2)); }
+        }
         Assert.DoesNotContain("never-store-snapshot", System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(_directory, "agent-journal.sqlite"))));
     }
 }
