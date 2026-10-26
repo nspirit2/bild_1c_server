@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Операции подготовки архивов · BuildSystem</title>
+  <link rel="stylesheet" href="/stage/styles.css">
+  <script src="/stage/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div><span class="brand">BuildSystem</span><span class="environment">Stage-only</span></div>
+    <div class="account"><span id="current-user">Проверка сеанса…</span><button id="logout" class="secondary" type="button" hidden>Выйти</button></div>
+  </header>
+  <main>
+    <div class="page-title"><div><p class="eyebrow">Операторская панель · только чтение</p><h1>Подготовка архивов</h1><p class="subtitle">Состояние серверных заданий, квитанций и завершения stage-операций.</p></div></div>
+    <aside class="notice" aria-label="Границы проверки"><strong>Подготовка — не восстановление базы.</strong> ContentVerified — подтверждение содержимого агентом, не проверка формата и не доказательство наличия файла сейчас. StageCompleted не означает Ready. Reservation и staging quota могут оставаться занятыми.</aside>
+    <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">Проверяем сеанс…</p>
+    <section id="login-panel" class="card login-card" aria-labelledby="login-title" hidden>
+      <p class="eyebrow">Доступ по учётной записи</p><h2 id="login-title">Вход оператора</h2><p class="muted">Владелец видит свои операции. Администратор — операции всех владельцев. Используется защищённый серверный cookie-сеанс.</p>
+      <form id="login-form">
+        <label for="username">Имя пользователя</label><input id="username" name="username" autocomplete="username" maxlength="256" required>
+        <label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+        <button id="login-submit" type="submit">Войти</button>
+      </form>
+    </section>
+    <section id="workspace" hidden aria-label="Операции и сведения">
+      <section class="card" aria-labelledby="operations-title">
+        <div class="card-header"><div><h2 id="operations-title">Операции</h2><p id="observed" class="muted">Обновите список для получения текущих метаданных.</p></div><button id="refresh" class="secondary" type="button">Обновить</button></div>
+        <div class="toolbar"><div><label for="state-filter">Состояние задания</label><select id="state-filter"><option value="">Все состояния</option><option value="Pending">Ожидает подготовки</option><option value="Leased">Выдано агенту</option><option value="StageCompleted">Stage завершён</option><option value="NeedsAttention">Требует внимания</option></select></div><p class="muted">До 25 записей на странице · без автоматического обновления</p></div>
+        <div class="table-wrap"><table><caption class="sr-only">Список серверных stage-операций</caption><thead><tr><th scope="col">Окружение / задание</th><th scope="col">Состояние</th><th scope="col">Ресурсы</th><th scope="col">Создано</th><th scope="col">Сведения</th></tr></thead><tbody id="operations-body"></tbody></table></div>
+        <p id="empty-list" class="empty" hidden>Доступных операций по этому фильтру нет.</p>
+        <nav class="pagination" aria-label="Страницы операций"><button id="previous" class="secondary" type="button" disabled>← Назад</button><span id="page-number">Страница 1</span><button id="next" class="secondary" type="button" disabled>Далее →</button></nav>
+      </section>
+      <section id="detail-panel" class="card detail-card" aria-labelledby="detail-title" hidden>
+        <div class="card-header"><div><p class="eyebrow">Серверные метаданные</p><h2 id="detail-title">Сведения об операции</h2></div><button id="close-detail" class="secondary" type="button">Закрыть</button></div>
+        <p id="detail-message" role="status" aria-live="polite" aria-atomic="true"></p><dl id="detail-values" class="detail-grid"></dl>
+        <p class="footnote">Это наблюдение состояния, не разрешение на reset, удаление, повторную выдачу или restore. При NeedsAttention / LeaseExpired / Inconsistent сверяйте audit, lease/fence и журнал агента через защищённый канал.</p>
+      </section>
+    </section>
+    <footer>Только наблюдение. Эта панель не выполняет restore, cleanup, reset или освобождение ресурсов.</footer>
+  </main>
+</body>
+</html>

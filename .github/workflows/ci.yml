@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list]
+    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list, feat/stage-operator-ui]
   pull_request:
   workflow_dispatch:
 
@@ -26,6 +26,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test operator UI behavior
+        run: node --test tests/stage-ui.test.cjs
       - name: Restore pinned dependencies
         run: dotnet restore BuildSystem.slnx --locked-mode
       - name: Restore pinned EF tooling

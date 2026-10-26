@@ -14,6 +14,7 @@ on:
       - feat/stage-completion
       - feat/stage-status
       - feat/stage-operations-list
+      - feat/stage-operator-ui
 
 permissions:
   contents: read

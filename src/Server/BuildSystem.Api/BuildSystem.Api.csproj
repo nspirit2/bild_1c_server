@@ -3,5 +3,8 @@
     <ProjectReference Include="../BuildSystem.Application/BuildSystem.Application.csproj" />
     <ProjectReference Include="../BuildSystem.Infrastructure/BuildSystem.Infrastructure.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot/stage/*" />
+  </ItemGroup>
 </Project>
 <!-- end -->

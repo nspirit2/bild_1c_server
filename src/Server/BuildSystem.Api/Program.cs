@@ -171,6 +171,7 @@ app.MapGet("/api/stage-operations", async (int? limit, string? cursor, string? s
     ClaimsPrincipal user, IStageOperations operations, CancellationToken ct) =>
     Results.Ok(await operations.ListAsync(CurrentActor(user), new StageOperationsQuery(limit ?? 25, cursor, state), ct)))
     .RequireAuthorization();
+app.MapStageOperatorUi();
 app.Run();
 
 static Actor CurrentActor(ClaimsPrincipal user) => new(
