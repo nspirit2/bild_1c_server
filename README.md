@@ -37,6 +37,7 @@
 - [Read-only stage status и reconciliation](docs/stage-status.md)
 - [Bounded список stage-операций](docs/stage-operations.md)
 - [Встроенный операторский экран /stage](docs/stage-operator-ui.md)
+- [Безопасный каталог версий архивов для заказа](docs/archive-catalog-browse.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
