@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','close-detail'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -14,6 +14,9 @@
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let generation = 0, detailGeneration = 0, controller = null, detailController = null;
   let authenticated = false, busy = false, history = [null], nextCursor = null, selected = null;
+  let projectGeneration = 0, catalogGeneration = 0, projectController = null, catalogController = null;
+  let projectHistory = [null], catalogHistory = [null], projectNext = null, catalogNext = null;
+  let projectBusy = false, catalogBusy = false, projectIds = new Set(), selectedProject = null;
   class ApiError extends Error { constructor(status) { super('API request failed'); this.status = status; } }
   const text = value => typeof value === 'string' ? value.slice(0, 512) : '—';
   const stateText = value => typeof value === 'string' && Object.hasOwn(states, value) ? states[value] : text(value);
@@ -31,8 +34,100 @@
   function markSelection() {
     for (const button of ui['operations-body'].querySelectorAll('button')) button.setAttribute('aria-expanded', String(button.dataset.environment === selected));
   }
+  function archiveControls() {
+    const active = authenticated && !busy && !ui['archive-browser'].hidden;
+    ui['browse-archives'].disabled = !authenticated || busy;
+    ui['projects-select'].disabled = !active || projectBusy || projectIds.size === 0;
+    ui['load-archives'].disabled = !active || projectBusy || catalogBusy || !selectedProject;
+    ui['projects-previous'].disabled = !active || projectBusy || projectHistory.length <= 1;
+    ui['projects-next'].disabled = !active || projectBusy || !projectNext;
+    ui['catalog-previous'].disabled = !active || catalogBusy || catalogHistory.length <= 1;
+    ui['catalog-next'].disabled = !active || catalogBusy || !catalogNext;
+    ui['archive-browser'].setAttribute('aria-busy', String(projectBusy || catalogBusy));
+  }
+  function resetCatalog() {
+    catalogGeneration++; catalogController?.abort(); catalogController = null;
+    catalogHistory = [null]; catalogNext = null; catalogBusy = false;
+    ui['catalog-body'].replaceChildren(); ui['catalog-observed'].textContent = '';
+    ui['catalog-page'].textContent = 'Страница версий 1';
+    ui['catalog-message'].textContent = 'Выберите проект для просмотра версий.';
+    archiveControls();
+  }
+  function clearArchiveBrowser() {
+    projectGeneration++; projectController?.abort(); projectController = null;
+    projectHistory = [null]; projectNext = null; projectBusy = false; projectIds = new Set(); selectedProject = null;
+    ui['archive-browser'].hidden = true; ui['browse-archives'].setAttribute('aria-expanded', 'false');
+    ui['projects-select'].replaceChildren(); ui['projects-select'].value = '';
+    ui['projects-message'].textContent = ''; ui['projects-observed'].textContent = '';
+    ui['projects-page'].textContent = 'Страница проектов 1'; resetCatalog();
+  }
+  function validPage(page) {
+    return Array.isArray(page?.items) && page.items.length <= 25 &&
+      page.items.every(item => item && typeof item === 'object') &&
+      (page.nextCursor == null || (typeof page.nextCursor === 'string' && page.nextCursor.length > 0 && page.nextCursor.length <= 512));
+  }
+  async function loadProjects(reset = false) {
+    if (!authenticated || ui['archive-browser'].hidden) return;
+    projectGeneration++; projectController?.abort(); projectController = new AbortController();
+    const version = projectGeneration, session = generation;
+    if (reset) projectHistory = [null];
+    selectedProject = null; projectIds = new Set(); resetCatalog();
+    projectBusy = true; ui['projects-select'].replaceChildren(); ui['projects-select'].value = '';
+    ui['projects-message'].textContent = 'Загрузка проектов…'; archiveControls();
+    const query = new URLSearchParams({limit:'25'});
+    if (projectHistory.at(-1)) query.set('cursor', projectHistory.at(-1));
+    try {
+      const page = await request('/api/projects/browse?' + query.toString(), projectController.signal);
+      if (version !== projectGeneration || session !== generation || !authenticated) return;
+      if (!validPage(page) || page.items.some(item => !guid.test(item.projectId) || typeof item.name !== 'string')) throw new Error('Invalid projects response');
+      const fragment = document.createDocumentFragment();
+      const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Выберите проект'; fragment.append(placeholder);
+      for (const item of page.items) {
+        if (projectIds.has(item.projectId.toLowerCase())) throw new Error('Duplicate project');
+        projectIds.add(item.projectId.toLowerCase());
+        const option = document.createElement('option'); option.value = item.projectId; option.textContent = item.name.slice(0, 256);
+        fragment.append(option);
+      }
+      ui['projects-select'].replaceChildren(fragment); ui['projects-select'].value = '';
+      projectNext = page.nextCursor || null; ui['projects-page'].textContent = 'Страница проектов ' + projectHistory.length;
+      ui['projects-observed'].textContent = 'Наблюдение сервера: ' + date(page.observedAt);
+      ui['projects-message'].textContent = page.items.length ? 'Выберите проект для просмотра версий.' : 'Доступных проектов нет.';
+    } catch (error) {
+      if (version !== projectGeneration || session !== generation || error.name === 'AbortError') return;
+      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      projectIds = new Set(); ui['projects-select'].replaceChildren(); projectNext = null;
+      ui['projects-message'].textContent = errorText(error);
+    } finally { if (version === projectGeneration) { projectBusy = false; archiveControls(); } }
+  }
+  async function loadCatalog(reset = false) {
+    if (!authenticated || projectBusy || ui['archive-browser'].hidden || !selectedProject || !guid.test(selectedProject) || !projectIds.has(selectedProject.toLowerCase())) return;
+    catalogGeneration++; catalogController?.abort(); catalogController = new AbortController();
+    const version = catalogGeneration, session = generation, projectVersion = projectGeneration, projectId = selectedProject;
+    if (reset) catalogHistory = [null];
+    catalogBusy = true; ui['catalog-body'].replaceChildren(); ui['catalog-message'].textContent = 'Загрузка версий…'; archiveControls();
+    const query = new URLSearchParams({limit:'25'});
+    if (catalogHistory.at(-1)) query.set('cursor', catalogHistory.at(-1));
+    try {
+      const page = await request('/api/projects/' + encodeURIComponent(projectId) + '/archive-versions?' + query.toString(), catalogController.signal);
+      if (version !== catalogGeneration || session !== generation || projectVersion !== projectGeneration || projectId !== selectedProject || !authenticated) return;
+      if (!validPage(page) || page.items.some(item => !guid.test(item.archiveVersionId) || !['dt','bak'].includes(item.format))) throw new Error('Invalid catalog response');
+      const fragment = document.createDocumentFragment();
+      for (const item of page.items) {
+        const row = document.createElement('tr'); cell(row, item.archiveVersionId); cell(row, item.format);
+        cell(row, bytes(item.sizeBytes)); cell(row, bytes(item.estimatedDbBytes)); fragment.append(row);
+      }
+      ui['catalog-body'].replaceChildren(fragment); catalogNext = page.nextCursor || null;
+      ui['catalog-page'].textContent = 'Страница версий ' + catalogHistory.length;
+      ui['catalog-observed'].textContent = 'Наблюдение сервера: ' + date(page.observedAt);
+      ui['catalog-message'].textContent = page.items.length ? 'Версий на странице: ' + page.items.length + '. Заказ здесь не создаётся.' : 'Доступных версий нет.';
+    } catch (error) {
+      if (version !== catalogGeneration || session !== generation || projectVersion !== projectGeneration || error.name === 'AbortError') return;
+      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      catalogNext = null; ui['catalog-message'].textContent = errorText(error);
+    } finally { if (version === catalogGeneration) { catalogBusy = false; archiveControls(); } }
+  }
   function begin() {
-    generation++; controller?.abort(); closeDetail(); controller = new AbortController();
+    generation++; controller?.abort(); closeDetail(); clearArchiveBrowser(); controller = new AbortController();
     return { version:generation, signal:controller.signal };
   }
   function controls() {
@@ -42,6 +137,7 @@
     ui['login-submit'].disabled = busy;
     for (const button of ui['operations-body'].querySelectorAll('button')) button.disabled = busy || !button.dataset.environment;
     ui['workspace'].setAttribute('aria-busy', String(busy));
+    archiveControls();
   }
   function message(value, error = false) { ui.message.textContent = value; ui.message.classList.toggle('error', error); }
   function clearData() {
@@ -199,6 +295,20 @@
   ui.previous.addEventListener('click', () => { if (!busy && history.length > 1) { history.pop(); loadList(); } });
   ui.next.addEventListener('click', () => { if (!busy && nextCursor) { history.push(nextCursor); loadList(); } });
   ui['close-detail'].addEventListener('click', closeDetail);
+  ui['browse-archives'].addEventListener('click', () => {
+    if (!authenticated || busy) return;
+    clearArchiveBrowser(); ui['archive-browser'].hidden = false; ui['browse-archives'].setAttribute('aria-expanded', 'true'); loadProjects(true);
+  });
+  ui['projects-select'].addEventListener('change', () => {
+    resetCatalog(); const id = ui['projects-select'].value;
+    selectedProject = typeof id === 'string' && guid.test(id) && projectIds.has(id.toLowerCase()) ? id : null;
+    archiveControls();
+  });
+  ui['load-archives'].addEventListener('click', () => { if (!catalogBusy) loadCatalog(true); });
+  ui['projects-previous'].addEventListener('click', () => { if (!projectBusy && projectHistory.length > 1) { projectHistory.pop(); loadProjects(); } });
+  ui['projects-next'].addEventListener('click', () => { if (!projectBusy && projectNext) { projectHistory.push(projectNext); loadProjects(); } });
+  ui['catalog-previous'].addEventListener('click', () => { if (!catalogBusy && catalogHistory.length > 1) { catalogHistory.pop(); loadCatalog(); } });
+  ui['catalog-next'].addEventListener('click', () => { if (!catalogBusy && catalogNext) { catalogHistory.push(catalogNext); loadCatalog(); } });
   checkSession();
 })();
 // end

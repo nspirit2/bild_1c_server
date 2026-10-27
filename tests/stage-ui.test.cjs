@@ -187,4 +187,114 @@ test('401 from list clears metadata and returns to login', async () => {
   assert.equal(nodes.get('login-panel').hidden, false);
   assert.equal(nodes.get('operations-body').children.length, 0);
 });
+test('archive browser lazily loads authorized projects only after explicit action', async () => {
+  const calls = [];
+  const nodes = harness(async route => {
+    calls.push(route);
+    if (route === '/api/auth/me') return ok({name:'operator'});
+    if (route.startsWith('/api/stage-operations')) return ok({items:[],nextCursor:null});
+    if (route === '/api/projects/browse?limit=25') return ok({items:[{projectId:env1,name:'Проект 1'}],nextCursor:null});
+    throw new Error('Unexpected route');
+  });
+  await flush(); assert.equal(calls.length,2); assert.equal(nodes.get('archive-browser').hidden,true);
+  nodes.get('browse-archives').listeners.click(); await flush();
+  assert.equal(calls.at(-1),'/api/projects/browse?limit=25');
+  assert.equal(nodes.get('archive-browser').hidden,false);
+  assert.equal(nodes.get('projects-select').querySelectorAll('option')[1].value,env1);
+  assert.equal(nodes.get('load-archives').disabled,true);
+});
+
+test('selected project GUID routes read-only archive requests and clears on project switch', async () => {
+  const calls = [];
+  const nodes = harness(async route => {
+    calls.push(route);
+    if (route === '/api/auth/me') return ok({name:'operator'});
+    if (route.startsWith('/api/stage-operations')) return ok({items:[],nextCursor:null});
+    if (route === '/api/projects/browse?limit=25') return ok({items:[{projectId:env1,name:'Первый'},{projectId:env2,name:'Второй'}],nextCursor:null});
+    if (route === `/api/projects/${env1}/archive-versions?limit=25`) return ok({items:[{archiveVersionId:env2,format:'dt',sizeBytes:10,estimatedDbBytes:100}],nextCursor:null});
+    throw new Error('Unexpected route');
+  });
+  await flush(); nodes.get('browse-archives').listeners.click(); await flush();
+  nodes.get('projects-select').value=env1; nodes.get('projects-select').listeners.change();
+  nodes.get('load-archives').listeners.click(); await flush();
+  assert.equal(calls.at(-1),`/api/projects/${env1}/archive-versions?limit=25`);
+  assert.equal(nodes.get('catalog-body').querySelectorAll('td')[0].textContent,env2);
+  nodes.get('projects-select').value=env2; nodes.get('projects-select').listeners.change();
+  assert.equal(nodes.get('catalog-body').children.length,0);
+  nodes.get('projects-select').value='../foreign'; nodes.get('projects-select').listeners.change();
+  nodes.get('load-archives').listeners.click(); await flush();
+  assert.equal(nodes.get('load-archives').disabled,true);
+  assert.equal(calls.length,4);
+});
+
+test('late archive response after logout cannot reveal catalog or selection', async () => {
+  const pending=deferred(); let catalogSignal;
+  const nodes=harness(async (route,options) => {
+    if(route==='/api/auth/me')return ok({name:'operator'});
+    if(route.startsWith('/api/stage-operations'))return ok({items:[],nextCursor:null});
+    if(route==='/api/projects/browse?limit=25')return ok({items:[{projectId:env1,name:'Первый'}],nextCursor:null});
+    if(route.includes('/archive-versions')){catalogSignal=options.signal;return pending.promise;}
+    if(route==='/api/auth/csrf')return ok({token:'test-csrf'});
+    if(route==='/api/auth/logout')return ok(null);
+    throw new Error('Unexpected route');
+  });
+  await flush(); nodes.get('browse-archives').listeners.click(); await flush();
+  nodes.get('projects-select').value=env1; nodes.get('projects-select').listeners.change(); nodes.get('load-archives').listeners.click(); await flush();
+  await nodes.get('logout').listeners.click();
+  pending.resolve(ok({items:[{archiveVersionId:env2,format:'bak',sizeBytes:10,estimatedDbBytes:20}],nextCursor:null}));await flush();
+  assert.equal(catalogSignal.aborted,true);
+  assert.equal(nodes.get('archive-browser').hidden,true);
+  assert.equal(nodes.get('catalog-body').children.length,0);
+  assert.equal(nodes.get('projects-select').value,'');
+});
+
+test('hostile project names remain literal truncated option text', async () => {
+  const name='<img src=x onerror=alert(1)>'+ 'x'.repeat(300);
+  const nodes=harness(async route => {
+    if(route==='/api/auth/me')return ok({name:'operator'});
+    if(route.startsWith('/api/stage-operations'))return ok({items:[],nextCursor:null});
+    if(route==='/api/projects/browse?limit=25')return ok({items:[{projectId:env1,name}],nextCursor:null});
+    throw new Error('Unexpected route');
+  });
+  await flush();nodes.get('browse-archives').listeners.click();await flush();
+  const option=nodes.get('projects-select').querySelectorAll('option')[1];
+  assert.equal(option.textContent,name.slice(0,256));assert.equal(option.children.length,0);
+});
+
+test('project and archive pagination use distinct cursor histories', async () => {
+  const calls=[];
+  const nodes=harness(async route => {
+    calls.push(route);
+    if(route==='/api/auth/me')return ok({name:'operator'});
+    if(route.startsWith('/api/stage-operations'))return ok({items:[],nextCursor:null});
+    if(route.startsWith('/api/projects/browse?'))return ok({items:[{projectId:route.includes('cursor=project%2B2')?env2:env1,name:'Проект'}],nextCursor:route.includes('cursor=')?null:'project+2'});
+    if(route.includes('/archive-versions?'))return ok({items:[],nextCursor:route.includes('cursor=')?null:'archive+2'});
+    throw new Error('Unexpected route');
+  });
+  await flush();nodes.get('browse-archives').listeners.click();await flush();
+  nodes.get('projects-select').value=env1;nodes.get('projects-select').listeners.change();nodes.get('load-archives').listeners.click();await flush();
+  nodes.get('catalog-next').listeners.click();await flush();
+  assert.equal(calls.at(-1),`/api/projects/${env1}/archive-versions?limit=25&cursor=archive%2B2`);
+  nodes.get('catalog-previous').listeners.click();await flush();
+  assert.equal(calls.at(-1),`/api/projects/${env1}/archive-versions?limit=25`);
+  nodes.get('projects-next').listeners.click();await flush();
+  assert.equal(calls.at(-1),'/api/projects/browse?limit=25&cursor=project%2B2');
+  assert.equal(nodes.get('projects-select').value,'');assert.equal(nodes.get('catalog-page').textContent,'Страница версий 1');
+  nodes.get('projects-previous').listeners.click();await flush();assert.equal(calls.at(-1),'/api/projects/browse?limit=25');
+});
+
+test('late projects response after stage filter change cannot restore choices', async () => {
+  const pending=deferred();let signal;
+  const nodes=harness(async (route,options) => {
+    if(route==='/api/auth/me')return ok({name:'operator'});
+    if(route.startsWith('/api/stage-operations'))return ok({items:[],nextCursor:null});
+    if(route.startsWith('/api/projects/browse?')){signal=options.signal;return pending.promise;}
+    throw new Error('Unexpected route');
+  });
+  await flush();nodes.get('browse-archives').listeners.click();await flush();
+  nodes.get('state-filter').value='Pending';nodes.get('state-filter').listeners.change();await flush();
+  pending.resolve(ok({items:[{projectId:env1,name:'Старый проект'}],nextCursor:null}));await flush();
+  assert.equal(signal.aborted,true);assert.equal(nodes.get('archive-browser').hidden,true);
+  assert.equal(nodes.get('projects-select').children.length,0);assert.equal(nodes.get('load-archives').disabled,true);
+});
 // end

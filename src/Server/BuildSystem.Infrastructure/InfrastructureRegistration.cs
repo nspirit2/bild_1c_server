@@ -22,6 +22,7 @@ public static class InfrastructureRegistration
         services.AddScoped<IStageStatus, SqlStageStatus>();
         services.AddScoped<IStageOperations, SqlStageOperations>();
         services.AddScoped<IArchiveCatalogBrowse, SqlArchiveCatalogBrowse>();
+        services.AddScoped<IProjectBrowse, SqlProjectBrowse>();
         return services;
     }
 }

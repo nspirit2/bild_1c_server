@@ -175,6 +175,10 @@ app.MapGet("/api/projects/{projectId:guid}/archive-versions", async (Guid projec
     string? cursor, ClaimsPrincipal user, IArchiveCatalogBrowse catalog, CancellationToken ct) =>
     Results.Ok(await catalog.ListAsync(CurrentActor(user), projectId, new ArchiveCatalogQuery(limit ?? 25, cursor), ct)))
     .RequireAuthorization();
+app.MapGet("/api/projects/browse", async (int? limit, string? cursor, ClaimsPrincipal user,
+    IProjectBrowse projects, CancellationToken ct) =>
+    Results.Ok(await projects.ListAsync(CurrentActor(user), new ProjectBrowseQuery(limit ?? 25, cursor), ct)))
+    .RequireAuthorization();
 app.MapStageOperatorUi();
 app.Run();
 

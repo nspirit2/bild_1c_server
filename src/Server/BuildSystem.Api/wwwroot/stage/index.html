@@ -33,6 +33,20 @@
         <p id="empty-list" class="empty" hidden>Доступных операций по этому фильтру нет.</p>
         <nav class="pagination" aria-label="Страницы операций"><button id="previous" class="secondary" type="button" disabled>← Назад</button><span id="page-number">Страница 1</span><button id="next" class="secondary" type="button" disabled>Далее →</button></nav>
       </section>
+      <section class="card" aria-labelledby="archive-browser-title">
+        <div class="card-header"><div><h2 id="archive-browser-title">Архивы проекта</h2><p class="muted">Только просмотр разрешённых версий. Заказ и восстановление здесь не выполняются.</p></div><button id="browse-archives" class="secondary" type="button" aria-controls="archive-browser" aria-expanded="false">Архивы проекта</button></div>
+        <div id="archive-browser" class="archive-browser" hidden>
+          <p id="projects-message" role="status" aria-live="polite" aria-atomic="true"></p>
+          <label for="projects-select">Проект на текущей странице</label><select id="projects-select" disabled><option value="">Выберите проект</option></select>
+          <button id="load-archives" type="button" disabled>Показать версии</button>
+          <p id="projects-observed" class="muted"></p>
+          <nav class="pagination" aria-label="Страницы проектов"><button id="projects-previous" class="secondary" type="button" disabled>← Проекты</button><span id="projects-page">Страница проектов 1</span><button id="projects-next" class="secondary" type="button" disabled>Проекты →</button></nav>
+          <p id="catalog-message" role="status" aria-live="polite" aria-atomic="true">Выберите проект для просмотра версий.</p><p id="catalog-observed" class="muted"></p>
+          <div class="table-wrap"><table><caption class="sr-only">Разрешённые версии архивов выбранного проекта</caption><thead><tr><th scope="col">Версия архива</th><th scope="col">Формат</th><th scope="col">Размер архива</th><th scope="col">Оценка размера базы</th></tr></thead><tbody id="catalog-body"></tbody></table></div>
+          <nav class="pagination" aria-label="Страницы версий"><button id="catalog-previous" class="secondary" type="button" disabled>← Версии</button><span id="catalog-page">Страница версий 1</span><button id="catalog-next" class="secondary" type="button" disabled>Версии →</button></nav>
+          <p class="footnote">Ready в каталоге — метаданные публикации, не проверка формата, наличия файла, свободной квоты или готовности базы. Идентификатор версии предназначен для выбора в будущем заказе.</p>
+        </div>
+      </section>
       <section id="detail-panel" class="card detail-card" aria-labelledby="detail-title" hidden>
         <div class="card-header"><div><p class="eyebrow">Серверные метаданные</p><h2 id="detail-title">Сведения об операции</h2></div><button id="close-detail" class="secondary" type="button">Закрыть</button></div>
         <p id="detail-message" role="status" aria-live="polite" aria-atomic="true"></p><dl id="detail-values" class="detail-grid"></dl>
