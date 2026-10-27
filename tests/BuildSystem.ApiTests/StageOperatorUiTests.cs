@@ -58,6 +58,20 @@ public sealed class StageOperatorUiTests : IClassFixture<ApiFactory>
             Assert.DoesNotContain(mutation, js);
     }
 
+    [Fact]
+    public async Task RetentionExplanationAddsNoCleanupAuthorityOrMutationRoute()
+    {
+        using var client = Client();
+        var html = await client.GetStringAsync("/stage");
+        var js = await client.GetStringAsync("/stage/app.js");
+        Assert.Contains("detail-retention", html);
+        Assert.Contains("detail-retention", js);
+        foreach (var route in new[] { "/cleanup", "/retire", "/release", "/cancel", "/delete" })
+            Assert.DoesNotContain(route, js);
+        Assert.DoesNotContain("id=\"cleanup\"", html);
+        Assert.DoesNotContain("id=\"release\"", html);
+    }
+
     [Theory]
     [InlineData("/stage/secret")]
     [InlineData("/stage/index.html")]

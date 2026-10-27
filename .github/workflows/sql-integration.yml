@@ -18,6 +18,7 @@ on:
       - feat/archive-catalog
       - feat/project-archive-browser
       - feat/archive-order-ui
+      - feat/stage-retention-explanation
 
 permissions:
   contents: read

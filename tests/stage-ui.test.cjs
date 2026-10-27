@@ -24,6 +24,13 @@ const denied = status => ({ ok: false, status });
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
+test('retention completed tuple explains retained quota without format or current file proof', async()=>{const {nodes}=await retentionHarness(retainedDetail());const t=retentionText(nodes);assert.equal(nodes.get('detail-retention').hidden,false);assert.match(t,/Копирование/);assert.match(t,/не подтверждает формат/);assert.match(t,/наличие файла сейчас/);assert.match(t,/provisioning в целом не завершён/);assert.match(t,/Квота не освобождена/);assert.equal(nodes.get('detail-values').children[0].children.length,30);});
+test('retention awaiting stage does not imply release or agent absence',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Pending',leaseState:null,leaseExpiresAt:null,artifactId:null,artifactState:null,reconciliationCode:'AwaitingStage'}));const t=retentionText(nodes);assert.match(t,/требуется проверка/);assert.match(t,/Квота не освобождена/);assert.doesNotMatch(t,/Лизинг stage завершён/);});
+test('retention expired lease is not order TTL or resource deletion',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Leased',leaseState:'Active',reconciliationCode:'LeaseExpired'}));const t=retentionText(nodes);assert.match(t,/TTL заказа не доказывает/);assert.match(t,/Автоочистки нет/);assert.match(t,/срок lease не является TTL/);});
+test('retention malformed conflicting and unknown tuples fall back without completion claims',async()=>{for(const overrides of [{unsettled:false},{artifactId:null},{stagingBytes:'65536'},{leaseState:'Active'},{reconciliationCode:'<script>'},{requestState:undefined}]){const {nodes}=await retentionHarness(retainedDetail(overrides));assert.equal(retentionText(nodes),'Недостаточно согласованных метаданных: не считать ресурсы свободными.');}});
+test('retention only reads existing detail endpoint and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
+test('retention stale detail after logout cannot restore explanation',async()=>{const pending=deferred();const {nodes}=await retentionHarness(pending);await nodes.get('logout').listeners.click();pending.resolve(ok(retainedDetail()));await flush();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');assert.equal(nodes.get('detail-panel').hidden,true);});
+
 test('anonymous session exposes login and never requests operation data', async () => {
   const calls = [];
   const nodes = harness(async route => { calls.push(route); return denied(401); });
@@ -93,6 +100,12 @@ const env1 = '11111111-1111-1111-1111-111111111111';
 const env2 = '22222222-2222-2222-2222-222222222222';
 const item = environmentId => ({ environmentId, jobId: env1, jobState: 'Leased', environmentState: 'Requested', reservationState: 'Held', stagingBytes: 10, createdAt: '2026-01-01T00:00:00Z' });
 const buttons = nodes => nodes.get('operations-body').querySelectorAll('button');
+const retainedDetail = overrides => ({ environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held', stagingBytes:65536, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z', reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:01:00Z', ...overrides });
+async function retentionHarness(detail) {
+  const calls=[]; const nodes=harness(async (route,options) => { calls.push({route,options}); if(route==='/api/auth/me') return ok({name:'operator'}); if(route.startsWith('/api/stage-operations')) return ok({items:[item(env1)],nextCursor:null}); if(route.endsWith('/stage-status')) return detail?.promise || ok(detail); if(route==='/api/auth/csrf') return ok({token:'test'}); if(route==='/api/auth/logout') return ok(null); throw new Error('Unexpected route'); });
+  await flush(); buttons(nodes)[0].listeners.click(); await flush(); return {nodes,calls};
+}
+const retentionText = nodes => nodes.get('detail-retention-reasons').querySelectorAll('li').map(x=>x.textContent).join('\n');
 
 test('filter clears cursor history and late prior-filter response is ignored', async () => {
   const calls = [], previous = deferred();

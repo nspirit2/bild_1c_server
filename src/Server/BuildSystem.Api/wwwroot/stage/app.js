@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -83,6 +83,7 @@
   function closeDetail() {
     detailGeneration++; detailController?.abort(); detailController = null;
     selected = null; ui['detail-panel'].hidden = true; ui['detail-values'].replaceChildren();
+    ui['detail-retention'].hidden = true; ui['detail-retention-reasons'].replaceChildren();
     ui['detail-message'].textContent = ''; markSelection();
   }
   function markSelection() {
@@ -280,6 +281,45 @@
       nextCursor = null; message(errorText(error), true);
     } finally { if (op.version === generation) { busy = false; controls(); } }
   }
+  function renderRetention(value) {
+    const validDate = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
+    const absentArtifact = value.artifactId === null && value.artifactState === null;
+    const verifiedArtifact = hasGuid(value.artifactId) && value.artifactState === 'ContentVerified';
+    const common = hasGuid(value.environmentId) && hasGuid(value.requestId) && hasGuid(value.jobId) &&
+      Number.isSafeInteger(value.stagingBytes) && value.stagingBytes > 0 && value.unsettled === true &&
+      value.reservationState === 'Held' && validDate(value.observedAt) &&
+      ['Requested','Provisioning'].includes(value.environmentState) && ['Pending','Provisioning'].includes(value.requestState);
+    const completed = common && value.reconciliationCode === 'StageCompleted' && value.jobState === 'StageCompleted' &&
+      value.leaseState === 'Completed' && validDate(value.leaseExpiresAt) && verifiedArtifact;
+    const active = common && value.jobState === 'Leased' && value.leaseState === 'Active' && validDate(value.leaseExpiresAt);
+    const awaiting = common && value.reconciliationCode === 'AwaitingStage' && value.jobState === 'Pending' &&
+      value.leaseState === null && value.leaseExpiresAt === null && absentArtifact;
+    const running = active && Date.parse(value.leaseExpiresAt) > Date.parse(value.observedAt) &&
+      ((value.reconciliationCode === 'StageActive' && absentArtifact) || (value.reconciliationCode === 'ArtifactReported' && verifiedArtifact));
+    const expired = active && value.reconciliationCode === 'LeaseExpired' && Date.parse(value.leaseExpiresAt) <= Date.parse(value.observedAt) && (absentArtifact || verifiedArtifact);
+    const attention = hasGuid(value.environmentId) && hasGuid(value.requestId) && hasGuid(value.jobId) &&
+      value.reconciliationCode === 'NeedsAttention' && Number.isSafeInteger(value.stagingBytes) && value.stagingBytes > 0 &&
+      value.unsettled === true && value.reservationState === 'Held' && validDate(value.observedAt) &&
+      ['Pending','Provisioning','NeedsAttention'].includes(value.requestState) && ['Requested','Provisioning','NeedsAttention'].includes(value.environmentState) &&
+      ['Pending','Leased','NeedsAttention','StageCompleted'].includes(value.jobState) &&
+      (value.jobState === 'NeedsAttention' || value.environmentState === 'NeedsAttention' || value.leaseState === 'NeedsAttention') &&
+      (absentArtifact || verifiedArtifact) &&
+      ((value.leaseState === null && value.leaseExpiresAt === null && absentArtifact) ||
+       (['Active','Completed','NeedsAttention'].includes(value.leaseState) && validDate(value.leaseExpiresAt)));
+    let reasons = ['Недостаточно согласованных метаданных: не считать ресурсы свободными.'];
+    if (completed || awaiting || running || expired || attention) {
+      reasons = completed ? [
+        'Копирование: сервер принял квитанцию ContentVerified. Это не подтверждает формат архива или наличие файла сейчас.',
+        'Лизинг stage завершён, но provisioning в целом не завершён.'
+      ] : ['Ресурсы удерживаются по согласованным метаданным наблюдения; требуется проверка истории и reconciliation. Это не доказательство остановки агента, его здоровья или состояния outbox.'];
+      reasons.push('Reservation Held: зарезервировано для staging ' + bytes(value.stagingBytes) + ' (метаданные). Квота не освобождена.',
+        'TTL заказа не доказывает истечение или удаление ресурсов. Автоочистки нет; срок lease не является TTL заказа.',
+        'Безопасный cleanup пока недоступен. Не повторяйте заказ для обхода квоты.');
+    }
+    const fragment = document.createDocumentFragment();
+    for (const reason of reasons) { const li = document.createElement('li'); li.textContent = reason; fragment.append(li); }
+    ui['detail-retention-reasons'].replaceChildren(fragment); ui['detail-retention'].hidden = false;
+  }
   async function loadDetail(id) {
     if (!authenticated || busy || !guid.test(id)) return;
     closeDetail(); selected = id; markSelection();
@@ -300,7 +340,7 @@
       ];
       const fragment = document.createDocumentFragment();
       for (const [label, content] of entries) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd); }
-      ui['detail-values'].replaceChildren(fragment); ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
+      ui['detail-values'].replaceChildren(fragment); renderRetention(value); ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
     } catch (error) {
       if (version !== detailGeneration || session !== generation || error.name === 'AbortError') return;
       if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
