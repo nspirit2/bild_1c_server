@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -17,6 +17,60 @@
   let projectGeneration = 0, catalogGeneration = 0, projectController = null, catalogController = null;
   let projectHistory = [null], catalogHistory = [null], projectNext = null, catalogNext = null;
   let projectBusy = false, catalogBusy = false, projectIds = new Set(), selectedProject = null;
+  let catalogIds = new Set(), selectedArchive = null, orderIntent = null, orderBusy = false, orderAccepted = false;
+  let orderGeneration = 0, orderController = null, forgottenOrder = false;
+  const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+  const lostOrderWarning = ' Локальный ключ забыт; заказ мог быть принят. Это не отмена: проверьте историю операций перед новым заказом.';
+  function discardOrder() {
+    const unknown = orderIntent && !orderAccepted; if (unknown) forgottenOrder = true;
+    orderGeneration++; orderController?.abort(); orderController = null;
+    orderIntent = null; orderBusy = false; orderAccepted = false; selectedArchive = null;
+    ui['order-panel'].hidden = true; ui['order-receipt'].replaceChildren(); ui['order-message'].textContent = '';
+    ui['order-abandon-ack'].checked = false;
+    return unknown;
+  }
+  function orderControls() {
+    const locked = !!orderIntent;
+    ui['order-name'].disabled = locked || orderBusy; ui['order-ttl'].disabled = locked || orderBusy;
+    ui['order-submit'].disabled = locked || orderBusy || !selectedArchive || !authenticated;
+    ui['order-retry'].hidden = !locked || orderAccepted; ui['order-retry'].disabled = orderBusy;
+    ui['order-new'].hidden = !orderAccepted; ui['order-new'].disabled = orderBusy;
+    ui['order-abandon-panel'].hidden = !locked || orderAccepted;
+    ui['order-abandon'].disabled = orderBusy || !ui['order-abandon-ack'].checked;
+    ui['order-panel'].setAttribute('aria-busy', String(orderBusy));
+  }
+  function chooseArchive(id) {
+    if (orderIntent || catalogBusy || projectBusy || !authenticated || !selectedProject || !projectIds.has(selectedProject.toLowerCase()) || !catalogIds.has(id.toLowerCase())) return;
+    selectedArchive = id; ui['order-panel'].hidden = false;
+    ui['order-context'].textContent = 'Проект: ' + selectedProject + ' · версия: ' + id;
+    ui['order-message'].textContent = 'Проверьте название и срок. Сервер повторно проверит доступ и квоты.';
+    ui['order-receipt'].replaceChildren(); if (!ui['order-ttl'].value) ui['order-ttl'].value = '1';
+    orderControls();
+  }
+  async function sendOrder() {
+    if (!orderIntent || orderBusy || orderAccepted || !authenticated) return;
+    const intent = orderIntent, session = generation, version = ++orderGeneration;
+    orderController = new AbortController(); orderBusy = true; controls();
+    ui['order-message'].textContent = 'Отправка того же запроса… Не закрывайте страницу.';
+    try {
+      const token = await csrf(orderController.signal);
+      if (session !== generation || version !== orderGeneration || intent !== orderIntent || !authenticated) return;
+      const response = await fetch('/api/environment-requests', { method:'POST', credentials:'same-origin', cache:'no-store', redirect:'error', signal:orderController.signal,
+        headers:{'Content-Type':'application/json','X-CSRF-TOKEN':token,'Idempotency-Key':intent.key}, body:intent.body });
+      if (response.status !== 202) throw new ApiError(response.status);
+      const value = await response.json();
+      if (session !== generation || version !== orderGeneration || intent !== orderIntent || !authenticated) return;
+      if (!value || !hasGuid(value.environmentId) || !hasGuid(value.requestId) || !hasGuid(value.jobId)) throw new Error('Invalid receipt');
+      orderAccepted = true;
+      const fragment = document.createDocumentFragment();
+      for (const [label, id] of [['Окружение',value.environmentId],['Запрос',value.requestId],['Задание',value.jobId]]) { const dt=document.createElement('dt'), dd=document.createElement('dd'); dt.textContent=label; dd.textContent=id; fragment.append(dt,dd); }
+      ui['order-receipt'].replaceChildren(fragment); ui['order-message'].textContent = 'Заказ принят. Это не StageCompleted и не Ready. Новый заказ доступен только отдельной кнопкой.';
+    } catch (error) {
+      if (session !== generation || version !== orderGeneration || intent !== orderIntent) return;
+      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      ui['order-message'].textContent = 'Нет подтверждённой квитанции. Заказ мог быть принят; повторите тот же запрос или сначала проверьте историю. ' + errorText(error);
+    } finally { if (version === orderGeneration) { orderBusy = false; controls(); } }
+  }
   class ApiError extends Error { constructor(status) { super('API request failed'); this.status = status; } }
   const text = value => typeof value === 'string' ? value.slice(0, 512) : '—';
   const stateText = value => typeof value === 'string' && Object.hasOwn(states, value) ? states[value] : text(value);
@@ -35,8 +89,10 @@
     for (const button of ui['operations-body'].querySelectorAll('button')) button.setAttribute('aria-expanded', String(button.dataset.environment === selected));
   }
   function archiveControls() {
-    const active = authenticated && !busy && !ui['archive-browser'].hidden;
-    ui['browse-archives'].disabled = !authenticated || busy;
+    const active = authenticated && !busy && !orderIntent && !ui['archive-browser'].hidden;
+    ui['browse-archives'].disabled = !authenticated || busy || !!orderIntent;
+    for (const button of ui['catalog-body'].querySelectorAll('button')) button.disabled = !!orderIntent || catalogBusy;
+    orderControls();
     ui['projects-select'].disabled = !active || projectBusy || projectIds.size === 0;
     ui['load-archives'].disabled = !active || projectBusy || catalogBusy || !selectedProject;
     ui['projects-previous'].disabled = !active || projectBusy || projectHistory.length <= 1;
@@ -46,6 +102,8 @@
     ui['archive-browser'].setAttribute('aria-busy', String(projectBusy || catalogBusy));
   }
   function resetCatalog() {
+    if (!orderIntent) discardOrder();
+    catalogIds = new Set();
     catalogGeneration++; catalogController?.abort(); catalogController = null;
     catalogHistory = [null]; catalogNext = null; catalogBusy = false;
     ui['catalog-body'].replaceChildren(); ui['catalog-observed'].textContent = '';
@@ -67,7 +125,7 @@
       (page.nextCursor == null || (typeof page.nextCursor === 'string' && page.nextCursor.length > 0 && page.nextCursor.length <= 512));
   }
   async function loadProjects(reset = false) {
-    if (!authenticated || ui['archive-browser'].hidden) return;
+    if (orderIntent || !authenticated || ui['archive-browser'].hidden) return;
     projectGeneration++; projectController?.abort(); projectController = new AbortController();
     const version = projectGeneration, session = generation;
     if (reset) projectHistory = [null];
@@ -100,26 +158,29 @@
     } finally { if (version === projectGeneration) { projectBusy = false; archiveControls(); } }
   }
   async function loadCatalog(reset = false) {
-    if (!authenticated || projectBusy || ui['archive-browser'].hidden || !selectedProject || !guid.test(selectedProject) || !projectIds.has(selectedProject.toLowerCase())) return;
+    if (orderIntent || !authenticated || projectBusy || ui['archive-browser'].hidden || !selectedProject || !guid.test(selectedProject) || !projectIds.has(selectedProject.toLowerCase())) return;
     catalogGeneration++; catalogController?.abort(); catalogController = new AbortController();
     const version = catalogGeneration, session = generation, projectVersion = projectGeneration, projectId = selectedProject;
     if (reset) catalogHistory = [null];
-    catalogBusy = true; ui['catalog-body'].replaceChildren(); ui['catalog-message'].textContent = 'Загрузка версий…'; archiveControls();
+    discardOrder(); catalogIds = new Set(); catalogBusy = true; ui['catalog-body'].replaceChildren(); ui['catalog-message'].textContent = 'Загрузка версий…'; archiveControls();
     const query = new URLSearchParams({limit:'25'});
     if (catalogHistory.at(-1)) query.set('cursor', catalogHistory.at(-1));
     try {
       const page = await request('/api/projects/' + encodeURIComponent(projectId) + '/archive-versions?' + query.toString(), catalogController.signal);
       if (version !== catalogGeneration || session !== generation || projectVersion !== projectGeneration || projectId !== selectedProject || !authenticated) return;
-      if (!validPage(page) || page.items.some(item => !guid.test(item.archiveVersionId) || !['dt','bak'].includes(item.format))) throw new Error('Invalid catalog response');
+      if (!validPage(page) || page.items.some(item => !hasGuid(item.archiveVersionId) || !['dt','bak'].includes(item.format))) throw new Error('Invalid catalog response');
       const fragment = document.createDocumentFragment();
       for (const item of page.items) {
         const row = document.createElement('tr'); cell(row, item.archiveVersionId); cell(row, item.format);
-        cell(row, bytes(item.sizeBytes)); cell(row, bytes(item.estimatedDbBytes)); fragment.append(row);
+        cell(row, bytes(item.sizeBytes)); cell(row, bytes(item.estimatedDbBytes));
+        catalogIds.add(item.archiveVersionId.toLowerCase());
+        const button=document.createElement('button'); button.type='button'; button.textContent='Выбрать для заказа';
+        button.addEventListener('click', () => chooseArchive(item.archiveVersionId)); cell(row, '').append(button); fragment.append(row);
       }
       ui['catalog-body'].replaceChildren(fragment); catalogNext = page.nextCursor || null;
       ui['catalog-page'].textContent = 'Страница версий ' + catalogHistory.length;
       ui['catalog-observed'].textContent = 'Наблюдение сервера: ' + date(page.observedAt);
-      ui['catalog-message'].textContent = page.items.length ? 'Версий на странице: ' + page.items.length + '. Заказ здесь не создаётся.' : 'Доступных версий нет.';
+      ui['catalog-message'].textContent = page.items.length ? 'Версий на странице: ' + page.items.length + '. Выберите версию для stage-заказа.' : 'Доступных версий нет.';
     } catch (error) {
       if (version !== catalogGeneration || session !== generation || projectVersion !== projectGeneration || error.name === 'AbortError') return;
       if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
@@ -131,9 +192,9 @@
     return { version:generation, signal:controller.signal };
   }
   function controls() {
-    ui['refresh'].disabled = busy; ui['state-filter'].disabled = busy;
-    ui['previous'].disabled = busy || history.length <= 1;
-    ui['next'].disabled = busy || !nextCursor;
+    ui['refresh'].disabled = busy || !!orderIntent; ui['state-filter'].disabled = busy || !!orderIntent;
+    ui['previous'].disabled = busy || !!orderIntent || history.length <= 1;
+    ui['next'].disabled = busy || !!orderIntent || !nextCursor;
     ui['login-submit'].disabled = busy;
     for (const button of ui['operations-body'].querySelectorAll('button')) button.disabled = busy || !button.dataset.environment;
     ui['workspace'].setAttribute('aria-busy', String(busy));
@@ -145,6 +206,7 @@
     ui['empty-list'].hidden = true; ui.observed.textContent = ''; ui['page-number'].textContent = 'Страница 1'; closeDetail();
   }
   function showLogin(value) {
+    if (discardOrder()) value += lostOrderWarning;
     begin(); authenticated = false; busy = false; clearData();
     ui.workspace.hidden = true; ui['login-panel'].hidden = false; ui.logout.hidden = true;
     ui['current-user'].textContent = 'Нет активного сеанса'; ui.logout.textContent = 'Выйти'; ui.password.value = '';
@@ -196,7 +258,7 @@
     ui['operations-body'].replaceChildren(fragment);
   }
   async function loadList(reset = false) {
-    if (!authenticated) return;
+    if (!authenticated || orderIntent) return;
     const op = begin(); if (reset) { history = [null]; nextCursor = null; }
     busy = true; ui['operations-body'].replaceChildren(); ui['empty-list'].hidden = true; controls(); message('Загрузка операций…');
     const query = new URLSearchParams({limit:'25'});
@@ -275,11 +337,12 @@
     } finally { ui.password.value = ''; if (op.version === generation) { busy = false; controls(); } }
   });
   ui.logout.addEventListener('click', async () => {
+    const warning = forgottenOrder || (orderIntent && !orderAccepted) ? lostOrderWarning : '';
     showLogin('Выход из сеанса…'); const op = begin(); busy = true; controls();
     try {
       const token = await csrf(op.signal);
       await request('/api/auth/logout', op.signal, {method:'POST',headers:{'X-CSRF-TOKEN':token}}, false);
-      if (op.version === generation) message('Вы вышли из сеанса.');
+      if (op.version === generation) message('Вы вышли из сеанса.' + warning);
     } catch (error) {
       if (op.version !== generation || error.name === 'AbortError') return;
       const expired = error instanceof ApiError && error.status === 401;
@@ -287,28 +350,45 @@
         ui['current-user'].textContent = 'Выход не подтверждён';
         ui.logout.textContent = 'Повторить выход'; ui.logout.hidden = false;
       }
-      message(expired ? 'Сеанс уже завершён.' : 'Выход не подтверждён сервером. Данные скрыты; повторите выход после восстановления связи.', !expired);
+      message((expired ? 'Сеанс уже завершён.' : 'Выход не подтверждён сервером. Данные скрыты; повторите выход после восстановления связи.') + warning, !expired);
     } finally { if (op.version === generation) { busy = false; controls(); } }
   });
   ui.refresh.addEventListener('click', () => loadList(true));
   ui['state-filter'].addEventListener('change', () => loadList(true));
-  ui.previous.addEventListener('click', () => { if (!busy && history.length > 1) { history.pop(); loadList(); } });
-  ui.next.addEventListener('click', () => { if (!busy && nextCursor) { history.push(nextCursor); loadList(); } });
+  ui.previous.addEventListener('click', () => { if (!orderIntent && !busy && history.length > 1) { history.pop(); loadList(); } });
+  ui.next.addEventListener('click', () => { if (!orderIntent && !busy && nextCursor) { history.push(nextCursor); loadList(); } });
   ui['close-detail'].addEventListener('click', closeDetail);
   ui['browse-archives'].addEventListener('click', () => {
-    if (!authenticated || busy) return;
+    if (orderIntent || !authenticated || busy) return;
     clearArchiveBrowser(); ui['archive-browser'].hidden = false; ui['browse-archives'].setAttribute('aria-expanded', 'true'); loadProjects(true);
   });
   ui['projects-select'].addEventListener('change', () => {
+    if (orderIntent) { ui['projects-select'].value = selectedProject; return; }
     resetCatalog(); const id = ui['projects-select'].value;
     selectedProject = typeof id === 'string' && guid.test(id) && projectIds.has(id.toLowerCase()) ? id : null;
     archiveControls();
   });
   ui['load-archives'].addEventListener('click', () => { if (!catalogBusy) loadCatalog(true); });
-  ui['projects-previous'].addEventListener('click', () => { if (!projectBusy && projectHistory.length > 1) { projectHistory.pop(); loadProjects(); } });
-  ui['projects-next'].addEventListener('click', () => { if (!projectBusy && projectNext) { projectHistory.push(projectNext); loadProjects(); } });
-  ui['catalog-previous'].addEventListener('click', () => { if (!catalogBusy && catalogHistory.length > 1) { catalogHistory.pop(); loadCatalog(); } });
-  ui['catalog-next'].addEventListener('click', () => { if (!catalogBusy && catalogNext) { catalogHistory.push(catalogNext); loadCatalog(); } });
+  ui['projects-previous'].addEventListener('click', () => { if (!orderIntent && !projectBusy && projectHistory.length > 1) { projectHistory.pop(); loadProjects(); } });
+  ui['projects-next'].addEventListener('click', () => { if (!orderIntent && !projectBusy && projectNext) { projectHistory.push(projectNext); loadProjects(); } });
+  ui['catalog-previous'].addEventListener('click', () => { if (!orderIntent && !catalogBusy && catalogHistory.length > 1) { catalogHistory.pop(); loadCatalog(); } });
+  ui['catalog-next'].addEventListener('click', () => { if (!orderIntent && !catalogBusy && catalogNext) { catalogHistory.push(catalogNext); loadCatalog(); } });
+  ui['order-form'].addEventListener('submit', event => {
+    event.preventDefault(); if (orderIntent || orderBusy || !authenticated) return;
+    const name=ui['order-name'].value.trim(), ttlRaw=ui['order-ttl'].value;
+    const ttl=Number(ttlRaw);
+    if (!selectedProject || !hasGuid(selectedProject) || !projectIds.has(selectedProject.toLowerCase()) || !selectedArchive || !hasGuid(selectedArchive) || !catalogIds.has(selectedArchive.toLowerCase()) || !name || name.length>120 || /[\u0000-\u001f\u007f-\u009f]/.test(name) || !/^\d+$/.test(ttlRaw) || !Number.isInteger(ttl) || ttl<1 || ttl>36500) { ui['order-message'].textContent='Проверьте текущий проект, версию, название (1–120 без управляющих символов) и целый срок 1–36500 дней.'; return; }
+    try {
+      const key=crypto.randomUUID(); if (!hasGuid(key)) throw new Error('Invalid generated key');
+      orderIntent=Object.freeze({key,body:JSON.stringify({projectId:selectedProject,displayName:name,mode:'archive',source:{archiveVersionId:selectedArchive},ttlDays:ttl})});
+    } catch { ui['order-message'].textContent='Безопасная генерация ключа недоступна. Заказ не отправлен.'; return; }
+    ui['order-abandon-ack'].checked=false; sendOrder();
+  });
+  ui['order-retry'].addEventListener('click', sendOrder);
+  ui['order-new'].addEventListener('click', () => { if (!orderAccepted || orderBusy) return; discardOrder(); ui['order-name'].value=''; ui['order-message'].textContent='Выберите версию для нового заказа.'; controls(); });
+  ui['order-abandon-ack'].addEventListener('change', orderControls);
+  ui['order-abandon'].addEventListener('click', () => { if (!orderIntent || orderAccepted || orderBusy || !ui['order-abandon-ack'].checked) return; discardOrder(); message(lostOrderWarning,true); controls(); });
+  globalThis.addEventListener('beforeunload', event => { if (orderIntent && !orderAccepted) { event.preventDefault(); event.returnValue=''; } });
   checkSession();
 })();
 // end

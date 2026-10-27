@@ -39,6 +39,7 @@
 - [Встроенный операторский экран /stage](docs/stage-operator-ui.md)
 - [Безопасный каталог версий архивов для заказа](docs/archive-catalog-browse.md)
 - [UI проектов/архивов и реальный Windows SQL прогон](docs/project-archive-browser.md)
+- [Форма заказа из архива и exact retry](docs/archive-order-ui.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

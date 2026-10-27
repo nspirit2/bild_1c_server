@@ -14,7 +14,7 @@
     <div class="account"><span id="current-user">Проверка сеанса…</span><button id="logout" class="secondary" type="button" hidden>Выйти</button></div>
   </header>
   <main>
-    <div class="page-title"><div><p class="eyebrow">Операторская панель · только чтение</p><h1>Подготовка архивов</h1><p class="subtitle">Состояние серверных заданий, квитанций и завершения stage-операций.</p></div></div>
+    <div class="page-title"><div><p class="eyebrow">Операторская панель · stage-заказы</p><h1>Подготовка архивов</h1><p class="subtitle">Состояние серверных заданий, квитанций и завершения stage-операций.</p></div></div>
     <aside class="notice" aria-label="Границы проверки"><strong>Подготовка — не восстановление базы.</strong> ContentVerified — подтверждение содержимого агентом, не проверка формата и не доказательство наличия файла сейчас. StageCompleted не означает Ready. Reservation и staging quota могут оставаться занятыми.</aside>
     <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">Проверяем сеанс…</p>
     <section id="login-panel" class="card login-card" aria-labelledby="login-title" hidden>
@@ -34,7 +34,7 @@
         <nav class="pagination" aria-label="Страницы операций"><button id="previous" class="secondary" type="button" disabled>← Назад</button><span id="page-number">Страница 1</span><button id="next" class="secondary" type="button" disabled>Далее →</button></nav>
       </section>
       <section class="card" aria-labelledby="archive-browser-title">
-        <div class="card-header"><div><h2 id="archive-browser-title">Архивы проекта</h2><p class="muted">Только просмотр разрешённых версий. Заказ и восстановление здесь не выполняются.</p></div><button id="browse-archives" class="secondary" type="button" aria-controls="archive-browser" aria-expanded="false">Архивы проекта</button></div>
+        <div class="card-header"><div><h2 id="archive-browser-title">Архивы проекта</h2><p class="muted">Выберите разрешённую версию для stage-заказа. Восстановление базы не выполняется.</p></div><button id="browse-archives" class="secondary" type="button" aria-controls="archive-browser" aria-expanded="false">Архивы проекта</button></div>
         <div id="archive-browser" class="archive-browser" hidden>
           <p id="projects-message" role="status" aria-live="polite" aria-atomic="true"></p>
           <label for="projects-select">Проект на текущей странице</label><select id="projects-select" disabled><option value="">Выберите проект</option></select>
@@ -42,9 +42,23 @@
           <p id="projects-observed" class="muted"></p>
           <nav class="pagination" aria-label="Страницы проектов"><button id="projects-previous" class="secondary" type="button" disabled>← Проекты</button><span id="projects-page">Страница проектов 1</span><button id="projects-next" class="secondary" type="button" disabled>Проекты →</button></nav>
           <p id="catalog-message" role="status" aria-live="polite" aria-atomic="true">Выберите проект для просмотра версий.</p><p id="catalog-observed" class="muted"></p>
-          <div class="table-wrap"><table><caption class="sr-only">Разрешённые версии архивов выбранного проекта</caption><thead><tr><th scope="col">Версия архива</th><th scope="col">Формат</th><th scope="col">Размер архива</th><th scope="col">Оценка размера базы</th></tr></thead><tbody id="catalog-body"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Разрешённые версии архивов выбранного проекта</caption><thead><tr><th scope="col">Версия архива</th><th scope="col">Формат</th><th scope="col">Размер архива</th><th scope="col">Оценка размера базы</th><th scope="col">Выбор</th></tr></thead><tbody id="catalog-body"></tbody></table></div>
           <nav class="pagination" aria-label="Страницы версий"><button id="catalog-previous" class="secondary" type="button" disabled>← Версии</button><span id="catalog-page">Страница версий 1</span><button id="catalog-next" class="secondary" type="button" disabled>Версии →</button></nav>
-          <p class="footnote">Ready в каталоге — метаданные публикации, не проверка формата, наличия файла, свободной квоты или готовности базы. Идентификатор версии предназначен для выбора в будущем заказе.</p>
+          <p class="footnote">Ready в каталоге — метаданные публикации, не проверка формата, наличия файла, свободной квоты или готовности базы. Сервер повторно проверяет права, квоты и источник при заказе.</p>
+          <section id="order-panel" class="order-panel" aria-labelledby="order-title" hidden>
+            <h3 id="order-title">Заказ подготовки архива</h3>
+            <p class="notice">Это stage-заказ, не restore и не готовая база Ready. При неизвестном исходе повторяется тот же заказ с тем же ключом. Перезагрузка страницы или выход теряет локальный ключ: сначала проверьте историю операций.</p>
+            <p id="order-context" class="muted"></p>
+            <form id="order-form">
+              <label for="order-name">Название окружения</label><input id="order-name" maxlength="120" required autocomplete="off">
+              <label for="order-ttl">Срок, дней (квоты проверит сервер)</label><input id="order-ttl" type="number" min="1" max="36500" step="1" value="1" required>
+              <button id="order-submit" type="submit">Создать stage-заказ</button>
+            </form>
+            <p id="order-message" role="status" aria-live="polite" aria-atomic="true"></p>
+            <dl id="order-receipt" class="detail-grid"></dl>
+            <div class="order-actions"><button id="order-retry" type="button" hidden>Повторить тот же заказ</button><button id="order-new" class="secondary" type="button" hidden>Новый заказ</button></div>
+            <div id="order-abandon-panel" hidden><label class="acknowledge"><input id="order-abandon-ack" type="checkbox"> Понимаю: заказ мог быть принят. Забыть локальный ключ — не отменить заказ. Проверю историю перед новым заказом.</label><button id="order-abandon" class="secondary" type="button">Забыть локальный запрос</button></div>
+          </section>
         </div>
       </section>
       <section id="detail-panel" class="card detail-card" aria-labelledby="detail-title" hidden>
@@ -53,7 +67,7 @@
         <p class="footnote">Это наблюдение состояния, не разрешение на reset, удаление, повторную выдачу или restore. При NeedsAttention / LeaseExpired / Inconsistent сверяйте audit, lease/fence и журнал агента через защищённый канал.</p>
       </section>
     </section>
-    <footer>Только наблюдение. Эта панель не выполняет restore, cleanup, reset или освобождение ресурсов.</footer>
+    <footer>Наблюдение и stage-заказы. Эта панель не выполняет restore, cleanup, reset или освобождение ресурсов.</footer>
   </main>
 </body>
 </html>

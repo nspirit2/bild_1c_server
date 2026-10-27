@@ -16,7 +16,7 @@ class Element {
 function harness(fetch) {
   const nodes = new Map();
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment') };
-  vm.runInNewContext(source, { document, fetch, AbortController, URLSearchParams, Intl, Date, console });
+  vm.runInNewContext(source, { document, fetch, AbortController, URLSearchParams, Intl, Date, console, crypto:require('node:crypto').webcrypto, addEventListener(name, handler) { nodes.set(name, handler); } });
   return nodes;
 }
 const ok = body => ({ ok: true, status: 200, json: async () => body });
@@ -296,5 +296,59 @@ test('late projects response after stage filter change cannot restore choices', 
   pending.resolve(ok({items:[{projectId:env1,name:'Старый проект'}],nextCursor:null}));await flush();
   assert.equal(signal.aborted,true);assert.equal(nodes.get('archive-browser').hidden,true);
   assert.equal(nodes.get('projects-select').children.length,0);assert.equal(nodes.get('load-archives').disabled,true);
+});
+async function orderHarness(post, logout = async()=>ok(null)) {
+  const calls=[];
+  const nodes=harness(async (route,options) => {
+    calls.push({route,options});
+    if(route==='/api/auth/me') return ok({name:'operator'});
+    if(route.startsWith('/api/stage-operations')) return ok({items:[],nextCursor:null});
+    if(route.startsWith('/api/projects/browse')) return ok({items:[{projectId:env1,name:'Project'}],nextCursor:null});
+    if(route.includes('/archive-versions')) return ok({items:[{archiveVersionId:env2,format:'dt',sizeBytes:10,estimatedDbBytes:20}],nextCursor:null});
+    if(route==='/api/auth/csrf') return ok({token:'fresh-'+calls.length});
+    if(route==='/api/auth/logout') return logout();
+    if(route==='/api/environment-requests') return post(options);
+    throw new Error('Unexpected route '+route);
+  });
+  await flush(); nodes.get('browse-archives').listeners.click(); await flush();
+  nodes.get('projects-select').value=env1; nodes.get('projects-select').listeners.change();
+  nodes.get('load-archives').listeners.click(); await flush();
+  nodes.get('catalog-body').querySelectorAll('button')[0].listeners.click();
+  nodes.get('order-name').value='  My stage  ';nodes.get('order-ttl').value='7';
+  return {nodes,calls,submit(){nodes.get('order-form').listeners.submit({preventDefault(){}});}};
+}
+const accepted=()=>({status:202,json:async()=>({environmentId:env1,requestId:env2,jobId:env1})});
+test('order sends exact immutable payload UUID key and fresh CSRF only on submit',async()=>{
+ const h=await orderHarness(async()=>accepted());assert.equal(h.calls.some(c=>c.route==='/api/environment-requests'),false);
+ h.submit();await flush();const p=h.calls.find(c=>c.route==='/api/environment-requests');
+ assert.deepEqual(JSON.parse(p.options.body),{projectId:env1,displayName:'My stage',mode:'archive',source:{archiveVersionId:env2},ttlDays:7});
+ assert.match(p.options.headers['Idempotency-Key'],/^[0-9a-f-]{36}$/);assert.match(p.options.headers['X-CSRF-TOKEN'],/^fresh-/);assert.equal(p.options.credentials,'same-origin');assert.equal(h.nodes.get('order-new').hidden,false);
+});
+test('unknown network outcome retries identical payload and key with fresh CSRF',async()=>{
+ let n=0;const h=await orderHarness(async()=>{if(++n===1)throw Error('network');return accepted();});h.submit();await flush();
+ h.nodes.get('order-name').value='tampered';h.nodes.get('order-retry').listeners.click();await flush();
+ const p=h.calls.filter(c=>c.route==='/api/environment-requests');assert.equal(p.length,2);assert.equal(p[0].options.body,p[1].options.body);assert.equal(p[0].options.headers['Idempotency-Key'],p[1].options.headers['Idempotency-Key']);assert.notEqual(p[0].options.headers['X-CSRF-TOKEN'],p[1].options.headers['X-CSRF-TOKEN']);
+});
+test('malformed 202 receipt keeps intent and does not allow a new order',async()=>{
+ const h=await orderHarness(async()=>({status:202,json:async()=>({requestId:env1})}));h.submit();await flush();assert.equal(h.nodes.get('order-new').hidden,true);assert.equal(h.nodes.get('order-retry').hidden,false);assert.equal(h.nodes.get('order-name').disabled,true);
+});
+test('duplicate submit and retry clicks while sending create only one POST',async()=>{
+ const pending=deferred();const h=await orderHarness(()=>pending.promise);h.submit();h.submit();await flush();h.nodes.get('order-retry').listeners.click();await flush();assert.equal(h.calls.filter(c=>c.route==='/api/environment-requests').length,1);pending.resolve(accepted());await flush();
+});
+test('late POST after logout cannot display receipt and warning survives logout',async()=>{
+ const pending=deferred();const h=await orderHarness(()=>pending.promise);h.submit();await flush();await h.nodes.get('logout').listeners.click();pending.resolve(accepted());await flush();assert.equal(h.nodes.get('order-receipt').children.length,0);assert.equal(h.nodes.get('workspace').hidden,true);assert.match(h.nodes.get('message').textContent,/мог быть принят/);
+});
+test('invalid order input never obtains CSRF or sends POST',async()=>{
+ const h=await orderHarness(async()=>accepted());for(const [name,ttl] of [['','1'],['bad\u0001name','1'],['x','0'],['x','1.5'],['x','36501']]){h.nodes.get('order-name').value=name;h.nodes.get('order-ttl').value=ttl;h.submit();await flush();}assert.equal(h.calls.some(c=>c.route==='/api/auth/csrf'),false);assert.equal(h.calls.some(c=>c.route==='/api/environment-requests'),false);
+});
+test('pending intent blocks project/filter mutations and beforeunload warns',async()=>{
+ const h=await orderHarness(async()=>({status:409}));h.submit();await flush();const before=h.calls.length;
+ h.nodes.get('projects-select').value=env2;h.nodes.get('projects-select').listeners.change();h.nodes.get('refresh').listeners.click();h.nodes.get('state-filter').listeners.change();await flush();assert.equal(h.calls.length,before);assert.equal(h.nodes.get('projects-select').value,env1);let prevented=false;h.nodes.get('beforeunload')({preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(h.nodes.get('order-retry').hidden,false);
+});
+test('session loss clears local intent rather than retrying under another identity',async()=>{
+ const h=await orderHarness(async()=>({status:401}));h.submit();await flush();h.nodes.get('order-retry').listeners.click();await flush();assert.equal(h.calls.filter(c=>c.route==='/api/environment-requests').length,1);assert.equal(h.nodes.get('login-panel').hidden,false);assert.match(h.nodes.get('message').textContent,/мог быть принят/);
+});
+test('forgotten intent warning survives failed logout and explicit logout retry',async()=>{
+ const h=await orderHarness(async()=>({status:503}),async()=>{throw Error('network');});h.submit();await flush();await h.nodes.get('logout').listeners.click();assert.match(h.nodes.get('message').textContent,/мог быть принят/);await h.nodes.get('logout').listeners.click();assert.match(h.nodes.get('message').textContent,/мог быть принят/);assert.equal(h.nodes.get('order-panel').hidden,true);
 });
 // end

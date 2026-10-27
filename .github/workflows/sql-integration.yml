@@ -17,6 +17,7 @@ on:
       - feat/stage-operator-ui
       - feat/archive-catalog
       - feat/project-archive-browser
+      - feat/archive-order-ui
 
 permissions:
   contents: read
