@@ -736,6 +736,39 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("StageCleanupAuthorizations");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageCleanupResultRecord", b =>
+                {
+                    b.Property<Guid>("ResultId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ArtifactId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AuthorizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("StageFencingToken")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ResultId");
+
+                    b.HasIndex("AgentId");
+
+                    b.HasIndex("ArtifactId")
+                        .IsUnique();
+
+                    b.HasIndex("AuthorizationId")
+                        .IsUnique();
+
+                    b.ToTable("StageCleanupResults");
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.StageRetirementIntent", b =>
                 {
                     b.Property<Guid>("RetirementId")
@@ -1180,6 +1213,27 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.StageRetirementIntent", null)
                         .WithMany()
                         .HasForeignKey("RetirementId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageCleanupResultRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StagedArtifact", null)
+                        .WithMany()
+                        .HasForeignKey("ArtifactId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StageCleanupAuthorizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AuthorizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

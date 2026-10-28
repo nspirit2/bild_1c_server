@@ -24,6 +24,7 @@ builder.Services.AddBuildSystemInfrastructure(connection);
 builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Configuration.GetValue<bool>("ArchiveStage:Enabled") });
 builder.Services.AddSingleton(new StageRetirementOptions { Enabled = builder.Configuration.GetValue<bool>("StageRetirement:Enabled") });
 builder.Services.AddSingleton(new StageCleanupOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanup:Enabled") });
+builder.Services.AddSingleton(new StageCleanupResultOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanupResult:Enabled") });
 builder.Services.AddIdentity<BuildSystemUser, IdentityRole<Guid>>(options =>
 {
     options.Password.RequiredLength = 12;

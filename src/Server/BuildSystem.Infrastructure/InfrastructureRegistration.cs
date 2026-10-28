@@ -25,6 +25,8 @@ public static class InfrastructureRegistration
         services.AddScoped<IStageRetirementPlans, SqlStageRetirementPlans>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new StageCleanupOptions());
         services.AddScoped<IStageCleanup, SqlStageCleanup>();
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new StageCleanupResultOptions());
+        services.AddScoped<IStageCleanupResults, SqlStageCleanupResults>();
         services.AddScoped<IStageOperations, SqlStageOperations>();
         services.AddScoped<IArchiveCatalogBrowse, SqlArchiveCatalogBrowse>();
         services.AddScoped<IProjectBrowse, SqlProjectBrowse>();

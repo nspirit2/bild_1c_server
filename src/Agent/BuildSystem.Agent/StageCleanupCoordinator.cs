@@ -21,6 +21,8 @@ public sealed class StageCleanupCoordinator(AgentJournal journal, ArchiveStaging
         // rather than treating a recreated artifact directory as already safely deleted.
         await staging.CleanupAsync(new ArchiveCleanupRequest(grant.AuthorizationId, p.ArtifactId,
             p.ReservationId, p.ArchiveVersionId, intent.RootId, sourceNameHash, p.Sha256, p.SizeBytes, format), ct);
+        // Local state and the one stable result-outbox identity commit atomically after verification.
+        // This does not deliver the result, acknowledge it remotely, or release any quota.
         journal.MarkCleanupDeletedLocal(authorizationId);
     }
 }

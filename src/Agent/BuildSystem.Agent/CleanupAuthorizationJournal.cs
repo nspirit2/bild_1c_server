@@ -5,7 +5,9 @@ namespace BuildSystem.Agent;
 
 public sealed partial class AgentJournal
 {
-    private void InitializeCleanupAuthorizations() => Execute("""
+    private void InitializeCleanupAuthorizations()
+    {
+        Execute("""
         CREATE TABLE IF NOT EXISTS cleanup_authorizations(
             id TEXT PRIMARY KEY,retirement TEXT NOT NULL UNIQUE,artifact TEXT NOT NULL UNIQUE,
             payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state='Prepared'));
@@ -13,6 +15,8 @@ public sealed partial class AgentJournal
             authorization TEXT PRIMARY KEY REFERENCES cleanup_authorizations(id),
             state TEXT NOT NULL CHECK(state IN ('Deleting','DeletedLocal')));
         """);
+        InitializeCleanupResults();
+    }
 
     /// <summary>Persists prepared authority only. Does not execute cleanup or prove current remote authorization.
     /// Every store, including replay, requires a settled and acknowledged local stage plus globally quiet outboxes.</summary>
@@ -99,8 +103,12 @@ public sealed partial class AgentJournal
     {
         using var transaction = _db.BeginTransaction();
         var state = GetCleanupLocalState(authorizationId);
-        if (state is not ("Deleting" or "DeletedLocal") || GetCleanupAuthorization(authorizationId) is null)
+        var grant = GetCleanupAuthorization(authorizationId);
+        if (state is not ("Deleting" or "DeletedLocal") || grant is null)
             throw new InvalidOperationException("Cleanup execution was not durably begun.");
+        // Both local success and the one durable result commit together. Legacy DeletedLocal rows
+        // gain a result only after this coordinator path has reverified filesystem completion.
+        StoreCleanupResult(grant);
         Execute("UPDATE cleanup_local_results SET state='DeletedLocal' WHERE authorization=$0", authorizationId.ToString());
         transaction.Commit();
     }

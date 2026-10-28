@@ -54,6 +54,8 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
     private void GuardImmutableSnapshots()
     {
         ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<StageCleanupResultRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Stage cleanup results are immutable.");
         if (ChangeTracker.Entries<StageCleanupAuthorizationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Stage cleanup authorizations are immutable.");
         if (ChangeTracker.Entries<StageRetirementIntent>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
@@ -77,6 +79,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureArtifactModel(b);
         ConfigureStageRetirementModel(b);
         ConfigureStageCleanupModel(b);
+        ConfigureStageCleanupResultModel(b);
         b.Entity<ProjectMembership>().HasKey(x => new { x.UserId, x.ProjectId });
         b.Entity<ArchiveRootProject>().HasKey(x => new { x.RootId, x.ProjectId });
         b.Entity<ProjectPool>().HasKey(x => new { x.ProjectId, x.PoolId });
