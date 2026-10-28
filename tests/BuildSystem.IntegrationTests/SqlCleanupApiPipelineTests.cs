@@ -186,6 +186,84 @@ public sealed class SqlCleanupApiPipelineTests
         await using var db = sql.NewContext(); Assert.Empty(await db.StageCleanupResults.ToListAsync());
     }
     [SqlServerFact]
+    public async Task Concurrent_actual_http_replays_commit_one_result_and_audit_and_reject_a_new_result_id()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        using var factory = new PipelineFactory(sql.ConnectionString);
+        // Initialize the host/client once before issuing independent concurrent requests.
+        using var client = factory.Client(seed.Credential.Token); var report = Report(seed);
+        int before; await using (var db = sql.NewContext()) before = await db.AuditEvents.CountAsync();
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => client.PostAsJsonAsync(Route, report)));
+        StageCleanupResultReceipt? receipt = null;
+        try
+        {
+            foreach (var response in responses)
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var current = await response.Content.ReadFromJsonAsync<StageCleanupResultReceipt>();
+                Assert.NotNull(current);
+                Assert.Equal(report.ResultId, current.ResultId);
+                Assert.Equal(report.AuthorizationId, current.AuthorizationId);
+                Assert.Equal(report.ArtifactId, current.ArtifactId);
+                Assert.Equal("DeletedReported", current.State);
+                if (receipt is null) receipt = current;
+                else Assert.Equal(receipt, current);
+            }
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+        using var changedId = await client.PostAsJsonAsync(Route, report with { ResultId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Conflict, changedId.StatusCode);
+        await using (var db = sql.NewContext())
+        {
+            var stored = Assert.Single(await db.StageCleanupResults.ToListAsync());
+            Assert.Equal(report.ResultId, stored.ResultId);
+            Assert.Equal(before + 1, await db.AuditEvents.CountAsync());
+        }
+    }
+    [SqlServerFact]
+    public async Task Actual_http_rejects_wrong_pinned_cleanup_tuple_without_mutating_accepted_history()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        using var factory = new PipelineFactory(sql.ConnectionString);
+        using var client = factory.Client(seed.Credential.Token); var report = Report(seed);
+        var mismatches = new[]
+        {
+            report with { RetirementId = Guid.NewGuid() },
+            report with { JobId = Guid.NewGuid() },
+            report with { ArtifactId = Guid.NewGuid() },
+            report with { FencingToken = report.FencingToken + 1 }
+        };
+        int before; await using (var db = sql.NewContext()) before = await db.AuditEvents.CountAsync();
+        foreach (var mismatch in mismatches)
+        {
+            using var rejected = await client.PostAsJsonAsync(Route, mismatch);
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        }
+        await using (var db = sql.NewContext())
+        {
+            Assert.Empty(await db.StageCleanupResults.ToListAsync());
+            Assert.Equal(before, await db.AuditEvents.CountAsync());
+        }
+        using var accepted = await client.PostAsJsonAsync(Route, report);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var receipt = await accepted.Content.ReadFromJsonAsync<StageCleanupResultReceipt>();
+        Assert.NotNull(receipt);
+        using var changedId = await client.PostAsJsonAsync(Route, report with { ResultId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Conflict, changedId.StatusCode);
+        // Conflicts cannot rewrite the receipt returned by a later exact replay.
+        using var replay = await client.PostAsJsonAsync(Route, report);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(receipt, await replay.Content.ReadFromJsonAsync<StageCleanupResultReceipt>());
+        await using (var db = sql.NewContext())
+        {
+            var stored = Assert.Single(await db.StageCleanupResults.ToListAsync());
+            Assert.Equal(report.ResultId, stored.ResultId);
+            Assert.Equal(report.AuthorizationId, stored.AuthorizationId);
+            Assert.Equal(report.ArtifactId, stored.ArtifactId);
+            Assert.Equal(before + 1, await db.AuditEvents.CountAsync());
+        }
+    }
+    [SqlServerFact]
     public async Task Malformed_cleanup_result_bodies_are_rejected_without_receipt_or_audit_writes()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

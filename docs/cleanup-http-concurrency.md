@@ -1,0 +1,9 @@
+# HTTP concurrent replay: один результат, один release
+
+ТриSQLfactsчерезнастоящийAPIpipelineи disposableSQLDB дополняютслужебныеconcurrencytests. ШестьодновременныхHTTPSPOSTсоднимAgentToken/ReportStageCleanupдаютодинаковыйDeletedReportedreceipt, **одну**resultстроку+audit; новыйResultId ктойжеauthorization409. Неверныйretirement/job/artifact/fenceдоуспехаотклоняется409безпобочныхзаписей; послепринятияcorrecttuple конфликтневытесняетисторическийreceipt.
+
+ШестьодновременныхhumanPOSTсреальнымиIdentityadmincookie+свежимCSRF даютодинStagingAllocationReleaseReceipt, ledgerone+auditone. ПриэтомHeldStagingBytes0; historicalreservedstagingсохранён; reservationHeld, ReservedBytesDBallocation иenvironmentUnsettledнеосвобождены. ТакиеотдельныеисторическиесмыслынаблюдаемывSQL/APIбезавтоматическогоудаления.
+
+Локально **508.NETpassed,0failed,114SQLskipped**, Node38passed. **Windows114SQLpassed,0failed,0skipped**,37s, TestRuns\\CleanupConcurrency-20261028. TestDBleftovers0, mainBuildSystem4миграциинеизменны. CIдля5c48125 SQLsuccess40733202755, Buildещёвыполнялсянамоментзаписи. НовыйпакетдолженбытьпроверенсвоимCIпослеpush.
+
+Границы: этоTestServerHTTP/realSQL, несквознойIIS/TLS/browser. TLSпроверенотдельно, browserSameSiteнеподтверждён. НикакихproductionDB/IIS/flags/workerchanges.

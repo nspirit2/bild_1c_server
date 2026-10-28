@@ -172,6 +172,41 @@ public sealed class SqlCleanupAdminCookieTests
         Assert.True((await verify.TestEnvironments.SingleAsync()).HasUnsettledProvisioningOperation);
     }
     [SqlServerFact]
+    public async Task Six_concurrent_real_admin_cookie_releases_share_one_receipt_and_preserve_database_reservation()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        using var factory = new CookieFactory(sql.ConnectionString); var password = await IdentityPassword(factory, seed.Admin, "Administrator");
+        using var client = factory.Client(); await Login(client, "admin", password, "Administrator"); var id = await ResultId(sql);
+        int auditBefore; long reservedBefore; long stagingBefore;
+        await using (var db = sql.NewContext())
+        {
+            auditBefore = await db.AuditEvents.CountAsync();
+            var reservation = await db.EnvironmentReservations.SingleAsync();
+            reservedBefore = reservation.ReservedBytes; stagingBefore = reservation.StagingBytes;
+        }
+        // Login has already installed the fresh identity-bound CSRF token. Do not mutate
+        // the shared client's headers while its independent HTTP requests execute concurrently.
+        var receipts = await Task.WhenAll(Enumerable.Range(0, 6).Select(async _ =>
+        {
+            using var response = await client.PostAsJsonAsync(Route(id), Input(seed));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var receipt = await response.Content.ReadFromJsonAsync<StagingAllocationReleaseReceipt>();
+            Assert.NotNull(receipt);
+            return receipt;
+        }));
+        Assert.All(receipts, receipt => Assert.Equal(receipts[0], receipt));
+        var status = await client.GetFromJsonAsync<CleanupStatusView>($"/api/test-environments/{seed.Order.EnvironmentId}/cleanup-status");
+        Assert.NotNull(status); Assert.Equal("StagingReleased", status.CleanupState);
+        Assert.Equal(0, status.HeldStagingBytes); Assert.Equal(stagingBefore, status.ReservedStagingBytes);
+        await using var verify = sql.NewContext();
+        Assert.Single(await verify.StagingAllocationReleases.ToListAsync());
+        Assert.Equal(auditBefore + 1, await verify.AuditEvents.CountAsync());
+        var retained = await verify.EnvironmentReservations.SingleAsync();
+        Assert.Equal("Held", retained.State); Assert.Equal(reservedBefore, retained.ReservedBytes);
+        Assert.Equal(stagingBefore, retained.StagingBytes);
+        Assert.True((await verify.TestEnvironments.SingleAsync()).HasUnsettledProvisioningOperation);
+    }
+    [SqlServerFact]
     public async Task Administrator_cookie_without_csrf_or_with_pre_login_csrf_cannot_release()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
