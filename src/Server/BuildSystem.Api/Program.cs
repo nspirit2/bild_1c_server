@@ -172,6 +172,12 @@ app.MapGet("/api/test-environments/{id:guid}/stage-status", async (Guid id, Clai
     var value = await status.GetAsync(CurrentActor(user), id, ct);
     return value is null ? Results.NotFound() : Results.Ok(value);
 }).RequireAuthorization();
+app.MapGet("/api/test-environments/{id:guid}/cleanup-status", async (Guid id, ClaimsPrincipal user,
+    ICleanupStatus status, CancellationToken ct) =>
+{
+    var value = await status.GetAsync(CurrentActor(user), id, ct);
+    return value is null ? Results.NotFound() : Results.Ok(value);
+}).RequireAuthorization();
 app.MapPost("/api/test-environments/{id:guid}/stage-retirement-intents", async (Guid id,
     StageRetirementRequest request, ClaimsPrincipal user, IStageRetirement retirement, CancellationToken ct) =>
     Results.Ok(await retirement.RequestAsync(CurrentActor(user), id, request, ct)))

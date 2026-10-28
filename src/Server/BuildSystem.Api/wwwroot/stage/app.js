@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -84,7 +84,7 @@
     detailGeneration++; detailController?.abort(); detailController = null;
     selected = null; ui['detail-panel'].hidden = true; ui['detail-values'].replaceChildren();
     ui['detail-retention'].hidden = true; ui['detail-retention-reasons'].replaceChildren();
-    ui['detail-message'].textContent = ''; markSelection();
+    ui['detail-message'].textContent = ''; ui['cleanup-message'].textContent = ''; ui['cleanup-values'].replaceChildren(); markSelection();
   }
   function markSelection() {
     for (const button of ui['operations-body'].querySelectorAll('button')) button.setAttribute('aria-expanded', String(button.dataset.environment === selected));
@@ -312,19 +312,57 @@
         'Копирование: сервер принял квитанцию ContentVerified. Это не подтверждает формат архива или наличие файла сейчас.',
         'Лизинг stage завершён, но provisioning в целом не завершён.'
       ] : ['Ресурсы удерживаются по согласованным метаданным наблюдения; требуется проверка истории и reconciliation. Это не доказательство остановки агента, его здоровья или состояния outbox.'];
-      reasons.push('Reservation Held: зарезервировано для staging ' + bytes(value.stagingBytes) + ' (метаданные). Квота не освобождена.',
+      reasons.push('Reservation Held: исторически зарезервировано для staging ' + bytes(value.stagingBytes) + '. Текущий staging-учёт см. отдельно в cleanup. Квота не освобождена для БД и окружения.',
         'TTL заказа не доказывает истечение или удаление ресурсов. Автоочистки нет; срок lease не является TTL заказа.',
-        'Безопасный cleanup пока недоступен. Не повторяйте заказ для обхода квоты.');
+        'Панель не выполняет cleanup. Не повторяйте заказ для обхода квоты.');
     }
     const fragment = document.createDocumentFragment();
     for (const reason of reasons) { const li = document.createElement('li'); li.textContent = reason; fragment.append(li); }
     ui['detail-retention-reasons'].replaceChildren(fragment); ui['detail-retention'].hidden = false;
+  }
+  const cleanupStates = { None:'Нет retirement intent', IntentRequested:'Intent запрошен', Authorized:'Разрешение записано', DeletedReported:'Удаление сообщено агентом', StagingReleased:'Staging allocation освобождена' };
+  async function loadCleanup(id, version, session, signal) {
+    ui['cleanup-values'].replaceChildren(); ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
+    const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
+    try {
+      const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/cleanup-status', signal);
+      if (!current()) return;
+      const nullableId = v => v === null || hasGuid(v);
+      const amounts = ['reservedStagingBytes','heldStagingBytes','releasedStagingBytes'];
+      if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() || !hasGuid(value.jobId) ||
+          !Object.hasOwn(cleanupStates, value.cleanupState) || !['artifactId','retirementId','authorizationId','resultId','releaseId'].every(k => nullableId(value[k])) ||
+          !amounts.every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) ||
+          value.heldStagingBytes + value.releasedStagingBytes !== value.reservedStagingBytes ||
+          !Number.isFinite(Date.parse(value.observedAt))) throw new Error('Invalid cleanup response');
+      const step = ['None','IntentRequested','Authorized','DeletedReported','StagingReleased'].indexOf(value.cleanupState);
+      if (['retirementId','authorizationId','resultId','releaseId'].some((k, index) => (index < step) !== hasGuid(value[k])) ||
+          (step > 0 && !hasGuid(value.artifactId)) ||
+          (step < 4 && value.releasedStagingBytes !== 0) ||
+          (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0))) throw new Error('Inconsistent cleanup response');
+      const entries = [['Состояние cleanup',cleanupStates[value.cleanupState]], ['Задание cleanup',text(value.jobId)],
+        ['Артефакт cleanup',text(value.artifactId)], ['Retirement intent',text(value.retirementId)], ['Authorization',text(value.authorizationId)],
+        ['Результат агента',text(value.resultId)], ['Staging release',text(value.releaseId)],
+        ['Исторически зарезервировано staging',bytes(value.reservedStagingBytes)], ['Удерживается staging сейчас',bytes(value.heldStagingBytes)],
+        ['Освобождено staging по ledger',bytes(value.releasedStagingBytes)], ['Наблюдение cleanup',date(value.observedAt)]];
+      const fragment = document.createDocumentFragment();
+      for (const [label, content] of entries) { const dt=document.createElement('dt'), dd=document.createElement('dd'); dt.textContent=label; dd.textContent=content; fragment.append(dt,dd); }
+      ui['cleanup-values'].replaceChildren(fragment);
+      ui['cleanup-message'].textContent = 'Исторические метаданные и логический учёт. Сообщение агента не доказывает отсутствие файла сейчас. Это не Ready; квоты БД и окружения не освобождаются.';
+    } catch (error) {
+      if (!current() || error.name === 'AbortError') return;
+      ui['cleanup-values'].replaceChildren();
+      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      ui['cleanup-message'].textContent = error instanceof ApiError && error.status === 404
+        ? 'Учёт cleanup недоступен: endpoint отсутствует в этой версии или нет доступа. Состояние неизвестно; не считать staging свободным.'
+        : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
+    }
   }
   async function loadDetail(id) {
     if (!authenticated || busy || !guid.test(id)) return;
     closeDetail(); selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
+    void loadCleanup(id, version, session, detailController.signal);
     try {
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
       if (version !== detailGeneration || session !== generation || !authenticated) return;
@@ -333,7 +371,7 @@
         ['Окружение', text(value.environmentId)], ['Запрос', text(value.requestId)], ['Задание', text(value.jobId)],
         ['Состояние задания', stateText(value.jobState)], ['Состояние окружения', stateText(value.environmentState)],
         ['Состояние запроса', stateText(value.requestState)], ['Reservation', stateText(value.reservationState)],
-        ['Зарезервировано для staging', bytes(value.stagingBytes)], ['Provisioning не завершён', value.unsettled === true ? 'Да' : value.unsettled === false ? 'Нет' : '—'],
+        ['Исторический staging-резерв', bytes(value.stagingBytes)], ['Provisioning не завершён', value.unsettled === true ? 'Да' : value.unsettled === false ? 'Нет' : '—'],
         ['Артефакт', text(value.artifactId)], ['Квитанция артефакта', stateText(value.artifactState)],
         ['Lease', stateText(value.leaseState)], ['Срок lease', date(value.leaseExpiresAt)],
         ['Оценка состояния', stateText(value.reconciliationCode)], ['Наблюдение сервера', date(value.observedAt)]

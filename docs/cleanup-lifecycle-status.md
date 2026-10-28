@@ -1,0 +1,13 @@
+# Cleanup lifecycle status и net staging bytes
+
+Предыдущий70cca95: [Build40723276661](https://github.com/nspirit2/bild_1c_server/actions/runs/40723276661) и [SQL40723276703](https://github.com/nspirit2/bild_1c_server/actions/runs/40723276703) success.
+
+GET `/api/test-environments/{id}/cleanup-status` — normalhuman auth, enabledproject+owner либоadmin; enabledproject требуетсядажеadmin. Currentroot/poolenabledbindingsдляhistoryнеобязательны. Внеscope404. ReadonlySerializable, SQLUTC, noaudit/writes. Separateendpointсохраняетстарыйstage-status wirecompatibility.
+
+View ровно12полей EnvironmentId/JobId/ArtifactId?/RetirementId?/AuthorizationId?/ResultId?/ReleaseId?/CleanupState/ReservedStagingBytes/HeldStagingBytes/ReleasedStagingBytes/ObservedAt. Exactimmutabletuplechecks, invalidchain409CleanupStatusInconsistent. Нетhash/path/source/credentials ифизическогопроверенногоfileexistence. ReservedStagingBytes — историческийreservation.StagingBytes, HeldStagingBytes — текущийлогическийstagingcharge, ReleasedStagingBytes — validatedfullledgerrelease. Ledgerединственныйsourceосвобождения;receiptбезledgerнеуменьшаетheldbytes.
+
+Состояния None→IntentRequested→Authorized→DeletedReported→StagingReleased. DeletedReported означаетутверждениеагента, StagingReleased — accountingrelease, НЕReady/Restored/EnvironmentDeleted. Нельзя поSelectedcleanupstate включатьFile.Delete илиclearunsettled. DB/envquota отдельно ипо-прежнемуудерживаются.
+
+UI показываетэтуцепочкуread-only приselectenvironment систорическими/held/releasedбайтамиотдельно, cancellationgenerationзащищаетотstaleзапросов. Failure/404 не превращаютсяложновNone, старыеcleanupполяочищаются. SafeDOMtextContent, никакихexecution/releaseкнопок. Страницаперестроенавпакете, но неразвёрнутавproduction.
+
+Проверено: **105APIpassed**, **38Nodepassed** (30старых+8новых), readonlyHTTP3cases. **WindowsSQL96passed,0failed,0skipped**,34s,portableVSTest18.0.1,TRXTestRuns\\CleanupStatus-20261028; пакетвключает6newreadmodelfacts. Послеэтогопакета snapshotchainchecksдополнительноусилены root/pool/agent/size pin; следующийполныйSQLпрогон2E2Eпакетаповторитвсё. EFмиграцийвэтомпакетенет. Первоначальныйraw'/cleanup'ban встаромHTTPUItest уточнён только дляallowlistedGET'/cleanup-status'; mutationroutebanсохранён. Сейчасвworktreeготовитсяотдельныйagentdeliveryпакет, его240Agenttestsнеприписываютсяэтомуstatuscommit. Browser/IISdeploymentнепроводился;UIдоказанNodefakeDOM+HTTPstaticassettests,неbrowserE2E.6SQLfacts+3HTTPcases, UIcasesmetadata/stale/abort/releasednotReady/errorclear/reporthonesty. NoDBmigrationnew;readmodelтребуетпредыдущиесхемныепакеты, текущийIISнеобновляем.

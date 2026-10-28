@@ -28,7 +28,7 @@ test('retention completed tuple explains retained quota without format or curren
 test('retention awaiting stage does not imply release or agent absence',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Pending',leaseState:null,leaseExpiresAt:null,artifactId:null,artifactState:null,reconciliationCode:'AwaitingStage'}));const t=retentionText(nodes);assert.match(t,/требуется проверка/);assert.match(t,/Квота не освобождена/);assert.doesNotMatch(t,/Лизинг stage завершён/);});
 test('retention expired lease is not order TTL or resource deletion',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Leased',leaseState:'Active',reconciliationCode:'LeaseExpired'}));const t=retentionText(nodes);assert.match(t,/TTL заказа не доказывает/);assert.match(t,/Автоочистки нет/);assert.match(t,/срок lease не является TTL/);});
 test('retention malformed conflicting and unknown tuples fall back without completion claims',async()=>{for(const overrides of [{unsettled:false},{artifactId:null},{stagingBytes:'65536'},{leaseState:'Active'},{reconciliationCode:'<script>'},{requestState:undefined}]){const {nodes}=await retentionHarness(retainedDetail(overrides));assert.equal(retentionText(nodes),'Недостаточно согласованных метаданных: не считать ресурсы свободными.');}});
-test('retention only reads existing detail endpoint and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
+test('retention reads stage and cleanup detail endpoints and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/cleanup-status`,`/api/test-environments/${env1}/stage-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
 test('retention stale detail after logout cannot restore explanation',async()=>{const pending=deferred();const {nodes}=await retentionHarness(pending);await nodes.get('logout').listeners.click();pending.resolve(ok(retainedDetail()));await flush();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');assert.equal(nodes.get('detail-panel').hidden,true);});
 
 test('anonymous session exposes login and never requests operation data', async () => {
@@ -102,7 +102,7 @@ const item = environmentId => ({ environmentId, jobId: env1, jobState: 'Leased',
 const buttons = nodes => nodes.get('operations-body').querySelectorAll('button');
 const retainedDetail = overrides => ({ environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held', stagingBytes:65536, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z', reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:01:00Z', ...overrides });
 async function retentionHarness(detail) {
-  const calls=[]; const nodes=harness(async (route,options) => { calls.push({route,options}); if(route==='/api/auth/me') return ok({name:'operator'}); if(route.startsWith('/api/stage-operations')) return ok({items:[item(env1)],nextCursor:null}); if(route.endsWith('/stage-status')) return detail?.promise || ok(detail); if(route==='/api/auth/csrf') return ok({token:'test'}); if(route==='/api/auth/logout') return ok(null); throw new Error('Unexpected route'); });
+  const calls=[]; const nodes=harness(async (route,options) => { calls.push({route,options}); if(route==='/api/auth/me') return ok({name:'operator'}); if(route.startsWith('/api/stage-operations')) return ok({items:[item(env1)],nextCursor:null}); if(route.endsWith('/cleanup-status')) return denied(404); if(route.endsWith('/stage-status')) return detail?.promise || ok(detail); if(route==='/api/auth/csrf') return ok({token:'test'}); if(route==='/api/auth/logout') return ok(null); throw new Error('Unexpected route'); });
   await flush(); buttons(nodes)[0].listeners.click(); await flush(); return {nodes,calls};
 }
 const retentionText = nodes => nodes.get('detail-retention-reasons').querySelectorAll('li').map(x=>x.textContent).join('\n');
@@ -154,6 +154,7 @@ test('detail renders all 15 metadata fields as text, with no mutation request', 
     calls.push(route);
     if (route === '/api/auth/me') return ok({ name: 'operator' });
     if (route.startsWith('/api/stage-operations')) return ok({ items: [item(env1)], nextCursor: null });
+    if (route.endsWith('/cleanup-status')) return denied(404);
     if (route === `/api/test-environments/${env1}/stage-status`) return ok({
       environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held',
       stagingBytes:10, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z',
@@ -167,7 +168,7 @@ test('detail renders all 15 metadata fields as text, with no mutation request', 
   assert.equal(nodes.get('detail-values').children[0].children.length, 30);
   assert.equal(nodes.get('detail-values').children[0].children.some(x => x.textContent?.includes('dangerous')), false);
   assert.equal(nodes.get('detail-message').textContent.includes('не подтверждаются'), true);
-  assert.deepEqual(calls, ['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`]);
+  assert.deepEqual(calls, ['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/cleanup-status`,`/api/test-environments/${env1}/stage-status`]);
 });
 
 test('late detail is discarded after filter change and does not reopen panel', async () => {
@@ -176,6 +177,7 @@ test('late detail is discarded after filter change and does not reopen panel', a
     calls.push({ route, options });
     if (route === '/api/auth/me') return ok({ name:'operator' });
     if (route.startsWith('/api/stage-operations')) return ok({ items: [item(env1)], nextCursor:null });
+    if (route.endsWith('/cleanup-status')) return denied(404);
     if (route.includes('/stage-status')) return pending.promise;
     throw new Error('Unexpected route');
   });
@@ -365,3 +367,87 @@ test('forgotten intent warning survives failed logout and explicit logout retry'
  const h=await orderHarness(async()=>({status:503}),async()=>{throw Error('network');});h.submit();await flush();await h.nodes.get('logout').listeners.click();assert.match(h.nodes.get('message').textContent,/мог быть принят/);await h.nodes.get('logout').listeners.click();assert.match(h.nodes.get('message').textContent,/мог быть принят/);assert.equal(h.nodes.get('order-panel').hidden,true);
 });
 // end
+
+
+const cleanupDetail = overrides => ({ environmentId:env1, jobId:env1, artifactId:env2, retirementId:env1,
+  authorizationId:env2, resultId:env1, releaseId:env2, cleanupState:'StagingReleased', reservedStagingBytes:65536,
+  heldStagingBytes:0, releasedStagingBytes:65536, observedAt:'2026-01-01T00:01:00Z', ...overrides });
+const cleanupText = nodes => nodes.get('cleanup-values').querySelectorAll('dd').map(x => x.textContent).join('\n');
+async function cleanupHarness(respond) {
+  const calls = [];
+  const nodes = harness(async (route, options) => {
+    calls.push({route,options});
+    if (route === '/api/auth/me') return ok({name:'operator'});
+    if (route.startsWith('/api/stage-operations')) return ok({items:[item(env1),item(env2)],nextCursor:null});
+    if (route.endsWith('/cleanup-status')) return respond(route,options);
+    if (route.endsWith('/stage-status')) return ok(retainedDetail({environmentId:route.includes(env2)?env2:env1}));
+    if (route === '/api/auth/csrf') return ok({token:'test'});
+    if (route === '/api/auth/logout') return ok(null);
+    throw new Error('Unexpected route');
+  });
+  await flush(); buttons(nodes)[0].listeners.click(); await flush(); return {nodes,calls};
+}
+test('cleanup renders only allowlisted metadata as text and never offers mutation',async()=>{
+  const hostile = '<img src=x onerror=bad>';
+  const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({sourcePath:hostile,token:hostile,snapshot:hostile})));
+  assert.equal(nodes.get('cleanup-values').querySelectorAll('dd').length,11);
+  assert.doesNotMatch(cleanupText(nodes),/onerror|sourcePath|token|snapshot/);
+  assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length,0);
+  const read=calls.find(x=>x.route.endsWith('/cleanup-status'));
+  assert.equal(read.options.credentials,'same-origin'); assert.equal(read.options.cache,'no-store');
+  assert.equal(calls.some(x=>x.options?.method==='POST'),false);
+});
+test('cleanup late response for old selection is discarded even when fetch ignores abort',async()=>{
+  const late=deferred(); const {nodes}=await cleanupHarness(route=>route.includes(env1)?late.promise:ok(cleanupDetail({environmentId:env2,jobId:env2,reservedStagingBytes:99,releasedStagingBytes:99})));
+  buttons(nodes)[1].listeners.click(); await flush();
+  assert.match(cleanupText(nodes),/99 байт/);
+  late.resolve(ok(cleanupDetail())); await flush();
+  assert.match(cleanupText(nodes),/99 байт/); assert.doesNotMatch(cleanupText(nodes),/65.?536/);
+});
+test('closing selection aborts cleanup request and late response cannot restore fields',async()=>{
+  const late=deferred(); const {nodes,calls}=await cleanupHarness(()=>late.promise);
+  nodes.get('close-detail').listeners.click();
+  assert.equal(calls.find(x=>x.route.endsWith('/cleanup-status')).options.signal.aborted,true);
+  late.resolve(ok(cleanupDetail())); await flush();
+  assert.equal(nodes.get('cleanup-values').children.length,0); assert.equal(nodes.get('cleanup-message').textContent,'');
+  assert.equal(nodes.get('detail-panel').hidden,true);
+});
+test('released staging shows historical and net amounts separately without Ready claim',async()=>{
+  const {nodes}=await cleanupHarness(()=>ok(cleanupDetail()));
+  const dt=nodes.get('cleanup-values').querySelectorAll('dt').map(x=>x.textContent);
+  const dd=nodes.get('cleanup-values').querySelectorAll('dd').map(x=>x.textContent);
+  assert.equal(dd[dt.indexOf('Удерживается staging сейчас')],'0 байт');
+  assert.match(dd[dt.indexOf('Исторически зарезервировано staging')],/65.?536 байт/);
+  assert.match(nodes.get('cleanup-message').textContent,/Это не Ready/);
+  assert.match(nodes.get('cleanup-message').textContent,/квоты БД и окружения не освобождаются/);
+  assert.match(retentionText(nodes),/Текущий staging-учёт см. отдельно/);
+});
+test('cleanup failure clears prior fields and unavailable endpoint is unknown not None',async()=>{
+  for(const status of [404,503]) {
+    let first=true; const {nodes}=await cleanupHarness(()=>{if(first){first=false;return ok(cleanupDetail());} return denied(status);});
+    assert.notEqual(cleanupText(nodes),''); buttons(nodes)[1].listeners.click(); await flush();
+    assert.equal(nodes.get('cleanup-values').children.length,0);
+    assert.match(nodes.get('cleanup-message').textContent,/Состояние неизвестно/);
+    assert.doesNotMatch(nodes.get('cleanup-message').textContent,/Нет retirement intent/);
+  }
+});
+test('DeletedReported is historical agent assertion not physical file proof or quota release',async()=>{
+  const {nodes}=await cleanupHarness(()=>ok(cleanupDetail({cleanupState:'DeletedReported',releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0})));
+  assert.match(cleanupText(nodes),/Удаление сообщено агентом/);
+  assert.match(nodes.get('cleanup-message').textContent,/Исторические метаданные/);
+  assert.match(nodes.get('cleanup-message').textContent,/не доказывает отсутствие файла сейчас/);
+  assert.doesNotMatch(cleanupText(nodes),/Staging allocation освобождена/);
+});
+test('cleanup malformed totals or contradictory identity chain fail closed',async()=>{
+  for(const data of [cleanupDetail({heldStagingBytes:1}),cleanupDetail({resultId:null}),cleanupDetail({cleanupState:'<script>'}),cleanupDetail({observedAt:'invalid'})]) {
+    const {nodes}=await cleanupHarness(()=>ok(data));
+    assert.equal(nodes.get('cleanup-values').children.length,0); assert.match(nodes.get('cleanup-message').textContent,/Состояние неизвестно/);
+  }
+});
+test('late cleanup after logout cannot restore data or stale message',async()=>{
+  const late=deferred();const {nodes,calls}=await cleanupHarness(()=>late.promise);
+  await nodes.get('logout').listeners.click();late.resolve(ok(cleanupDetail()));await flush();
+  assert.equal(calls.find(x=>x.route.endsWith('/cleanup-status')).options.signal.aborted,true);
+  assert.equal(nodes.get('cleanup-values').children.length,0);assert.equal(nodes.get('cleanup-message').textContent,'');
+  assert.equal(nodes.get('workspace').hidden,true);
+});

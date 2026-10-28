@@ -66,8 +66,10 @@ public sealed class StageOperatorUiTests : IClassFixture<ApiFactory>
         var js = await client.GetStringAsync("/stage/app.js");
         Assert.Contains("detail-retention", html);
         Assert.Contains("detail-retention", js);
+        Assert.Contains("/cleanup-status", js);
+        var mutationSource = js.Replace("/cleanup-status", "", StringComparison.Ordinal);
         foreach (var route in new[] { "/cleanup", "/retire", "/release", "/cancel", "/delete" })
-            Assert.DoesNotContain(route, js);
+            Assert.DoesNotContain(route, mutationSource);
         Assert.DoesNotContain("id=\"cleanup\"", html);
         Assert.DoesNotContain("id=\"release\"", html);
     }

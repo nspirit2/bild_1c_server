@@ -64,6 +64,7 @@
       <section id="detail-panel" class="card detail-card" aria-labelledby="detail-title" hidden>
         <div class="card-header"><div><p class="eyebrow">Серверные метаданные</p><h2 id="detail-title">Сведения об операции</h2></div><button id="close-detail" class="secondary" type="button">Закрыть</button></div>
         <p id="detail-message" role="status" aria-live="polite" aria-atomic="true"></p><dl id="detail-values" class="detail-grid"></dl>
+        <section id="cleanup-panel" aria-labelledby="cleanup-title"><h3 id="cleanup-title">Учёт cleanup</h3><p id="cleanup-message" role="status" aria-live="polite" aria-atomic="true"></p><dl id="cleanup-values" class="detail-grid"></dl><p class="footnote">DeletedReported — историческое сообщение агента, не доказательство наличия или отсутствия файла сейчас. Held staging — логический учёт, не физическое свободное место.</p></section>
         <section id="detail-retention" class="retention-panel" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="detail-retention-title" hidden><h3 id="detail-retention-title">Почему ресурсы и квота удерживаются</h3><ul id="detail-retention-reasons"></ul></section>
         <p class="footnote">Это наблюдение состояния, не разрешение на reset, удаление, повторную выдачу или restore. При NeedsAttention / LeaseExpired / Inconsistent сверяйте audit, lease/fence и журнал агента через защищённый канал.</p>
       </section>
