@@ -67,6 +67,11 @@ internal static class AgentEndpoints
             var grant = await service.PollAsync(context.Request.Headers.Authorization.ToString()[7..], ct);
             return grant is null ? Results.NoContent() : Results.Ok(grant);
         });
+        machine.MapPost("/stage/retirement-plan", async (HttpContext context, IStageRetirementPlans service, CancellationToken ct) =>
+        {
+            var plan = await service.PollAsync(context.Request.Headers.Authorization.ToString()[7..], ct);
+            return plan is null ? Results.NoContent() : Results.Ok(plan);
+        });
         machine.MapPost("/stage/heartbeat", (HttpContext context, LeaseHeartbeat input, IArchiveStageControl service, CancellationToken ct) =>
             service.HeartbeatAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct));
         machine.MapPost("/stage/complete", (HttpContext context, CompleteStage input, IStageCompletion service, CancellationToken ct) =>
