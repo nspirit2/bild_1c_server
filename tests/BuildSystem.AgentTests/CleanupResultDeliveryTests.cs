@@ -56,7 +56,7 @@ public sealed class CleanupResultDeliveryTests : IDisposable
         Assert.True(File.Exists(Path.Combine(home,"source","sample.dt")));
     }
     [Theory]
-    [InlineData(400,true)] [InlineData(409,true)] [InlineData(401,false)] [InlineData(403,false)] [InlineData(404,false)] [InlineData(429,false)] [InlineData(500,false)] [InlineData(503,false)]
+    [InlineData(400,false)] [InlineData(409,false)] [InlineData(401,false)] [InlineData(403,false)] [InlineData(404,false)] [InlineData(429,false)] [InlineData(500,false)] [InlineData(503,false)]
     public async Task HttpPolicyPreservesRetryableIdentityAndBlocksOnlyDefinitiveConflict(int status,bool blocked)
     {
         await Prepare(); await Execute(); var r=Assert.Single(journal.PendingCleanupResults());
@@ -107,6 +107,27 @@ public sealed class CleanupResultDeliveryTests : IDisposable
         var t=new Transport{Send=(_,_)=>throw new CleanupResultReceiptException()}; var d=new CleanupResultDelivery(journal,t);
         await Assert.ThrowsAsync<CleanupResultReceiptException>(()=>d.DeliverOneAsync()); Assert.False(await d.DeliverOneAsync());
         Assert.Equal(1,t.Calls); Assert.Equal("Blocked",journal.GetCleanupResultState(r.ResultId));
+    }
+    [Theory]
+    [InlineData(true)] [InlineData(false)]
+    public async Task OnlyAllowlistedDefinitiveExceptionsBlock(bool conflict)
+    {
+        await Prepare(); await Execute(); var r=Assert.Single(journal.PendingCleanupResults());
+        var t=new Transport{Send=(_,_)=>throw (conflict?(HttpRequestException)new CleanupResultConflictException():new CleanupResultInvalidException())};
+        await Assert.ThrowsAnyAsync<HttpRequestException>(()=>new CleanupResultDelivery(journal,t).DeliverOneAsync());
+        Assert.Equal("Blocked",journal.GetCleanupResultState(r.ResultId));
+    }
+    [Fact]
+    public async Task DefaultDisabled409FromRealTransportLeavesSameResultPending()
+    {
+        await Prepare(); await Execute(); var r=Assert.Single(journal.PendingCleanupResults());
+        using var transport=new AgentTransport(new("https://example.test"),new string('A',64),new DisabledHandler());
+        await Assert.ThrowsAsync<HttpRequestException>(()=>new CleanupResultDelivery(journal,transport).DeliverOneAsync());
+        Reopen(); Assert.Equal(r,Assert.Single(journal.PendingCleanupResults()));
+    }
+    private sealed class DisabledHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)=>Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Conflict){Content=new StringContent("{\"code\":\"CleanupResultDisabled\"}")});
     }
     public void Dispose() { journal.Dispose(); if(Directory.Exists(home)) Directory.Delete(home,true); }
 }

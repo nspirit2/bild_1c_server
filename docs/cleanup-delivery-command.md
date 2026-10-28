@@ -1,0 +1,17 @@
+# One-shot cleanup result delivery command
+
+`dotnet BuildSystem.Agent.dll deliver-cleanup-result` — одинстарейшийPending result, безhostedworker/stage/claim/delete/release. ExistingAgent__DataDirectory/serviceonlyACL/Agent__ApiOriginHTTPSorigin/DPAPICurrentUsertoken. Запускатьподтемжеserviceaccount иприостановленномworker: AgentJournalOSlock исключаетдвухвладельцев; commandнеостанавливаетserviceавтоматически. Pendingпусто ->NoPending безсетевогозапроса. Этонеcleanup-executecommand: неизвестныеargs/опечатки/лишниеflags отвергаютсякодом64 доworker/config/tokenIO.
+
+Коды:0Delivered/NoPending;2auth401/403;3retryablenetwork/timeout/404/429/5xx/unknown400409/featuredisabled;4definitiveBlocked;5storage/replay/setupfailure;130cancel;64unsupportedargs. Выводfixedsanitizedcodes, noexceptionmessage/token/path/errorbody. Existingimport-token сохраняется. WindowsDPAPIguard неизменен. Одноразоваякомандабезtoken/instanceprovisioningнепроверенанаproductionserviceaccount в этом пакете.
+
+## Важноеисправлениедоставки
+
+Reviewвыявилошибку20ff10d: genericHTTP409блокировалPending навсегда, хотяdefault-offserverвозвращает409CleanupResultDisabled. Теперьstatusсампосебенедостаточен: bounded16KiB singlefieldstrictcodeobject, exact409CleanupResultMismatch/400InvalidCleanupResult =>typeddefinitiveexception=>Blocked; unknown/extra/duplicate/malformed/oversizederrorpayload/featuredisabledсохраняютPending. Успешный200сневернымreceiptпо-прежнемуBlocked. Неэхоимнедоверенныйerrorcode. Этаправка замещаетстаруютаблицуповедениявдокументеdeliveryпакета.
+
+## Portable API testing
+
+ПробныйWindowsAPIpackrun66/105упалbuild-sourceDirectoryNotFound из-заWebApplicationFactorymanifest. ЭтонеserverregressionиНЕдоказаннаяпричинастарогоGitHubWindowsfailure. SharedApiFactory задаётAppContext.BaseDirectorycontentroot; embeddedassetsне требуютsourcecheckout. ПослеисправленияWindows105/105APIpassed. ПродолжениеCI проверяемотдельно.
+
+## Проверки
+
+Локально **505.NETpassed,0failed,98SQLskipped**, **38Nodepassed** (Agent269/API105/Archive44/Domain39/Process22/Pipeline26). Команда16cases; transportdeliveryрасширенные59cases. **Windows269Agentpassed+105APIpassed**,0failed/0skipped, portableVSTest18.0.1, TRXTestRuns\\CleanupCommand-20261028. ПредыдущийLinuxpathAPIpack66fail задокументированвыше, послефиксаAPI105pass; этоименнопереносимостьfixture, нерасследованнаядо концапричинаGitHubWindowsfailure. ТекущийCLIexitкод64 проверенконтрактомаргументов; DPAPIone-shotреальныйHTTPSпрогонещёневыполнялся. SQL98fullcycle прошёлпредыдущимпакетом; текущаяserverлогиканеизменялась.59новых/расширенныхtransportdeliverycases,commandcases,API105 portable. No migrations/serverconfig/productiondata changes.

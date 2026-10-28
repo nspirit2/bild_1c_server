@@ -49,6 +49,7 @@
 - [Отдельный staging allocation release без DB/env quota release](docs/staging-allocation-release.md)
 - [Cleanup lifecycle status и net staging bytes в UI](docs/cleanup-lifecycle-status.md)
 - [Bounded cleanup result delivery и integrated cycle](docs/cleanup-result-delivery.md)
+- [One-shot delivery command и безопасные retryable ошибки](docs/cleanup-delivery-command.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

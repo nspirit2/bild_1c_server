@@ -4,6 +4,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+// Reject misspelled commands/extra flags before configuration, token IO or worker startup.
+if (!CleanupDeliveryCommand.SupportedArguments(args))
+{
+    Console.Error.WriteLine("UnsupportedAgentCommand");
+    Environment.ExitCode = 64;
+    return;
+}
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "BuildSystem.Agent");
 var directory = builder.Configuration["Agent:DataDirectory"];
@@ -33,7 +40,31 @@ if (args.Length == 1 && args[0] == "import-token")
 }
 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("This worker requires Windows DPAPI.");
 var origin = builder.Configuration["Agent:ApiOrigin"] ?? throw new InvalidOperationException("Configure Agent__ApiOrigin.");
-builder.Services.AddSingleton(new AgentTransport(new Uri(origin), TokenStore.Load(tokenPath)));
+var apiOrigin = new Uri(origin);
+if (!apiOrigin.IsAbsoluteUri || apiOrigin.Scheme != Uri.UriSchemeHttps ||
+    !string.IsNullOrEmpty(apiOrigin.UserInfo) || !string.IsNullOrEmpty(apiOrigin.Query) ||
+    !string.IsNullOrEmpty(apiOrigin.Fragment) || apiOrigin.AbsolutePath != "/")
+    throw new ArgumentException("An HTTPS origin without credentials/path/query is required.");
+if (CleanupDeliveryCommand.IsDeliveryCommand(args))
+{
+    try
+    {
+        using var transport = new AgentTransport(apiOrigin, TokenStore.Load(tokenPath));
+        using var journal = new AgentJournal(directory);
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += cancel;
+        try { Environment.ExitCode = await CleanupDeliveryCommand.RunAsync(journal, transport, Console.Out, cancellation.Token); }
+        finally { Console.CancelKeyPress -= cancel; }
+    }
+    catch (Exception)
+    {
+        Console.Error.WriteLine("CleanupResultStorageOrReplayFailure");
+        Environment.ExitCode = 5;
+    }
+    return; // Never construct ArchiveStaging, register a hosted worker or claim authority.
+}
+builder.Services.AddSingleton(new AgentTransport(apiOrigin, TokenStore.Load(tokenPath)));
 builder.Services.AddSingleton<IAgentTransport>(sp => sp.GetRequiredService<AgentTransport>());
 builder.Services.AddSingleton<IArtifactTransport>(sp => sp.GetRequiredService<AgentTransport>());
 builder.Services.AddSingleton(new AgentJournal(directory));

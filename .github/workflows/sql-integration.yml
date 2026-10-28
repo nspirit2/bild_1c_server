@@ -27,6 +27,7 @@ on:
       - feat/staging-allocation-release
       - feat/cleanup-lifecycle-status
       - feat/cleanup-result-delivery
+      - feat/cleanup-delivery-command
 
 permissions:
   contents: read

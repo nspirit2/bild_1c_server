@@ -23,7 +23,7 @@ public sealed class CleanupResultDelivery(AgentJournal journal, ICleanupResultTr
             journal.BlockCleanupResult(result.ResultId);
             throw;
         }
-        catch (HttpRequestException e) when (e.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict)
+        catch (HttpRequestException e) when (e is CleanupResultConflictException or CleanupResultInvalidException)
         {
             journal.BlockCleanupResult(result.ResultId);
             throw;

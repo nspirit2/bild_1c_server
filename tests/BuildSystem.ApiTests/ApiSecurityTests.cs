@@ -20,6 +20,8 @@ public class ApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
+        // API assets are embedded; portable test packages must not require the build host's source path.
+        builder.UseContentRoot(AppContext.BaseDirectory);
         builder.UseSetting("ConnectionStrings:BuildSystem", "Server=unused;Database=unused;Integrated Security=true;TrustServerCertificate=false");
         builder.UseSetting("Security:DataProtectionDirectory", Path.Combine(Path.GetTempPath(), "buildsystem-api-test-keys"));
         builder.ConfigureServices(services =>

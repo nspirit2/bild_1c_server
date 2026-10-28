@@ -80,6 +80,25 @@ public sealed class CleanupResultTransportTests
         await Assert.ThrowsAsync<CleanupResultReceiptException>(()=>t.ReportCleanupResultAsync(Input(),default));
         Assert.Equal(16*1024+1,stream.BytesRead);
     }
+    [Theory]
+    [InlineData(409,"CleanupResultMismatch",true)] [InlineData(400,"InvalidCleanupResult",true)]
+    [InlineData(409,"CleanupResultDisabled",false)] [InlineData(409,"Unknown",false)]
+    [InlineData(400,"CleanupResultMismatch",false)] [InlineData(409,"InvalidCleanupResult",false)]
+    public async Task OnlyKnownCodeAndMatchingStatusAreDefinitive(int status,string code,bool definitive)
+    {
+        var h=new Handler((_,_)=>Task.FromResult(new HttpResponseMessage((HttpStatusCode)status){Content=JsonContent.Create(new{code})}));
+        using var t=new AgentTransport(new("https://example.test"),new string('A',64),h);
+        var e=await Assert.ThrowsAnyAsync<HttpRequestException>(()=>t.ReportCleanupResultAsync(Input(),default));
+        Assert.Equal(definitive,e is CleanupResultConflictException or CleanupResultInvalidException);Assert.DoesNotContain(code,e.Message);
+    }
+    [Theory]
+    [InlineData("broken")] [InlineData("oversize")] [InlineData("extra")] [InlineData("duplicate")]
+    public async Task UntrustedErrorPayloadNeverCreatesDefinitiveConflict(string mode)
+    {
+        var json=mode switch {"broken"=>"{PRIVATE", "oversize"=>new string(' ',16385)+"{\"code\":\"CleanupResultMismatch\"}","extra"=>"{\"code\":\"CleanupResultMismatch\",\"path\":\"PRIVATE\"}",_=>"{\"code\":\"CleanupResultMismatch\",\"code\":\"CleanupResultMismatch\"}"};
+        var h=new Handler((_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict){Content=new StringContent(json)}));using var t=new AgentTransport(new("https://example.test"),new string('A',64),h);
+        var e=await Assert.ThrowsAsync<HttpRequestException>(()=>t.ReportCleanupResultAsync(Input(),default));Assert.DoesNotContain("PRIVATE",e.ToString());
+    }
     [Fact]
     public async Task CallerCancellationPropagatesWithoutReceiptMismatch()
     {
