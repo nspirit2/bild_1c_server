@@ -68,13 +68,15 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 new PoolBudget(pool.Enabled, pool.CapacityBytes, pool.MaxEnvironmentBytes, pool.MaxConcurrentProvisioning), snapshot);
             if (!decision.Allowed) throw Reject(409, "QuotaExceeded");
             // Staging allocations remain held even after a failed job until explicit safe cleanup.
-            var heldStaging = await db.EnvironmentReservations.Where(x => x.PoolId == poolId && x.State != "Released").Select(x => x.StagingBytes).ToListAsync(ct);
+            var heldStaging = await db.EnvironmentReservations.Where(x => x.PoolId == poolId && x.State != "Released" &&
+                !db.StagingAllocationReleases.Any(release => release.ReservationId == x.Id)).Select(x => x.StagingBytes).ToListAsync(ct);
             var rootStaging = await (from r in db.EnvironmentReservations
                                      join e in db.TestEnvironments on r.Id equals e.ReservationId
                                      join q in db.EnvironmentRequests on e.RequestId equals q.Id
                                      join v in db.DiskArchiveVersions on q.ArchiveVersionId equals v.Id
                                      join a in db.DiskArchives on v.ArchiveId equals a.Id
-                                     where a.RootId == source.Root.Id && r.State != "Released"
+                                     where a.RootId == source.Root.Id && r.State != "Released" &&
+                                          !db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id)
                                      select r.StagingBytes).ToListAsync(ct);
             if (heldStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > pool.MaxStagingBytes ||
                 rootStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > source.Root.MaxStagingBytes)

@@ -46,6 +46,7 @@
 - [Cleanup authorization и durable journal preparation](docs/stage-cleanup-authorization.md)
 - [Локальный cleanup с tombstone и crash replay](docs/local-stage-cleanup.md)
 - [Durable cleanup result outbox и server receipt](docs/stage-cleanup-result.md)
+- [Отдельный staging allocation release без DB/env quota release](docs/staging-allocation-release.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

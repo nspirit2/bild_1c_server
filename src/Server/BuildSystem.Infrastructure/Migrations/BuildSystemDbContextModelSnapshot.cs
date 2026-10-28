@@ -879,6 +879,54 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("StagedArtifacts");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.StagingAllocationReleaseRecord", b =>
+                {
+                    b.Property<Guid>("ReleaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AuthorizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PoolId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ReleasedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("ReleasedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ResultId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RootId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ReleaseId");
+
+                    b.HasIndex("ActorId");
+
+                    b.HasIndex("AuthorizationId");
+
+                    b.HasIndex("PoolId");
+
+                    b.HasIndex("ReservationId")
+                        .IsUnique();
+
+                    b.HasIndex("ResultId")
+                        .IsUnique();
+
+                    b.HasIndex("RootId");
+
+                    b.ToTable("StagingAllocationReleases");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1300,6 +1348,45 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.EnvironmentReservation", null)
                         .WithMany()
                         .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.StagingAllocationReleaseRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.BuildSystemUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StageCleanupAuthorizationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AuthorizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentPool", null)
+                        .WithMany()
+                        .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentReservation", null)
+                        .WithMany()
+                        .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StageCleanupResultRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ResultId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.ArchiveRoot", null)
+                        .WithMany()
+                        .HasForeignKey("RootId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 using BuildSystem.Application;
+using BuildSystem.Contracts;
 using BuildSystem.Infrastructure;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.DataProtection;
@@ -25,6 +26,7 @@ builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Config
 builder.Services.AddSingleton(new StageRetirementOptions { Enabled = builder.Configuration.GetValue<bool>("StageRetirement:Enabled") });
 builder.Services.AddSingleton(new StageCleanupOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanup:Enabled") });
 builder.Services.AddSingleton(new StageCleanupResultOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanupResult:Enabled") });
+builder.Services.AddSingleton(new StagingAllocationReleaseOptions { Enabled = builder.Configuration.GetValue<bool>("StagingAllocationRelease:Enabled") });
 builder.Services.AddIdentity<BuildSystemUser, IdentityRole<Guid>>(options =>
 {
     options.Password.RequiredLength = 12;
@@ -174,6 +176,10 @@ app.MapPost("/api/test-environments/{id:guid}/stage-retirement-intents", async (
     StageRetirementRequest request, ClaimsPrincipal user, IStageRetirement retirement, CancellationToken ct) =>
     Results.Ok(await retirement.RequestAsync(CurrentActor(user), id, request, ct)))
     .RequireAuthorization();
+app.MapPost("/api/admin/stage-cleanup-results/{resultId:guid}/release-staging", async (Guid resultId,
+    ReleaseStagingAllocation input, ClaimsPrincipal user, IStagingAllocationRelease release, CancellationToken ct) =>
+    Results.Ok(await release.ReleaseAsync(CurrentActor(user), resultId, input, ct)))
+    .RequireAuthorization(policy => policy.RequireRole("Administrator"));
 app.MapGet("/api/stage-operations", async (int? limit, string? cursor, string? state,
     ClaimsPrincipal user, IStageOperations operations, CancellationToken ct) =>
     Results.Ok(await operations.ListAsync(CurrentActor(user), new StageOperationsQuery(limit ?? 25, cursor, state), ct)))
