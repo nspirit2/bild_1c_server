@@ -150,7 +150,7 @@ public sealed partial class SqlAgentControl
     private Task StageLockAsync(string resource, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync(
         $"DECLARE @r int; EXEC @r = sys.sp_getapplock @Resource={resource}, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=15000; IF @r IN (-1, -3) THROW 51001, 'Transient stage lock contention', 1; IF @r < 0 THROW 51000, 'Stage lock cancelled or invalid', 1;", ct);
 
-    private static bool CanonicalStagePath(string path, string format)
+    internal static bool CanonicalStagePath(string path, string format)
     {
         if (string.IsNullOrWhiteSpace(path) || path.Length > 400 || path.Contains('\\') ||
             !path.EndsWith("." + format, StringComparison.OrdinalIgnoreCase)) return false;

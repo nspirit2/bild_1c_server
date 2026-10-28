@@ -698,6 +698,59 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("ProjectPools");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageRetirementIntent", b =>
+                {
+                    b.Property<Guid>("RetirementId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ArtifactId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EnvironmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("FencingToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("RetirementId");
+
+                    b.HasIndex("AgentId");
+
+                    b.HasIndex("ArtifactId");
+
+                    b.HasIndex("EnvironmentId")
+                        .IsUnique();
+
+                    b.HasIndex("JobId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestedBy");
+
+                    b.HasIndex("ReservationId");
+
+                    b.ToTable("StageRetirementIntents");
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.StagedArtifact", b =>
                 {
                     b.Property<Guid>("ArtifactId")
@@ -1068,6 +1121,45 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageRetirementIntent", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StagedArtifact", null)
+                        .WithMany()
+                        .HasForeignKey("ArtifactId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvironmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentJob", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.BuildSystemUser", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentReservation", null)
+                        .WithMany()
+                        .HasForeignKey("ReservationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
