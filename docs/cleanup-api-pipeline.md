@@ -1,0 +1,15 @@
+# Cleanup receipt через настоящий API pipeline + SQL
+
+Предыдущийf3bf081получил [Build40728816085](https://github.com/nspirit2/bild_1c_server/actions/runs/40728816085) и [SQL40728815933](https://github.com/nspirit2/bild_1c_server/actions/runs/40728815933) success.
+
+Новыйуровеньпроверки: WebApplicationFactoryнастоящегоBuildSystem.Api, беззаменыauthentication/applicationservices, disposableSQLServerDB. FactoryзадаётTesting, protectedtempDataProtectiondirectory, конкретнуюtestconnectionstring иStageCleanupResult.Enabled. ActualUseAuthentication/Authorization, AgentTokenAuthenticateSQL, endpointmetadataCSRFnoforgery иSqlStageCleanupResultsвыполняютсяоднимHTTPзапросом.
+
+HTTP здесь не обязательно401: если HttpsRedirectionOptions.HttpsPort задан, middleware доauthentication вернёт307; отдельнаяпроверкаподтверждаетredirect/noresult безследования. Это не authbypass. StrictJSON вданномконтексте означаетrejectunknownproperties, неканоническоеуникальноепредставление: duplicateknownproperties иquotednumbers могутдекодироватьсяSystem.Text.Json; finaltuplechecks защищаютdecodedidentity. Default-offbeforeDB — свойствосервиса, неHTTPpipeline: authenticationсначалаобращаетсякSQL.
+
+4SQLfacts: HTTPSAgentTokenбезhumanCSRF ->200receipt+exactreplay oneSQLrow/audit; machineBearerнаhumanadminroute->401;HTTP/missing/badBearer401+unknownJSON400безresult; oldrotated/revoked401newtokenworks; disabled409CleanupResultDisabled черезactualAgentTransportостаётсяretryablegenericHTTP409, неtypeddefinitiveconflict.
+
+**Граница:** TestServerHTTPSscheme симулируетHTTPSrequestmetadata, нешифруетсокет. НастоящийloopbackTLS проверенотдельнымtestпакетом. ЭтоAPIpipeline+realSQL, неIISbinding/prodDNS/productioncert/DPAPIserviceaccount/browserE2E. Нетproductiondeploy/DBmigrations/flags/worker/autodelete.
+
+Integrationprojecttest-onlyreferenceAPI+Microsoft.AspNetCore.Mvc.Testing10.0.13; testlockобновлён, sharedproductiondependenciesнеизменены. Тестысоздают/dropтолькособственнуюbs_ci_metadata_GUIDDB, historicalcleanupresultнеосвобождаетreservation/envDBquota.
+
+Локально **508.NETpassed,0failed,105SQLskipped**, **38Nodepassed**; integrationlockedrestorepass, Releasebuild0warnings/errors. **Windows105SQLpassed,0failed,0skipped,36s**, portableVSTest18.0.1, TRXTestRuns\\CleanupApiPipeline-20261028. Это101existing+4newactualAPIpipelinefacts, включаяduplicateAuthorization401 иconfiguredHttpsPort443307nofollow. ОстаточныхdisposableDB0, mainBuildSystem4миграции неизменны. Read-onlysecurityreviewнеобнаружилauth/CSRFescalation; зафиксированыграницыJSON/redirect/Kestrelchunkedlimit. Реальныеcookies+adminCSRFпутьвэти4factsнеподменялсяипокаотдельнонеинтегрировансSQL; существующиеHTTPtestsдоказываютегоnastubapplicationports.
