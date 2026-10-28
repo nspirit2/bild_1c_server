@@ -1,0 +1,9 @@
+# Retirement queue progress: immutable intent не блокирует следующий цикл
+
+Read-onlyreview выявил starvation: StageRetirementIntents.State остаётсяRequested исторически, orderedoldestpoll бесконечновозвращал первыйintentпослеcleanupresult/release. ClaimExpectedIDs дляследующего получал409. Исправляембезмутацийintent/lifecycle.
+
+Обычныйinspectionpoll выбираетoldestRequested принадлежащийagent, длякоторого **нетпринятогоStageCleanupResultчерезauthorizationjoin**. Authorizationбезresultнепропускается. BoundedTake1, порядокRequestedAt/RetirementId сохранён. Ужеreportedintentнеявляетсяновымcleanupwork,stagingreleaseнеобязателендляпродвиженияinspection.
+
+Claim теперьпередаётExpectedRetirementId вinternalInspectточнымscopedfilter, анепытаетсясравнить его сoldestunrelatedintent. Этоявныйclaimнеобязательнопервогоintent; всеApprovedtoken/global→root→pool/currentbindings/snapshot/fulltuple/ActiveNeedsAttentionguards остаются. Replayстарогоужеreportedclaim получаеттотжеgrantеслиcurrentchecksstillvalid. Scopeforeign/unknown409, никакихавтоматическихreset/cleanup/leaseexpiry/release.
+
+**Проверки:** новые3SQLfactsреальнымиportsдвапоследовательноStageCompletedзаказаодногоагента: firstreportedpolladvances+secondclaim+oldreplay; explicitnonoldest/foreignunknown; withoutresultoldest/expiredActive/NeedsAttentionblockswithoutwrites. **Windows101SQLpassed,0failed,0skipped**,37s, portableVSTest18.0.1,TRXTestRuns\\RetirementQueue-20261028. ОстаточныхdisposableDB0,mainBuildSystem4миграции. Локально **505.NETpassed,0failed,101SQLskipped**, **38Nodepassed**. Нетновыхмиграций/productiondeployment/flags/servicechanges.

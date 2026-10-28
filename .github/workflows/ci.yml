@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list, feat/stage-operator-ui, test/stage-ui-behavior, feat/archive-catalog, feat/project-archive-browser, feat/archive-order-ui, feat/stage-retention-explanation, feat/stage-retirement-intent, feat/stage-retirement-plan, feat/stage-cleanup-authorization, feat/local-stage-cleanup-executor, feat/stage-cleanup-result, feat/staging-allocation-release, feat/cleanup-lifecycle-status, feat/cleanup-result-delivery, feat/cleanup-delivery-command]
+    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list, feat/stage-operator-ui, test/stage-ui-behavior, feat/archive-catalog, feat/project-archive-browser, feat/archive-order-ui, feat/stage-retention-explanation, feat/stage-retirement-intent, feat/stage-retirement-plan, feat/stage-cleanup-authorization, feat/local-stage-cleanup-executor, feat/stage-cleanup-result, feat/staging-allocation-release, feat/cleanup-lifecycle-status, feat/cleanup-result-delivery, feat/cleanup-delivery-command, fix/retirement-queue-progress]
   pull_request:
   workflow_dispatch:
 

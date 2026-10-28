@@ -26,7 +26,7 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
     }
 
     // Caller owns the serializable transaction and retry boundary. Does not start a nested transaction.
-    internal async Task<StageRetirementPlan?> InspectAsync(string credential, CancellationToken ct)
+    internal async Task<StageRetirementPlan?> InspectAsync(string credential, CancellationToken ct, Guid? retirementId = null)
     {
             if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A caller-owned transaction is required.");
             await Lock("BuildSystem:agent-control", ct);
@@ -44,7 +44,10 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
                 return null;
             }
             var intent = await db.StageRetirementIntents.AsNoTracking()
-                .Where(r => r.AgentId == id.Value && r.State == "Requested")
+                .Where(r => r.AgentId == id.Value && r.State == "Requested" &&
+                    (retirementId.HasValue ? r.RetirementId == retirementId.Value :
+                        !db.StageCleanupResults.Any(result => db.StageCleanupAuthorizations.Any(auth =>
+                            auth.AuthorizationId == result.AuthorizationId && auth.RetirementId == r.RetirementId))))
                 .OrderBy(r => r.RequestedAt).ThenBy(r => r.RetirementId).Take(1).SingleOrDefaultAsync(ct);
             if (intent is null) return null;
             var rootId = await (from q in db.EnvironmentRequests.AsNoTracking()

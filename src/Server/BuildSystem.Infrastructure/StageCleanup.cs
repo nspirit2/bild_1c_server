@@ -23,8 +23,9 @@ public sealed class SqlStageCleanup(BuildSystemDbContext db, StageCleanupOptions
             db.ChangeTracker.Clear();
             await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             // The shared inspection owns global->root->pool locks and all token/binding/snapshot rechecks,
-            // but no nested transaction, expiry sweep or writes. Only the oldest matching intent is claimable.
-            var plan = await new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true }).InspectAsync(credential, ct);
+            // but no nested transaction, expiry sweep or writes. Explicit claims inspect exactly the expected intent,
+            // including historical exact replays; polling independently advances past accepted cleanup results.
+            var plan = await new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true }).InspectAsync(credential, ct, request.ExpectedRetirementId);
             if (plan is null || plan.RetirementId != request.ExpectedRetirementId || plan.ArtifactId != request.ExpectedArtifactId)
                 throw Mismatch();
             var intent = await db.StageRetirementIntents.AsNoTracking().SingleAsync(x => x.RetirementId == plan.RetirementId, ct);
