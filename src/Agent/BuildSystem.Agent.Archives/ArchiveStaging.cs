@@ -31,7 +31,7 @@ public sealed class VerifiedArtifact
     public override string ToString() => $"VerifiedArtifact({ArtifactId})";
 }
 
-public sealed class ArchiveStaging
+public sealed partial class ArchiveStaging
 {
     private readonly Dictionary<Guid, string> roots;
     private readonly string staging;
@@ -111,6 +111,14 @@ public sealed class ArchiveStaging
             // The OS lock serializes other processes as well as this instance; not a distributed/UNC lease.
             using var lifetime = await LockAsync(cancellationToken);
             var final = Path.Combine(staging, id);
+            var retirement = Path.Combine(staging, ".retired-" + id + ".json");
+            var deleted = Path.Combine(staging, ".deleted-" + id + ".json");
+            RejectReparseAncestors(retirement);
+            RejectReparseAncestors(deleted);
+            if (File.Exists(retirement) || Directory.Exists(retirement) || File.Exists(deleted) || Directory.Exists(deleted) ||
+                Directory.EnumerateFileSystemEntries(staging, ".retired-" + id + ".json.pending-*").Any() ||
+                Directory.EnumerateFileSystemEntries(staging, ".deleted-" + id + ".json.pending-*").Any())
+                throw new ArchiveException(ArchiveFailure.ArchiveInvalid, "Artifact identity is permanently retired");
             if (Directory.Exists(final)) return await VerifyExistingAsync(final, id, manifest, cancellationToken);
             if (File.Exists(final)) throw new ArchiveException(ArchiveFailure.ArchiveInvalid, "Artifact location is obstructed");
             var used = OccupiedBytes();
@@ -281,11 +289,15 @@ public sealed class ArchiveStaging
     {
         for (string? p = Path.GetFullPath(path); p is not null; p = Path.GetDirectoryName(p))
         {
-            if (File.Exists(p) || Directory.Exists(p))
+            try
             {
+                // Exists follows links and may report false for a dangling reparse entry.
+                // Read entry attributes directly so absence cannot disguise a link.
                 if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
                     throw new ArchiveException(ArchiveFailure.ArchiveUnavailable, "Reparse path is not allowed");
             }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
             if (p == Path.GetPathRoot(p)) break;
         }
     }

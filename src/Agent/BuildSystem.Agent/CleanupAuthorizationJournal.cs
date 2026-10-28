@@ -9,6 +9,9 @@ public sealed partial class AgentJournal
         CREATE TABLE IF NOT EXISTS cleanup_authorizations(
             id TEXT PRIMARY KEY,retirement TEXT NOT NULL UNIQUE,artifact TEXT NOT NULL UNIQUE,
             payload TEXT NOT NULL,state TEXT NOT NULL CHECK(state='Prepared'));
+        CREATE TABLE IF NOT EXISTS cleanup_local_results(
+            authorization TEXT PRIMARY KEY REFERENCES cleanup_authorizations(id),
+            state TEXT NOT NULL CHECK(state IN ('Deleting','DeletedLocal')));
         """);
 
     /// <summary>Persists prepared authority only. Does not execute cleanup or prove current remote authorization.
@@ -71,10 +74,41 @@ public sealed partial class AgentJournal
         return command.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<StageCleanupAuthorization>(payload) : null;
     }
 
-    /// <summary>Prepared records for reconciliation only; this list is not an executable cleanup queue.</summary>
+    /// <summary>Revalidates exact local settlement and persists Deleting before any engine side effect.
+    /// Callers serialize this journal and staging coordinator; this is not remote authorization revalidation.</summary>
+    public StageCleanupAuthorization BeginCleanupExecution(Guid authorizationId)
+    {
+        var grant = GetCleanupAuthorization(authorizationId) ?? throw new InvalidOperationException("Unknown cleanup authorization.");
+        // This method owns its own transaction: do not wrap StoreCleanupAuthorization in another transaction.
+        StoreCleanupAuthorization(grant);
+        using var transaction = _db.BeginTransaction();
+        Execute("INSERT OR IGNORE INTO cleanup_local_results(authorization,state) VALUES($0,'Deleting')", authorizationId.ToString());
+        transaction.Commit();
+        return grant;
+    }
+
+    public string? GetCleanupLocalState(Guid authorizationId)
+    {
+        using var command = Command("SELECT state FROM cleanup_local_results WHERE authorization=$0", authorizationId.ToString());
+        return command.ExecuteScalar() as string;
+    }
+
+    // Only the coordinator may record local success after the archive engine verifies its durable marker.
+    // There is intentionally no public arbitrary MarkDeleted or server/quota acknowledgement here.
+    internal void MarkCleanupDeletedLocal(Guid authorizationId)
+    {
+        using var transaction = _db.BeginTransaction();
+        var state = GetCleanupLocalState(authorizationId);
+        if (state is not ("Deleting" or "DeletedLocal") || GetCleanupAuthorization(authorizationId) is null)
+            throw new InvalidOperationException("Cleanup execution was not durably begun.");
+        Execute("UPDATE cleanup_local_results SET state='DeletedLocal' WHERE authorization=$0", authorizationId.ToString());
+        transaction.Commit();
+    }
+
+    /// <summary>Prepared/Deleting records for reconciliation only; not an automatically executable cleanup queue.</summary>
     public IReadOnlyList<StageCleanupAuthorization> PendingCleanupAuthorizations()
     {
-        using var command = Command("SELECT payload FROM cleanup_authorizations WHERE state='Prepared' ORDER BY rowid");
+        using var command = Command("SELECT a.payload FROM cleanup_authorizations a LEFT JOIN cleanup_local_results r ON r.authorization=a.id WHERE a.state='Prepared' AND (r.state IS NULL OR r.state='Deleting') ORDER BY a.rowid");
         using var reader = command.ExecuteReader(); var result = new List<StageCleanupAuthorization>();
         while (reader.Read()) result.Add(JsonSerializer.Deserialize<StageCleanupAuthorization>(reader.GetString(0)) ??
             throw new InvalidOperationException("Invalid persisted cleanup authorization."));

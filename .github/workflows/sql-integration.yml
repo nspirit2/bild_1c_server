@@ -22,6 +22,7 @@ on:
       - feat/stage-retirement-intent
       - feat/stage-retirement-plan
       - feat/stage-cleanup-authorization
+      - feat/local-stage-cleanup-executor
 
 permissions:
   contents: read
