@@ -29,6 +29,7 @@ on:
       - feat/cleanup-result-delivery
       - feat/cleanup-delivery-command
       - fix/retirement-queue-progress
+      - test/cleanup-real-tls
 
 permissions:
   contents: read

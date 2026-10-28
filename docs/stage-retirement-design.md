@@ -1,5 +1,7 @@
 # Удержание ресурсов и следующий retirement protocol
 
+> Исторический design note пакета96545a2: ниже описано состояние на тот момент, не текущая реализация. Последующие пакеты: [intent](stage-retirement-intent.md), [authorization](stage-cleanup-authorization.md), [local executor](local-stage-cleanup.md), [result](stage-cleanup-result.md), [staging accounting release](staging-allocation-release.md), [status/UI](cleanup-lifecycle-status.md), [delivery](cleanup-result-delivery.md), [queue progress](retirement-queue-progress.md). Automatic worker и полный DB/IB lifecycle всё ещё не включены.
+
 ## Реализованный шаг: объяснение, не освобождение
 
 Карточка /stage использует существующий15-field stage-status ответ, тот же coherentSerializable read и ACL. Новых endpoint/DTO/migrations/worker нет. Панель объясняет StageCompleted/Held/unsettled и почему TTL/истечение lease не означают освобождение ресурсов. Только точный согласованный tuple позволяет объяснить успешный stage; malformed/conflicting tuple даёт неопределённость, не разрешение cleanup. Строки через textContent; никакой отправки cleanup/reset/release.

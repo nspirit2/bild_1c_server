@@ -4,7 +4,7 @@
 
 CleanupResultDelivery.DeliverOneAsync выбирает один старейший Pending через SQLiteORDERBYrowidLIMIT1. Никакойunboundedbatchзагрузки, startup/hostedloop/autodelete/claim/release нет. Caller сериализуетjournal и stage/cleanup coordinator. ExistingAgentTransport HTTPSorigin/Bearercredential/noRedirect/noCookies. POSTapi/agent/stage/cleanup-result6полей, exact200; ResponseHeadersRead+linked20stimeout+16KiBactualstreamlimit (недоверяемContent-Length). StrictJSONunknownfieldsreject, exactResult/Auth/Artifact/DeletedReported/nondefaultReceivedAt; никакие errorresponsebody не выводятся.
 
-Успех даётjournalAck. 400/409/ReceiptMismatch ->Blocked+exception, никакихautomaticreset/newResultId. 401/403/404/429/5xx/network/cancellation оставляютPending+exception для последующей явнойпопытки. Еслисерверcommitted иответпотерян, ResultIdсохраняетсячерезreopen, retryполучаеттотжеreceipt. Это библиотечныйпуть, не включённыйproductionservice.
+Успех даётjournalAck. Историческая семантика20ff10d:400/409/ReceiptMismatch ->Blocked+exception. **Исправлено5961581:** generic400/409, включаяCleanupResultDisabled, оставляютPending; Blocked только для allowlisted definitive error codes и ReceiptMismatch, см. [одноразовую команду](cleanup-delivery-command.md). Никакихautomaticreset/newResultId. 401/403/404/429/5xx/network/cancellation оставляютPending+exception для последующей явнойпопытки. Еслисерверcommitted иответпотерян, ResultIdсохраняетсячерезreopen, retryполучаеттотжеreceipt. Это библиотечныйпуть, не включённыйproductionservice.
 
 ## Интегрированная цепочка
 

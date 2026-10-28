@@ -10,7 +10,7 @@ POST `/api/agent/stage/retirement-plan`, HTTPS AgentOnly, dedicated machine meta
 
 ## SQL
 
-Serializable retry/globalagentcontrol->root->pool. Freshsamecontextcredentialauthenticate иApproved/hashrecheck. Selectone matchingAgentId+Requested intent, RequestedAt/RetirementId orderedTake1. Any Active/NeedsAttention lease блокирует выдачу(null), даже прошедшийdeadline: нет expiry sweep. Исторический Completedlease expiry допустим.
+Serializable retry/globalagentcontrol->root->pool. Freshsamecontextcredentialauthenticate иApproved/hashrecheck. Selectone matchingAgentId+Requested intent, RequestedAt/RetirementId orderedTake1. Последующее исправление66aa7c1 исключает intents с принятым cleanup-result; explicit claim проверяет ExpectedRetirementId напрямую, сохраняя прежний replay. См. [queue progress](retirement-queue-progress.md). Any Active/NeedsAttention lease блокирует выдачу(null), даже прошедшийdeadline: нет expiry sweep. Исторический Completedlease expiry допустим.
 
 Current enabledproject/root/pool и bindings, snapshot fingerprint, exactintent/job/artifact/reservation/agent/fence проверяются перед ответом. SourceReadyavailability не требуется. Неверныеbinding/identity409 RetirementPlanMismatch. Повтор читает тотжеplan; никакого acknowledgment, audit или записей. Нет retirement claim/fence renewal/deadline: **старый полученный plan нельзя использовать для удаления после изменения прав**. Настоящая cleanupauthority потребует отдельного lease/CAS/invalidation protocol.
 
