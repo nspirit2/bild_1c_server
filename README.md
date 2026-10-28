@@ -54,6 +54,7 @@
 - [Изолированная проверка настоящего HTTPS transport](docs/cleanup-real-tls.md)
 - [Cleanup receipt через настоящий API pipeline и SQL](docs/cleanup-api-pipeline.md)
 - [Реальный Identity cookie и CSRF для admin staging release](docs/cleanup-admin-cookie.md)
+- [Cleanup HTTP request boundaries](docs/cleanup-request-boundaries.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

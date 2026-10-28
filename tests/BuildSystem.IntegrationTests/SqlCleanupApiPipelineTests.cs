@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BuildSystem.Agent;
 using BuildSystem.Application;
 using BuildSystem.Contracts;
@@ -183,6 +184,75 @@ public sealed class SqlCleanupApiPipelineTests
         Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
         Assert.IsNotType<CleanupResultConflictException>(error);
         await using var db = sql.NewContext(); Assert.Empty(await db.StageCleanupResults.ToListAsync());
+    }
+    [SqlServerFact]
+    public async Task Malformed_cleanup_result_bodies_are_rejected_without_receipt_or_audit_writes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        using var factory = new PipelineFactory(sql.ConnectionString);
+        using var client = factory.Client(seed.Credential.Token);
+        var canonical = JsonSerializer.Serialize(Report(seed), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var bodies = new List<string> { "null", "[]" };
+        string Changed(Action<JsonObject> change)
+        {
+            var body = JsonNode.Parse(canonical)!.AsObject(); change(body); return body.ToJsonString();
+        }
+        foreach (var field in new[] { "resultId", "authorizationId", "retirementId", "jobId", "artifactId" })
+        {
+            bodies.Add(Changed(body => body.Remove(field)));
+            bodies.Add(Changed(body => body[field] = Guid.Empty.ToString("D")));
+            bodies.Add(Changed(body => body[field] = "not-a-guid"));
+        }
+        bodies.Add(Changed(body => body.Remove("fencingToken")));
+        foreach (var fence in new[] { "0", "-1", "1.5", "9223372036854775808" })
+            bodies.Add(Changed(body => body["fencingToken"] = JsonNode.Parse(fence)));
+        bodies.Add(Changed(body => body["path"] = "not-accepted"));
+        int before; await using (var db = sql.NewContext()) before = await db.AuditEvents.CountAsync();
+        foreach (var body in bodies)
+        {
+            // Send actual raw UTF-8 JSON rather than another serializer's representation of a string.
+            using var content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            using var response = await client.PostAsync(Route, content);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        using (var content = new ByteArrayContent(Encoding.UTF8.GetBytes(canonical)))
+        {
+            content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+            using var response = await client.PostAsync(Route, content);
+            // AcceptsMatcherPolicy selects a metadata-less 415 rejection endpoint for this
+            // content type. It has no AgentMachineEndpoint exemption, so our fail-closed
+            // CSRF middleware rejects first. Do not assume every malformed request is 415.
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("InvalidCsrfToken", error.GetProperty("code").GetString());
+        }
+        await using (var db = sql.NewContext())
+        {
+            Assert.Empty(await db.StageCleanupResults.ToListAsync());
+            Assert.Equal(before, await db.AuditEvents.CountAsync());
+        }
+    }
+    [SqlServerFact]
+    public async Task Known_content_length_over_16_KiB_is_rejected_before_result_or_audit_writes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        using var factory = new PipelineFactory(sql.ConnectionString);
+        using var client = factory.Client(seed.Credential.Token);
+        var canonical = JsonSerializer.Serialize(Report(seed), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        // A valid document plus JSON whitespace ensures rejection is the middleware's known-length
+        // cap, not unknown-field parsing. TestServer does NOT prove Kestrel's chunked-body limit.
+        using var content = new ByteArrayContent(Encoding.UTF8.GetBytes(canonical + new string(' ', 16 * 1024)));
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        Assert.True(content.Headers.ContentLength > 16 * 1024);
+        int before; await using (var db = sql.NewContext()) before = await db.AuditEvents.CountAsync();
+        using var response = await client.PostAsync(Route, content);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        await using (var db = sql.NewContext())
+        {
+            Assert.Empty(await db.StageCleanupResults.ToListAsync());
+            Assert.Equal(before, await db.AuditEvents.CountAsync());
+        }
     }
 }
 // end
