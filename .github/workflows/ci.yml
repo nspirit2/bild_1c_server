@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list, feat/stage-operator-ui, test/stage-ui-behavior, feat/archive-catalog, feat/project-archive-browser, feat/archive-order-ui, feat/stage-retention-explanation, feat/stage-retirement-intent, feat/stage-retirement-plan, feat/stage-cleanup-authorization, feat/local-stage-cleanup-executor, feat/stage-cleanup-result, feat/staging-allocation-release, feat/cleanup-lifecycle-status, feat/cleanup-result-delivery, feat/cleanup-delivery-command, fix/retirement-queue-progress, test/cleanup-real-tls, test/cleanup-api-pipeline]
+    branches: [main, feat/process-pipeline-foundation, feat/archive-staging, feat/artifact-receipts, feat/artifact-outbox, feat/lease-aware-staging, feat/stage-only-control-plane, feat/stage-lease-renewal, feat/stage-completion, feat/stage-status, feat/stage-operations-list, feat/stage-operator-ui, test/stage-ui-behavior, feat/archive-catalog, feat/project-archive-browser, feat/archive-order-ui, feat/stage-retention-explanation, feat/stage-retirement-intent, feat/stage-retirement-plan, feat/stage-cleanup-authorization, feat/local-stage-cleanup-executor, feat/stage-cleanup-result, feat/staging-allocation-release, feat/cleanup-lifecycle-status, feat/cleanup-result-delivery, feat/cleanup-delivery-command, fix/retirement-queue-progress, test/cleanup-real-tls, test/cleanup-api-pipeline, test/cleanup-admin-cookie]
   pull_request:
   workflow_dispatch:
 
@@ -43,6 +43,21 @@ jobs:
         run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
       - name: Test domain, HTTP, SQLite, process and pipeline contracts (SQL requires opt-in)
         run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
+      - name: Annotate failed tests without publishing exception bodies
+        if: always()
+        shell: python
+        run: |
+          import pathlib, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          count = 0
+          for path in pathlib.Path('TestResults').glob('*.trx'):
+              root = ET.parse(path).getroot()
+              for result in root.findall('.//t:UnitTestResult', ns):
+                  if result.get('outcome') == 'Failed':
+                      name = result.get('testName', 'Unknown test').replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print('::error title=Failed test::' + name)
+                      count += 1
+          print('Failed test results: ' + str(count))
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
