@@ -43,6 +43,7 @@
 - [Удержание ресурсов и проект безопасного retirement](docs/stage-retirement-design.md)
 - [Durable retirement intent без удаления и quota release](docs/stage-retirement-intent.md)
 - [Machine retirement plan: inspection-only, без execution authority](docs/stage-retirement-plan.md)
+- [Cleanup authorization и durable journal preparation](docs/stage-cleanup-authorization.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

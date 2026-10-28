@@ -19,6 +19,16 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
         return db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            var result = await InspectAsync(credential, ct);
+            await tx.CommitAsync(ct);
+            return result;
+        });
+    }
+
+    // Caller owns the serializable transaction and retry boundary. Does not start a nested transaction.
+    internal async Task<StageRetirementPlan?> InspectAsync(string credential, CancellationToken ct)
+    {
+            if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A caller-owned transaction is required.");
             await Lock("BuildSystem:agent-control", ct);
             // Use a fresh control instance in this same transaction, not HTTP authentication's cached identity.
             var id = await new SqlAgentControl(db).AuthenticateAsync(credential, ct);
@@ -31,12 +41,12 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             if (await db.AgentLeases.AsNoTracking().AnyAsync(l => l.AgentId == id.Value &&
                 (l.State == "Active" || l.State == "NeedsAttention"), ct))
             {
-                await tx.CommitAsync(ct); return null;
+                return null;
             }
             var intent = await db.StageRetirementIntents.AsNoTracking()
                 .Where(r => r.AgentId == id.Value && r.State == "Requested")
                 .OrderBy(r => r.RequestedAt).ThenBy(r => r.RetirementId).Take(1).SingleOrDefaultAsync(ct);
-            if (intent is null) { await tx.CommitAsync(ct); return null; }
+            if (intent is null) return null;
             var rootId = await (from q in db.EnvironmentRequests.AsNoTracking()
                                 join e in db.TestEnvironments.AsNoTracking() on q.Id equals e.RequestId
                                 join v in db.DiskArchiveVersions.AsNoTracking() on q.ArchiveVersionId equals v.Id
@@ -98,9 +108,7 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             { throw Mismatch(); }
             var result = new StageRetirementPlan(intent.RetirementId, i.e.Id, i.j.Id, i.artifact.ArtifactId,
                 i.r.Id, i.v.Id, i.l.FencingToken, i.artifact.Sha256, i.artifact.SizeBytes, i.artifact.Format);
-            await tx.CommitAsync(ct);
             return result;
-        });
     }
     private Task Lock(string resource, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r = sys.sp_getapplock @Resource={resource}, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=15000; IF @r IN (-1, -3) THROW 51001, 'Transient retirement plan lock contention', 1; IF @r < 0 THROW 51000, 'Retirement plan lock cancelled or invalid', 1;", ct);
     private static RequestRejectedException Mismatch() => new(409, "RetirementPlanMismatch");

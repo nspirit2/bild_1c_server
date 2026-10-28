@@ -698,6 +698,44 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("ProjectPools");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageCleanupAuthorizationRecord", b =>
+                {
+                    b.Property<Guid>("AuthorizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ArtifactId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("AuthorizedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PlanJson")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<Guid>("RetirementId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("StageFencingToken")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("AuthorizationId");
+
+                    b.HasIndex("AgentId");
+
+                    b.HasIndex("ArtifactId")
+                        .IsUnique();
+
+                    b.HasIndex("RetirementId")
+                        .IsUnique();
+
+                    b.ToTable("StageCleanupAuthorizations");
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.StageRetirementIntent", b =>
                 {
                     b.Property<Guid>("RetirementId")
@@ -1121,6 +1159,27 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.StageCleanupAuthorizationRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StagedArtifact", null)
+                        .WithMany()
+                        .HasForeignKey("ArtifactId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StageRetirementIntent", null)
+                        .WithMany()
+                        .HasForeignKey("RetirementId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
