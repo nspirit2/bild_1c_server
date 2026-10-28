@@ -4,6 +4,6 @@
 
 ШестьодновременныхhumanPOSTсреальнымиIdentityadmincookie+свежимCSRF даютодинStagingAllocationReleaseReceipt, ledgerone+auditone. ПриэтомHeldStagingBytes0; historicalreservedstagingсохранён; reservationHeld, ReservedBytesDBallocation иenvironmentUnsettledнеосвобождены. ТакиеотдельныеисторическиесмыслынаблюдаемывSQL/APIбезавтоматическогоудаления.
 
-Локально **508.NETpassed,0failed,114SQLskipped**, Node38passed. **Windows114SQLpassed,0failed,0skipped**,37s, TestRuns\\CleanupConcurrency-20261028. TestDBleftovers0, mainBuildSystem4миграциинеизменны. CIдля5c48125 SQLsuccess40733202755, Buildещёвыполнялсянамоментзаписи. НовыйпакетдолженбытьпроверенсвоимCIпослеpush.
+Локально **508.NETpassed,0failed,114SQLskipped**, Node38passed. **Windows114SQLpassed,0failed,0skipped**,37s, TestRuns\\CleanupConcurrency-20261028. TestDBleftovers0, mainBuildSystem4миграциинеизменны. CIдля5c48125 SQLsuccess40733202755, Buildещёвыполнялсянамоментзаписи. ПоследующаяпроверкаCI2a5a5ce: [Build40733874692](https://github.com/nspirit2/bild_1c_server/actions/runs/40733874692) successWindows/Ubuntu и [SQL40733874657](https://github.com/nspirit2/bild_1c_server/actions/runs/40733874657) success; 5c48125Build40733202927тожеsuccess.
 
 Границы: этоTestServerHTTP/realSQL, несквознойIIS/TLS/browser. TLSпроверенотдельно, browserSameSiteнеподтверждён. НикакихproductionDB/IIS/flags/workerchanges.
