@@ -131,6 +131,77 @@ public sealed class DtRestorePlanningTests
             () => new DtRestoreReviewPlanner(mappings)).Code);
     }
     [Fact]
+    public void Fixed_recipe_vector_matches_independently_computed_sha256()
+    {
+        var request = new DtRestoreReviewRequest(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222"), 42,
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            Guid.Parse("55555555-5555-5555-5555-555555555555"),
+            Guid.Parse("66666666-6666-6666-6666-666666666666"),
+            Guid.Parse("77777777-7777-7777-7777-777777777777"),
+            Guid.Parse("88888888-8888-8888-8888-888888888888"),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            123456789, "dt", "profile-v1");
+        // Independently computed with Python hashlib.sha256 over UTF-8 json.dumps(...,
+        // separators=(',', ':')), not with this planner or System.Text.Json. Field order:
+        // RecipeVersion, EnvironmentId, JobId, FencingToken, ReservationId, ArtifactId,
+        // ArchiveVersionId, TargetId, ClusterId, SqlServerId, Sha256 (uppercase), SizeBytes,
+        // Format, PreparationProfileVersion, InfobaseName, SqlDatabaseName. GUIDs are lowercase
+        // D strings; both names are bs_test_33333333333333333333333333333333; no trailing newline.
+        const string expected = "12599205F3A9D1879FA730DEDB798DA3E4804427DED97BC5DC1F6A0D8558B5DA";
+        Assert.Equal(expected, Planner(request).Plan(request).RecipeSha256);
+    }
+    [Fact]
+    public void Public_plan_surface_stays_read_only_and_has_no_execution_entrypoint()
+    {
+        var type = typeof(ReviewOnlyDtRestorePlan);
+        const System.Reflection.BindingFlags declaredPublic = System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static |
+            System.Reflection.BindingFlags.DeclaredOnly;
+        Assert.True(type.IsSealed);
+        Assert.Empty(type.GetConstructors(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance));
+        var properties = type.GetProperties(declaredPublic);
+        Assert.Equal(new[] { "RecipeSha256", "RecipeVersion", "Request", "RequiredPhases", "ReviewOnly", "Target" },
+            properties.Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(properties, property =>
+        {
+            Assert.NotNull(property.GetMethod);
+            Assert.Null(property.SetMethod);
+        });
+        // Do not include inherited Object methods. Even an innocuously named new execution
+        // converter must cause this exact method allowlist to fail review.
+        Assert.Equal(new[] { "ToString" }, type.GetMethods(declaredPublic)
+            .Where(method => !method.IsSpecialName).Select(method => method.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.Empty(type.GetFields(declaredPublic));
+        Assert.Empty(type.GetEvents(declaredPublic));
+    }
+    [Fact]
+    public void Recipe_identity_is_independent_of_current_and_ui_culture()
+    {
+        var originalCulture = System.Globalization.CultureInfo.CurrentCulture;
+        var originalUiCulture = System.Globalization.CultureInfo.CurrentUICulture;
+        var request = Request() with { PreparationProfileVersion = "ISOLATION-I-v1", Sha256 = new string('a', 64) };
+        var planner = Planner(request);
+        try
+        {
+            // CurrentCulture flows through ExecutionContext; never mutate DefaultThreadCurrentCulture.
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+            System.Globalization.CultureInfo.CurrentUICulture = System.Globalization.CultureInfo.InvariantCulture;
+            var invariantHash = planner.Plan(request).RecipeSha256;
+            var turkish = System.Globalization.CultureInfo.GetCultureInfo("tr-TR");
+            System.Globalization.CultureInfo.CurrentCulture = turkish;
+            System.Globalization.CultureInfo.CurrentUICulture = turkish;
+            Assert.Equal(invariantHash, planner.Plan(request).RecipeSha256);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = originalCulture;
+            System.Globalization.CultureInfo.CurrentUICulture = originalUiCulture;
+        }
+    }
+    [Fact]
     public void Diagnostics_do_not_echo_input_or_target_names()
     {
         var r = Request(); var plan = Planner(r).Plan(r);

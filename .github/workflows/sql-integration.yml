@@ -35,6 +35,7 @@ on:
       - test/cleanup-request-boundaries
       - test/cleanup-http-concurrency
       - feat/dt-restore-planning
+      - test/dt-plan-contract
 
 permissions:
   contents: read
