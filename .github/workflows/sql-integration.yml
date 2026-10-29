@@ -34,6 +34,7 @@ on:
       - test/cleanup-admin-cookie
       - test/cleanup-request-boundaries
       - test/cleanup-http-concurrency
+      - feat/dt-restore-planning
 
 permissions:
   contents: read
