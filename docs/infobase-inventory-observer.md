@@ -1,0 +1,15 @@
+# Фиксированный read-only RAC inventory observer
+
+Следующий adapter вызывает только `rac infobase summary list` через существующий IProcessRunner. Tool ID, endpoint, canonical endpoint mapping ID, workdir и timeout — operator-owned настройки. Scope.EndpointMappingId обязан совпадать с настройкой до начала IO; GUID-пин обозначает конфигурационную привязку, не самостоятельно проверенную физическую endpoint identity.
+
+Команда имеет фиксированную форму: infobase/summary/list, cluster GUID из scope, explicit cluster credentials и configured endpoint. Нет CREATE, UPDATE, DROP, restore или параметров shell. Credentials помечены sensitive и KnownSecrets, ToString/errors не раскрывают входы.
+
+Stdout собирается bounded per invocation до parser limit, callback state синхронизирован. Любой nonempty stderr, truncation/overflow, timeout/cancel, abnormal completion или ошибка runner/callback даёт safe отказ. Parser вызывается только после нормального exit0. Credentials redaction может изменить identity: если credential совпадает с именем IB, [REDACTED] потенциально выглядел бы как другое имя и дал ложный Absent. Поэтому adapter обязан отвергать любой redaction marker в assembled stdout, даже если остальные поля парсятся; malformed/unknown parse также не превращается в успешное absence. Цена — консервативный отказ, если literal RAC field содержит такой marker.
+
+Результат — наблюдение списка, не trusted ownership/authorization, не lock и не гарантия сохранения отсутствия. Нет подключения Worker/StepRegistry/CLI/журнала попыток/серверной выдачи execution grants. Endpoint parsing/UUID не обнаруживают physical aliases. Нужны отдельная authority и доказанная история создания цели до будущего CREATE/restore.
+
+Первый real ProcessRunner прогон выявил ошибку fixture: разбиение .NET UTF-16 строки по3char с Flush разрывало surrogate pair emoji до кодирования, заменяя его на replacement chars. Это не parser/runner decode баг; fixture исправляется на surrogate-safe границы, Unicode assertions сохраняются, а не ослабляются.
+
+## Проверки
+
+Fake-runner tests должны закрепить argv/mapping mismatch до запуска, sensitive arguments, split callbacks, malformed output, stderr, exit/completion/truncation/overflow/callback errors/cancel и diagnostic redaction. Отдельные real ProcessRunner tests используют fixture DLL через bridge, который только добавляет DLL-path, но не переписывает fixed RAC argv. Fixture принимает только infobase summary list и отдаёт fragmented вывод; проверяются Present/emptyAbsent, timeout после полногоstdout, stderr и redaction, outputlimit/truncation, malformed/casealias и credential collisions с именем/UUID/field key. Реальный RAC adapter smoke остаётся отдельной проверкой, не следствием fake/fixture tests. Окончательный полный Release: **781passed/0failed**, SQL134 explicitly skipped без opt-in; ProcessTests142passed (71previous+61fake+10real new). Locked restore success, diff check success. SQL134/134 прошёл в предыдущем status-срезе, DB code этим adapter не меняется. Независимый review подтвердил completion/callback/mapping fail-closed guards; redaction falseAbsent устранён до фиксации.

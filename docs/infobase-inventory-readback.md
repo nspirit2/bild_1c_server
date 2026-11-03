@@ -22,6 +22,8 @@ Scope связывает ожидаемые operation/fence/target correlation/c
 
 Filtered Release inventory53/53passed; полный локальный Release **710passed/0failed**, SQL134 explicitly skipped без opt-in; locked restore и diff check successful. SQL suite последний раз прошёл134/134 на WindowsSQL2019 в предыдущем status-срезе; этот pure parser SQL не изменяет. Node42passed в status-срезе. Новых package/migration/model изменений нет.
 
+Commita270543: [Build41614677789](https://github.com/nspirit2/bild_1c_server/actions/runs/41614677789) success Windows/Ubuntu; [SQL41614677891](https://github.com/nspirit2/bild_1c_server/actions/runs/41614677891) success SQL2022/Linux, включая134tests без skips.
+
 ## Обязательная политика restore
 
 Любой будущий restore остаётся под обязательным scheduled-jobs-deny=on до/после restore и после restart. Security profile не требуется. Inventory не заменяет эти проверки, durable ownership history, server fence/lease или reconciliation неизвестного результата.

@@ -13,6 +13,50 @@ if (args.Length == 0)
 switch (args[0])
 {
     case "infobase":
+        // Independent inventory mode precedes the existing info validation. Accept only
+        // the fixed read-only command; the bridge may prepend the fixture DLL, nothing else.
+        if (args.Length > 1 && args[1] == "summary")
+        {
+            if (args.Length != 7 || args[2] != "list" ||
+                !args[3].StartsWith("--cluster=", StringComparison.Ordinal) ||
+                !Guid.TryParseExact(args[3]["--cluster=".Length..], "D", out _) ||
+                !args[4].StartsWith("--cluster-user=", StringComparison.Ordinal) ||
+                !args[5].StartsWith("--cluster-pwd=", StringComparison.Ordinal) ||
+                args[6] is not ("inventory-ok" or "inventory-empty" or "inventory-stderr" or
+                    "inventory-hang" or "inventory-malformed" or "inventory-casealias"))
+                return 64;
+            const string inventoryName = "bs_test_11111111111111111111111111111111";
+            const string inventoryId = "22222222-2222-2222-2222-222222222222";
+            var inventoryResponse = args[6] switch
+            {
+                "inventory-empty" => "",
+                "inventory-malformed" => $"infobase : {inventoryId}\nname : {inventoryName}\nunexpected : value\n",
+                "inventory-casealias" => $"infobase : {inventoryId}\nname : {inventoryName.ToUpperInvariant()}\n",
+                _ => $"infobase : {inventoryId}\nname : {inventoryName}\ndescr : irrelevant λ🌍 description\n"
+            };
+            for (var offset = 0; offset < inventoryResponse.Length;)
+            {
+                var count = Math.Min(3, inventoryResponse.Length - offset);
+                // Flush must not force the UTF-8 writer to encode half a surrogate pair.
+                if (char.IsHighSurrogate(inventoryResponse[offset + count - 1])) count--;
+                Console.Out.Write(inventoryResponse.Substring(offset, count));
+                Console.Out.Flush();
+                offset += count;
+            }
+            if (args[6] == "inventory-stderr")
+            {
+                foreach (var credential in new[] { args[4]["--cluster-user=".Length..], args[5]["--cluster-pwd=".Length..] })
+                {
+                    var middle = credential.Length / 2;
+                    Console.Error.Write("private inventory diagnostic: " + credential[..middle]);
+                    Console.Error.Flush();
+                    Console.Error.WriteLine(credential[middle..]);
+                }
+            }
+            if (args[6] == "inventory-hang")
+                await Task.Delay(Timeout.InfiniteTimeSpan);
+            return 0;
+        }
         // Accept the observer's real read-only RAC command, without a synthetic
         // mode argument inserted by the test bridge. Only the endpoint selects behavior.
         if (args.Length != 7 || args[1] != "info" ||
