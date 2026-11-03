@@ -24,6 +24,31 @@ Import API создаёт защищённый файл без overwrite; оно
 
 Explicit invocation удерживает observation-command.lock через FileShare.None до завершения journal/transport работы. Это сериализует только explicit observation commands для одного DataDirectory. **Оператор должен остановить service/другие процессы, работающие с этим journal**: они не участвуют в lock protocol, lock не является межагентным target lease и не решает physical exclusion. Crash до enqueue может повторить read-only observation; после enqueue отправляется та же immutable история.
 
+## Operator configuration keys
+
+Explicit command не принимает secrets/addresses/flags. В operator-owned configuration/environment используются только эти поля:
+
+```text
+Agent:DataDirectory                   existing absolute service-only directory
+Agent:ApiOrigin                       verified HTTPS origin, no path/query/userinfo
+Agent:TargetObservation:Enabled       false (default); true only for explicit approved invocation
+Agent:TargetObservation:AgentId       enrolled agent GUID
+Agent:TargetObservation:CanonicalClusterId
+Agent:TargetObservation:CanonicalSqlServerId
+Agent:TargetObservation:RacEndpointMappingId
+Agent:TargetObservation:SqlEndpointMappingId
+Agent:TargetObservation:RacExecutable           absolute existing rac.exe
+Agent:TargetObservation:RacWorkingDirectory     existing absolute operator-owned directory
+Agent:TargetObservation:RacEndpoint             host:port (or [IPv6]:port)
+Agent:TargetObservation:SqlServer               host / host\\instance / host,port
+Agent:TargetObservation:ExpectedSqlMachineName
+Agent:TargetObservation:ExpectedSqlInstanceName MSSQLSERVER (default)
+Agent:TargetObservation:TimeoutSeconds          30 (1..60)
+Agent:TargetObservation:TotalTimeoutSeconds     60 (1..120, paired observer budget)
+```
+
+Environment separators: `__`, например `Agent__TargetObservation__Enabled=false`. Whole CLI duration не ограничивается TotalTimeoutSeconds: этот budget относится только к RAC+SQL pair; HTTP GET/POST имеют собственные bounded timeouts, DPAPI/local journal — synchronous local IO. TLS trust bypass нет: operator настраивает доверенный certificate chain и совпадающее SQL server имя, не переключает TrustServerCertificate. Перед live invocation отдельно согласовать endpoints, service account/sysadmin visibility и остановку service. Здесь такие действия не выполнялись.
+
 ## Timer-sensitive test hardening
 
 Предыдущий c0a8859 Windows CI упал в RealTimeoutRejectsEvenCompleteValidInventory и GuardCallbacksNeverOverlapAndStopBeforeSuccessfulReturn (только annotations, failed TRX недоступен без auth). Это не подтверждает дефект production или конкретную причину. Renewal test переведён на существующий ControlledClock и barriers: periodic guard удерживается во время фактического завершения copy, final guard отдельно освобождается; сохраняются no-overlap/Enqueued/pending-artifact/no-post-return-calls assertions, без20ms/60mssleep. Production renewal/lease semantics не изменены. RAC timeout integration пока не ослаблен:2sbudget vs startup возможен, но full inventory assertion сохранён.

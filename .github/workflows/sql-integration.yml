@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - feat/agent-control-plane
       - feat/archive-staging
       - feat/artifact-receipts
