@@ -18,6 +18,8 @@ Immutable intent фиксирует operation/environment/job/fence/reservation/
 
 Release AgentTests284passed, включая12новых cases. Полный локальный Release628passed/0failed, 114SQL explicitly skipped; locked restore success, diff check success. Тесты проверяют reopen каждого состояния без recovery, exact replay, изменённые пины, независимые частичные коллизии, CAS и отсутствие повторного begin-сигнала после quarantine, сохранение барьеров при stage lease expiry/settlement, SQL CHECK null pairing, additive initialization старого journal и redacted diagnostics. Независимый review обнаружил SQLite CHECK NULL особенность; исправлено явным attempt_revision IS NOT NULL и закреплено direct storage tests. Обычные SQL EF migrations не менялись; has-pending-model-changes сообщает отсутствие изменений.
 
+Commit fec0c50: [SQL41606181037](https://github.com/nspirit2/bild_1c_server/actions/runs/41606181037) success; [Build41606181246](https://github.com/nspirit2/bild_1c_server/actions/runs/41606181246) success Windows/Ubuntu.
+
 ## Границы разработки
 
 Нет подключения к Worker/StepRegistry/CLI/production deployment. Нет EF/server schema изменения и новых IB/SQL DB на стенде. Существующая ручная smoke IB не усыновляется и не перезаписывается автоматически. Запрет регламентных заданий обязателен; security profile не является обязательным этапом по решению владельца.
