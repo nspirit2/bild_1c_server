@@ -57,6 +57,44 @@ public sealed class TargetObservationOutboxDeliveryTests : IDisposable
     }
 
     [Fact]
+    public async Task AddressedDeliverySkipsOlderReportsAndRetainsAcknowledgedHistory()
+    {
+        var older = Enqueue(); var selected = Enqueue(1); var newer = Enqueue(2);
+        var transport = new Transport(); var delivery = new TargetObservationOutboxDelivery(journal, transport);
+        Assert.Equal(1, await delivery.DeliverRequestAsync(selected.Assignment.ObservationRequestId));
+        Assert.Equal(selected, Assert.Single(transport.Reports));
+        Assert.Equal(new[] { older, newer }, journal.PendingTargetObservations());
+        Reopen();
+        Assert.Equal(selected, journal.GetTargetObservationReport(selected.Assignment.ObservationRequestId));
+        Assert.Null(journal.GetPendingTargetObservationReport(selected.Assignment.ObservationRequestId));
+        Assert.Equal(0, await new TargetObservationOutboxDelivery(journal, transport).DeliverRequestAsync(selected.Assignment.ObservationRequestId));
+        Assert.Single(transport.Reports);
+    }
+
+    [Fact]
+    public async Task AddressedDeliveryRejectsUnknownOrEmptyRequestWithoutSendingOtherReports()
+    {
+        var pending = Enqueue(); var transport = new Transport(); var delivery = new TargetObservationOutboxDelivery(journal, transport);
+        await Assert.ThrowsAsync<ArgumentException>(() => delivery.DeliverRequestAsync(Guid.Empty));
+        AssertRedacted(await Assert.ThrowsAsync<TargetObservationOutboxException>(() => delivery.DeliverRequestAsync(Guid.NewGuid())));
+        Assert.Equal(pending, Assert.Single(journal.PendingTargetObservations()));
+        Assert.Empty(transport.Reports);
+    }
+
+    [Fact]
+    public async Task AddressedLostAckRetainsExactSelectedPayloadForRetry()
+    {
+        var older = Enqueue(); var selected = Enqueue(1);
+        var transport = new Transport { Send = (_, _) => throw new IOException("private") };
+        await Assert.ThrowsAsync<TargetObservationOutboxException>(() =>
+            new TargetObservationOutboxDelivery(journal, transport).DeliverRequestAsync(selected.Assignment.ObservationRequestId));
+        Reopen(); transport.Send = (report, _) => Task.FromResult(Ack(report));
+        Assert.Equal(1, await new TargetObservationOutboxDelivery(journal, transport).DeliverRequestAsync(selected.Assignment.ObservationRequestId));
+        Assert.Equal(new[] { selected, selected }, transport.Reports);
+        Assert.Equal(older, Assert.Single(journal.PendingTargetObservations()));
+    }
+
+    [Fact]
     public async Task EmptySnapshotDoesNotReadOrReport()
     {
         var transport = new Transport();

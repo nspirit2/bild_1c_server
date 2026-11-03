@@ -24,15 +24,32 @@ public sealed class TargetObservationOutboxDelivery
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
     }
 
-    public async Task<int> DeliverAsync(int limit = 100, CancellationToken ct = default)
+    public Task<int> DeliverAsync(int limit = 100, CancellationToken ct = default)
     {
         if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
+        return DeliverCoreAsync(() => journal.PendingTargetObservations(limit), ct);
+    }
+
+    /// <summary>Delivers only the addressed request; never drains an unrelated older report.</summary>
+    public Task<int> DeliverRequestAsync(Guid requestId, CancellationToken ct = default)
+    {
+        if (requestId == Guid.Empty) throw new ArgumentException("Invalid observation request.", nameof(requestId));
+        return DeliverCoreAsync(() =>
+        {
+            if (journal.GetTargetObservationReport(requestId) is null) throw new TargetObservationOutboxException();
+            var pending = journal.GetPendingTargetObservationReport(requestId);
+            return pending is null ? Array.Empty<ReportTargetObservation>() : new[] { pending };
+        }, ct);
+    }
+
+    private async Task<int> DeliverCoreAsync(Func<IReadOnlyList<ReportTargetObservation>> select, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
         // Reject overlapping/reentrant calls rather than silently scheduling another delivery pass.
         if (!deliveryGate.Wait(0)) throw new TargetObservationOutboxException();
         try
         {
-            var pending = journal.PendingTargetObservations(limit);
+            var pending = select();
             var delivered = 0;
             foreach (var report in pending)
             {
