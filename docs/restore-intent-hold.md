@@ -4,7 +4,7 @@
 
 После StageCompleted/Completed stage lease не переиспользуется и не превращается в restore lease. Новый SQL-backed intent готовит отдельную операцию и удерживает staged artifact/целевые слоты; receipt всегда Executable=false. Это не grant, не доказательство пустой принадлежащей операции IB и не Ready.
 
-Опция RestoreIntentOptions.Enabled по умолчанию false, независима от ArchiveStageOptions. В этом срезе нет HTTP route, machine claim/heartbeat, worker или команды restore; сервис доступен только через явно вызванный application interface. DI не включает исполнение.
+Опция RestoreIntentOptions.Enabled по умолчанию false, независима от ArchiveStageOptions. В исходном hold-срезе HTTP route отсутствовал; следующим отдельным срезом добавляется human-only POST с cookie/CSRF (см. [API](restore-intent-api.md)). Machine claim/heartbeat, worker или команды restore отсутствуют. DI не включает исполнение.
 
 ## Источник пинов
 
@@ -27,6 +27,8 @@ Restore intent несовместим с существующим retirement/cle
 Следующий regression пакет отдельно закрепляет DB-level независимые частичные SQL/IB slot collisions между разными agent/pool, CHECK запрет Executable=true и снятия scheduled-jobs policy, defensive copy dictionary и JSON невозможность выставить Executable=true на receipt. Это тесты metadata constraints, не доказательство физической каноничности внешнего сервера. После дополнения: локальный Release634passed/0failed (SQL128 skipped без opt-in), Windows SQL2019 **128passed/0failed/0skipped**, суммарно762 .NET cases. Прямые нарушения SQL/IB unique keys возвращают2601/2627 и соответствующий index; выключение запрета заданий или Executable=true возвращает547/check. Locked restore повторно успешен; временные RID lockfile изменения portable publish не включены в commit.
 
 Commit73f6bb4: [Build41608854463](https://github.com/nspirit2/bild_1c_server/actions/runs/41608854463) success Windows/Ubuntu, [SQL41608854418](https://github.com/nspirit2/bild_1c_server/actions/runs/41608854418) success SQL2022/Linux. Таким образом миграция и SQL subset проверены как на SQL2019/Windows, так и на CI SQL2022/Linux; это не production deployment.
+
+Commitfb82fdc: [Build41609787846](https://github.com/nspirit2/bild_1c_server/actions/runs/41609787846) success Windows/Ubuntu, [SQL41609787875](https://github.com/nspirit2/bild_1c_server/actions/runs/41609787875) success, включая 128 SQL tests без skips.
 
 ## Что не меняется
 

@@ -24,6 +24,24 @@ else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironm
 builder.Services.AddBuildSystemInfrastructure(connection);
 builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Configuration.GetValue<bool>("ArchiveStage:Enabled") });
 builder.Services.AddSingleton(new StageRetirementOptions { Enabled = builder.Configuration.GetValue<bool>("StageRetirement:Enabled") });
+// Canonical identity assertions are operator-owned configuration, never HTTP input.
+// Bind eagerly and strictly: malformed dictionary keys/values must fail startup, not disappear.
+builder.Services.AddSingleton(services =>
+{
+    var configuration = services.GetRequiredService<IConfiguration>();
+    var mappings = configuration.GetSection("RestoreIntent:CanonicalMappings")
+        .Get<Dictionary<string, RestoreIntentCanonicalMapping>>(options => options.ErrorOnUnknownConfiguration = true) ?? [];
+    if (mappings.Count > 1024 || mappings.Values.Any(mapping => mapping.CanonicalClusterId == Guid.Empty || mapping.CanonicalSqlServerId == Guid.Empty))
+        throw new InvalidOperationException("RestoreIntent canonical mappings require nonempty canonical GUIDs and at most 1024 entries.");
+    return new RestoreIntentOptions
+    {
+        Enabled = configuration.GetValue<bool>("RestoreIntent:Enabled"),
+        // The binder does not support Guid dictionary keys; bind strings, then parse every key explicitly.
+        CanonicalMappings = mappings.ToDictionary(entry => Guid.TryParse(entry.Key, out var poolId) && poolId != Guid.Empty
+                ? poolId : throw new InvalidOperationException("RestoreIntent canonical mapping keys must be nonempty pool GUIDs."),
+                entry => entry.Value)
+    };
+});
 builder.Services.AddSingleton(new StageCleanupOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanup:Enabled") });
 builder.Services.AddSingleton(new StageCleanupResultOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanupResult:Enabled") });
 builder.Services.AddSingleton(new StagingAllocationReleaseOptions { Enabled = builder.Configuration.GetValue<bool>("StagingAllocationRelease:Enabled") });
@@ -66,6 +84,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 
 var app = builder.Build();
+// Resolve before accepting traffic (also when disabled), after all host configuration providers apply.
+_ = app.Services.GetRequiredService<RestoreIntentOptions>();
 if (args.Length > 0 && args[0] == "bootstrap-admin")
 {
     Environment.ExitCode = await AdminBootstrap.RunAsync(app.Services, args.Skip(1).ToArray());
@@ -181,6 +201,10 @@ app.MapGet("/api/test-environments/{id:guid}/cleanup-status", async (Guid id, Cl
 app.MapPost("/api/test-environments/{id:guid}/stage-retirement-intents", async (Guid id,
     StageRetirementRequest request, ClaimsPrincipal user, IStageRetirement retirement, CancellationToken ct) =>
     Results.Ok(await retirement.RequestAsync(CurrentActor(user), id, request, ct)))
+    .RequireAuthorization();
+app.MapPost("/api/test-environments/{id:guid}/restore-intents", async (Guid id,
+    RequestRestoreIntent request, ClaimsPrincipal user, IRestoreIntents intents, CancellationToken ct) =>
+    Results.Ok(await intents.RequestAsync(CurrentActor(user), id, request, ct)))
     .RequireAuthorization();
 app.MapPost("/api/admin/stage-cleanup-results/{resultId:guid}/release-staging", async (Guid resultId,
     ReleaseStagingAllocation input, ClaimsPrincipal user, IStagingAllocationRelease release, CancellationToken ct) =>
