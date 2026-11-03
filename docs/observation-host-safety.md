@@ -16,9 +16,17 @@ Import API создаёт защищённый файл без overwrite; оно
 
 ## Scope
 
-Это source-only support. Live credentials не запрашивались и не читались, production/DataDirectory/службы не менялись. Actual SQL provider factory и Program routing подключаются отдельным срезом после тестов. Наблюдение не даёт execution lease/CREATE/restore; scheduled-jobs-deny=on остаётся mandatory до/после restore и после restart. Security profile не mandatory gate.
+Это source-only support. Live credentials не запрашивались и не читались, production/DataDirectory/службы не менялись. Concrete SQL provider factory и Program routing подключены: точная команда `BuildSystem.Agent.exe observe-target <ObservationRequestId-D>` завершается до Windows service/Worker/ArchiveStaging registration. Конфигурация берётся из operator-owned файлов/environment, positional args не являются configuration overrides. Enabled=false возвращает4/TargetObservationDisabled. Invalid args64, cancellation130, config/storage failure5, coordination blocked4;0означает historical Recorded, не Ready. Наблюдение не даёт execution lease/CREATE/restore; scheduled-jobs-deny=on остаётся mandatory до/после restore и после restart. Security profile не mandatory gate.
+
+## Concrete factory и concurrency
+
+Один trusted RAC executable/internal tool ID/allowed workdir, fixed read-only inventory; SQL connection создаётся через SqlClient6.1.7, structured builder с IntegratedSecurity=true, InitialCatalog=master, Encrypt=Mandatory, TrustServerCertificate=false, bounded timeout, Pooling=false, fixed ApplicationName. Обнаруженный уязвимый transitive PKCS9.0.11 заменён прямым10.0.13 pin; audit warnings не подавлены, locked restore проходит.
+
+Explicit invocation удерживает observation-command.lock через FileShare.None до завершения journal/transport работы. Это сериализует только explicit observation commands для одного DataDirectory. **Оператор должен остановить service/другие процессы, работающие с этим journal**: они не участвуют в lock protocol, lock не является межагентным target lease и не решает physical exclusion. Crash до enqueue может повторить read-only observation; после enqueue отправляется та же immutable история.
 
 ## Validation
+
+Wiring full Release: **1182passed/0failed**, Agent577cases; SQL164skipped без opt-in. Executable smoke без targets: disabled4, extra flag64 и malformed appsettings5 дают только fixed statuses, без framework exception/config content. Startup host creation observation-mode ошибки тоже redacted. Source review исправлен по этому startup boundary; Windows cross-process lock contention остаётся отдельным future stress case.
 
 Локальный полный Release: **1162passed/0failed**, Agent557cases (78добавлено), SQL164skipped без opt-in. Locked restore/diff check успешны; source review не нашёл actionable defect. Windows DPAPI runtime guard не означает Windows execution на Linux: реальный DPAPI round-trip должен подтверждаться Windows CI.
 

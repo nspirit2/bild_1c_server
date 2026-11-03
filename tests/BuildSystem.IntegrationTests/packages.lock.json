@@ -746,9 +746,11 @@
           "BuildSystem.Agent.Archives": "[1.0.0, )",
           "BuildSystem.Agent.Tools": "[1.0.0, )",
           "BuildSystem.Contracts": "[1.0.0, )",
+          "Microsoft.Data.SqlClient": "[6.1.7, )",
           "Microsoft.Data.Sqlite": "[10.0.13, )",
           "Microsoft.Extensions.Hosting": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.WindowsServices": "[10.0.13, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )",
           "System.Security.Cryptography.ProtectedData": "[10.0.13, )"
         }
       },

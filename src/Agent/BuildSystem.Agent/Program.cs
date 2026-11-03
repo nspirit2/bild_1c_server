@@ -5,13 +5,30 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 // Reject misspelled commands/extra flags before configuration, token IO or worker startup.
-if (!CleanupDeliveryCommand.SupportedArguments(args))
+if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args))
 {
     Console.Error.WriteLine("UnsupportedAgentCommand");
     Environment.ExitCode = 64;
     return;
 }
-var builder = Host.CreateApplicationBuilder(args);
+// Positional explicit command arguments are not configuration key/value overrides.
+HostApplicationBuilder builder;
+try { builder = Host.CreateApplicationBuilder(Array.Empty<string>()); }
+catch (Exception) when (TargetObservationCommand.IsObservationCommand(args))
+{
+    Console.Error.WriteLine("TargetObservationConfigurationOrStorageFailure");
+    Environment.ExitCode = 5;
+    return;
+}
+if (TargetObservationCommand.TryParse(args, out var observationRequestId))
+{
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += cancel;
+    try { Environment.ExitCode = await TargetObservationHostCommand.RunAsync(observationRequestId, builder.Configuration, Console.Out, cancellation.Token); }
+    finally { Console.CancelKeyPress -= cancel; }
+    return; // No Windows service registration, hosted worker, archive staging or lease acquisition.
+}
 builder.Services.AddWindowsService(options => options.ServiceName = "BuildSystem.Agent");
 var directory = builder.Configuration["Agent:DataDirectory"];
 if (string.IsNullOrWhiteSpace(directory) || !Path.IsPathFullyQualified(directory) || !Directory.Exists(directory))

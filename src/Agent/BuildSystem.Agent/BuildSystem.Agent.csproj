@@ -4,6 +4,8 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.13" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.7" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.13" />
     <ProjectReference Include="../../Contracts/BuildSystem.Contracts/BuildSystem.Contracts.csproj" />
     <ProjectReference Include="../BuildSystem.Agent.Archives/BuildSystem.Agent.Archives.csproj" />
