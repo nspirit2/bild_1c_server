@@ -18,6 +18,10 @@ Scope содержит operation/fence/incarnation/cluster/IB/service epoch/obse
 
 Правило владельца: scheduled jobs deny включать до восстановления, проверять после него и после рестарта; не снимать без явного разрешения. Security-profile assignment не является обязательным этапом. Замороженный review-v1 не меняется: `PrepareIsolation`/preparation profile — общая подготовка приложения, не обязательное назначение security profile. Ручной успешный smoke не превращает stage-only authority в разрешение автоматического restore.
 
+## Проверка первого инкремента
+
+Commit1a7dc96: локальный Release прогон решения — 561passed, 0failed, 114SQL explicitly skipped. Pipeline79passed (20 новых cases), остальные suite без регрессий. [SQL CI41603110444](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110444) success. [Build CI41603110199](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110199): итог success, Windows/Ubuntu jobs success. Node UI38passed локально; локальный прогон не заменяет Windows gate.
+
 ## Перед реальным restore
 
 По документации [1Ci](https://kb.1ci.com/1C_Enterprise_Platform/1C_Enterprise_Platform_Overview/Administration_tools/Dumping_and_restoring_infobases/) восстановление **полностью заменяет текущую IB**. Поэтому следующий исполняющий адаптер потребует fresh server-owned authority, target incarnation/ownership journal, доказательство пустой цели, отсутствие конфликтующей операции/сессий и disabled scheduled jobs с readback до/после restore и после restart. По решению владельца дополнительный security profile/egress isolation не является обязательным gate; наличие внешних интеграций не скрывается и запрет scheduled jobs не объявляется их блокировкой. Результат процесса с exit code 0 не заменяет verification.
