@@ -24,9 +24,15 @@ Import API создаёт защищённый файл без overwrite; оно
 
 Explicit invocation удерживает observation-command.lock через FileShare.None до завершения journal/transport работы. Это сериализует только explicit observation commands для одного DataDirectory. **Оператор должен остановить service/другие процессы, работающие с этим journal**: они не участвуют в lock protocol, lock не является межагентным target lease и не решает physical exclusion. Crash до enqueue может повторить read-only observation; после enqueue отправляется та же immutable история.
 
+## Timer-sensitive test hardening
+
+Предыдущий c0a8859 Windows CI упал в RealTimeoutRejectsEvenCompleteValidInventory и GuardCallbacksNeverOverlapAndStopBeforeSuccessfulReturn (только annotations, failed TRX недоступен без auth). Это не подтверждает дефект production или конкретную причину. Renewal test переведён на существующий ControlledClock и barriers: periodic guard удерживается во время фактического завершения copy, final guard отдельно освобождается; сохраняются no-overlap/Enqueued/pending-artifact/no-post-return-calls assertions, без20ms/60mssleep. Production renewal/lease semantics не изменены. RAC timeout integration пока не ослаблен:2sbudget vs startup возможен, но full inventory assertion сохранён.
+
+Regression full Release **1185passed/0failed**, Agent580cases; SQL164skipped без opt-in; executable3/3 +deterministicrenewal1/1passed. Последующий Windows CI обязателен.
+
 ## Validation
 
-Wiring full Release: **1182passed/0failed**, Agent577cases; SQL164skipped без opt-in. Executable smoke без targets: disabled4, extra flag64 и malformed appsettings5 дают только fixed statuses, без framework exception/config content. Startup host creation observation-mode ошибки тоже redacted. Source review исправлен по этому startup boundary; Windows cross-process lock contention остаётся отдельным future stress case.
+Wiring full Release: **1182passed/0failed**, Agent577cases; SQL164skipped без opt-in. Executable smoke без targets: disabled4, extra flag64 и malformed appsettings5 дают только fixed statuses, без framework exception/config content. Startup host creation observation-mode ошибки тоже redacted. Source review исправлен по этому startup boundary; Windows cross-process lock contention остаётся отдельным future stress case. Добавлены три executable regression cases (invalid flag до config load, malformed config redaction, disabled до worker setup), запускающие Agent entrypoint с test runtimeconfig/deps для pruned AspNetCore graph.
 
 Локальный полный Release: **1162passed/0failed**, Agent557cases (78добавлено), SQL164skipped без opt-in. Locked restore/diff check успешны; source review не нашёл actionable defect. Windows DPAPI runtime guard не означает Windows execution на Linux: реальный DPAPI round-trip должен подтверждаться Windows CI.
 

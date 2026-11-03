@@ -204,27 +204,68 @@ public sealed class StageLeaseRenewalTests
     [Fact]
     public async Task GuardCallbacksNeverOverlapAndStopBeforeSuccessfulReturn()
     {
-        using var f = new Fixture(); var calls = 0; var active = 0; var releaseCopy = Signal();
-        var coordinator = f.Coordinator(async (request, ct) =>
+        using var f = new Fixture(); var clock = new ControlledClock(); var calls = 0; var active = 0;
+        var releaseCopy = Signal();
+        var renewalEntered = Signal(); var releaseRenewal = Signal();
+        var finalGuardEntered = Signal(); var releaseFinalGuard = Signal();
+        Task<VerifiedArtifact>? copyTask = null;
+        async Task<VerifiedArtifact> CopyAsync(StageRequest request, CancellationToken ct)
         {
             await releaseCopy.Task.WaitAsync(Timeout, ct);
             return await f.Staging.StageAsync(request, ct);
-        }, async (_, ct) =>
+        }
+        var coordinator = new StageCoordinator(f.Journal,
+            (request, ct) => copyTask = CopyAsync(request, ct), async (_, ct) =>
         {
             Assert.Equal(1, Interlocked.Increment(ref active));
             try
             {
                 Assert.Single(f.Journal.Unsettled());
-                if (Interlocked.Increment(ref calls) >= 3) releaseCopy.TrySetResult();
-                await Task.Delay(Interval, ct);
-                return new LeaseStatus(DateTimeOffset.UtcNow.AddSeconds(5));
+                var call = Interlocked.Increment(ref calls);
+                if (call == 2)
+                {
+                    renewalEntered.TrySetResult();
+                    await releaseRenewal.Task.WaitAsync(Timeout, ct);
+                }
+                else if (call == 3)
+                {
+                    finalGuardEntered.TrySetResult();
+                    await releaseFinalGuard.Task.WaitAsync(Timeout, ct);
+                }
+                return new LeaseStatus(clock.GetUtcNow().AddSeconds(5));
             }
             finally { Interlocked.Decrement(ref active); }
-        });
-        Assert.Equal(StageOutcome.Enqueued, await coordinator.ExecuteAsync(f.Intent, default).WaitAsync(Timeout));
+        }, clock, Interval);
+        var execution = coordinator.ExecuteAsync(f.Intent, default);
+        try
+        {
+            await clock.TickArmed.Task.WaitAsync(Timeout);
+            clock.Advance(Interval);
+            await renewalEntered.Task.WaitAsync(Timeout);
+            // Copy completion must not start the final guard while renewal is in flight.
+            releaseCopy.TrySetResult();
+            await copyTask!.WaitAsync(Timeout);
+            clock.Advance(Interval * 3);
+            Assert.Equal(2, calls);
+            Assert.Equal(1, active);
+            releaseRenewal.TrySetResult();
+            await finalGuardEntered.Task.WaitAsync(Timeout);
+            Assert.False(execution.IsCompleted);
+            Assert.Equal(1, active);
+            releaseFinalGuard.TrySetResult();
+            Assert.Equal(StageOutcome.Enqueued, await execution.WaitAsync(Timeout));
+        }
+        finally
+        {
+            releaseCopy.TrySetResult();
+            releaseRenewal.TrySetResult();
+            releaseFinalGuard.TrySetResult();
+            await execution.WaitAsync(Timeout);
+        }
+        Assert.Equal(3, calls); // Initial, periodic, and mandatory post-copy guard.
         Assert.Equal(0, active);
         var completedCalls = calls;
-        await Task.Delay(Interval * 3);
+        clock.Advance(Interval * 3);
         Assert.Equal(completedCalls, calls);
         Assert.Single(f.Journal.PendingArtifacts());
     }
