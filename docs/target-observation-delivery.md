@@ -16,6 +16,8 @@ Mapping GUIDs — operator assertions, не проверка физическо�
 
 Windows SQL2019 integration **163/163passed**,0failed/0skipped; TRX `E:\BuildSystem\TestRuns\observation-delivery-20261103\results\ustiantsev.is_SK-CICD-1C-01_2026-11-03_14_16_58.trx`. Никаких live target SQL/IB CREATE/restore; fixtures создают/удаляют лишь собственные disposable metadata DB. Schema не менялась.
 
+Commitf485a57: [SQL41626376445](https://github.com/nspirit2/bild_1c_server/actions/runs/41626376445) success163/163; [Build41626376502](https://github.com/nspirit2/bild_1c_server/actions/runs/41626376502) success Windows/Ubuntu.
+
 ## Проверки
 
 Прямые SQL tests используют только disposable metadata DB. Проверяются exact pins/immutable replay, authentication/revocation, current policies, historical receipt/snapshot drift, конкурентные чтения и отсутствие изменений lifecycle/lease/audit/receipts. Fake HTTP auth tests проверяют AgentOnly routing/wiring; это не real cookie/network E2E. Poll/dispatch/Worker и автоматический restore не подключены. Production deployment/config/schema не менялись.
