@@ -22,6 +22,8 @@ JSON known getter-only Executable/ScheduledJobsMustRemainBlocked fields могу
 
 Локальный полный Release **908passed/0failed**, SQL156explicitly skipped без opt-in; Windows SQL2019 integration **157/157passed**,0failed/0skipped, включая real-cookie3facts и providerless1fact. TRX `E:\BuildSystem\TestRuns\observation-http-20261103\results\ustiantsev.is_SK-CICD-1C-01_2026-11-03_14_09_46.trx`. Новые HTTP/config tests **26/26passed**. Locked restore/diff check успешны, portablepublish RID-only lock изменения исключены. Schema не менялась; production не обновлялся.
 
+Commit8d29836: [SQL41625376962](https://github.com/nspirit2/bild_1c_server/actions/runs/41625376962) success157/157; [Build41625377074](https://github.com/nspirit2/bild_1c_server/actions/runs/41625377074) success Windows/Ubuntu.
+
 ## Проверки
 
 HTTP fake-service tests проверяют route wiring, cookie/machine изоляцию, CSRF, body shape/unknown members/default-off и strict startup validation. Отдельные real Identity cookie + AgentToken + SQL services HTTPS TestServer tests проверяют сохранённые assignments/receipts, exact replay/one audit, отзыв membership/token и неизменность retained lifecycle. Это не IIS/network E2E и не real RAC+SQL adapter invocation.

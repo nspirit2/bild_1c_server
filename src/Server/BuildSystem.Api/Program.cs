@@ -234,6 +234,10 @@ app.MapPost("/api/test-environments/{id:guid}/target-observations", async (Guid 
     RequestTargetObservation input, ClaimsPrincipal user, ITargetObservations observations, CancellationToken ct) =>
     Results.Ok(await observations.RequestAsync(CurrentActor(user), id, input.ExpectedRestoreIntentId, ct)))
     .RequireAuthorization();
+app.MapGet("/api/agents/target-observations/{id:guid}", async (Guid id, HttpContext context,
+    ITargetObservationDelivery delivery, CancellationToken ct) =>
+    Results.Ok(await delivery.ReadAsync(context.Request.Headers.Authorization.ToString()[7..], id, ct)))
+    .RequireAuthorization("AgentOnly").WithMetadata(new AgentMachineEndpoint());
 app.MapPost("/api/agents/target-observation-receipts", async (HttpContext context,
     ReportTargetObservation input, ITargetObservationReceipts receipts, CancellationToken ct) =>
     Results.Ok(await receipts.ReportAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct)))
