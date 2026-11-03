@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 
 namespace BuildSystem.Agent.Tools;
 
@@ -105,13 +106,21 @@ public sealed class SqlDatabaseObserver
         if (cancellationToken.IsCancellationRequested)
             throw Unavailable();
 
+        var startedAt = Stopwatch.GetTimestamp();
+        var deadline = TimeSpan.FromSeconds(timeoutSeconds);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        linked.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        linked.CancelAfter(deadline);
+        void CheckDeadline()
+        {
+            CheckCancellation(linked.Token);
+            // Timer callbacks can be delayed under load; expiration does not depend on dispatch.
+            if (Stopwatch.GetElapsedTime(startedAt) >= deadline) throw Unavailable();
+        }
         try
         {
             await using var connection = connectionFactory() ?? throw Unavailable();
             await connection.OpenAsync(linked.Token).ConfigureAwait(false);
-            CheckCancellation(linked.Token);
+            CheckDeadline();
             if (!string.Equals(connection.Database, "master", StringComparison.OrdinalIgnoreCase))
                 throw Unavailable();
 
@@ -122,7 +131,7 @@ public sealed class SqlDatabaseObserver
                 command.CommandTimeout = timeoutSeconds;
                 await using var reader = await command.ExecuteReaderAsync(linked.Token).ConfigureAwait(false);
                 if (!await reader.ReadAsync(linked.Token).ConfigureAwait(false)) throw Unavailable();
-                CheckCancellation(linked.Token);
+                CheckDeadline();
                 if (reader.FieldCount != 3 || reader.GetValue(0) is not string machine ||
                     reader.GetValue(1) is not string instance || reader.GetValue(2) is not int sysadmin ||
                     !ValidIdentifier(machine) || !ValidIdentifier(instance) || sysadmin != 1 ||
@@ -130,7 +139,7 @@ public sealed class SqlDatabaseObserver
                     !string.Equals(instance, instanceName, StringComparison.OrdinalIgnoreCase) ||
                     await reader.ReadAsync(linked.Token).ConfigureAwait(false) ||
                     await reader.NextResultAsync(linked.Token).ConfigureAwait(false)) throw Unavailable();
-                CheckCancellation(linked.Token);
+                CheckDeadline();
             }
 
             await using (var command = connection.CreateCommand())
@@ -149,17 +158,17 @@ public sealed class SqlDatabaseObserver
                 if (!await reader.ReadAsync(linked.Token).ConfigureAwait(false))
                 {
                     if (await reader.NextResultAsync(linked.Token).ConfigureAwait(false)) throw Unavailable();
-                    CheckCancellation(linked.Token);
+                    CheckDeadline();
                     return new SqlDatabaseObservationResult(scope, null);
                 }
-                CheckCancellation(linked.Token);
+                CheckDeadline();
                 if (reader.FieldCount != 4 || reader.GetValue(0) is not string name ||
                     reader.GetValue(1) is not int id || reader.GetValue(2) is not DateTime created ||
                     reader.GetValue(3) is not string state || !ValidIdentifier(name) || id <= 0 ||
                     created == default || !States.Contains(state) ||
                     await reader.ReadAsync(linked.Token).ConfigureAwait(false) ||
                     await reader.NextResultAsync(linked.Token).ConfigureAwait(false)) throw Unavailable();
-                CheckCancellation(linked.Token);
+                CheckDeadline();
                 return new SqlDatabaseObservationResult(scope, new SqlDatabaseObservedIdentity(name, id, created, state));
             }
         }
@@ -168,7 +177,7 @@ public sealed class SqlDatabaseObserver
         {
             // Async disposal is also provider code and may ignore cancellation. Do not let a
             // cancellation arriving during cleanup turn into a successful observation.
-            CheckCancellation(linked.Token);
+            CheckDeadline();
         }
     }
 

@@ -272,6 +272,14 @@ public sealed class SqlDatabaseObserverTests
     }
 
     [Fact]
+    public async Task ConfiguredTimeoutIncludesProviderCleanup()
+    {
+        var connection = new FakeConnection(Identity(), Table()) { DelayDispose = true };
+        await Unavailable(() => Observer(connection, 1).ObserveAsync(Scope()));
+        Assert.True(connection.WasDisposed);
+    }
+
+    [Fact]
     public async Task DiagnosticRepresentationsAreRedacted()
     {
         var scope = Scope();
@@ -290,6 +298,7 @@ public sealed class SqlDatabaseObserverTests
         public string? Failure { get; init; }
         public Action? OnPresence { get; init; }
         public bool DelayPresence { get; init; }
+        public bool DelayDispose { get; init; }
         public bool ExtraResultsAtIdentity { get; init; }
         public bool ExtraResultsAtPresence { get; init; }
         public List<FakeCommand> Commands { get; } = [];
@@ -316,11 +325,11 @@ public sealed class SqlDatabaseObserverTests
             Commands.Add(command);
             return command;
         }
-        public override ValueTask DisposeAsync()
+        public override async ValueTask DisposeAsync()
         {
             WasDisposed = true;
             if (Failure == "dispose") throw new InvalidOperationException(Secret);
-            return ValueTask.CompletedTask;
+            if (DelayDispose) await Task.Delay(1200); // Provider cleanup also ignores cancellation.
         }
         public async Task<DbDataReader> Execute(bool first, CancellationToken token)
         {
