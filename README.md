@@ -63,6 +63,7 @@
 - [Серверный restore intent и удержание артефакта](docs/restore-intent-hold.md)
 - [Human-only restore intent API](docs/restore-intent-api.md)
 - [Read-only retained hold status](docs/restore-intent-status.md)
+- [Bounded RAC inventory readback](docs/infobase-inventory-readback.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

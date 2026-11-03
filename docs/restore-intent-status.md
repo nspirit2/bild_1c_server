@@ -12,6 +12,8 @@ Cleanup-status отдельно показывает `restoreIntentHold`. Это
 
 Независимое review выявило отдельный accounting pin: snapshot stagingBytes должен точно совпадать с reservation.StagingBytes, а не только покрывать размер artifact. Проверка добавлена; SQL regression специально меняет staged accounting в disposable metadata и требует409 от обоих reader без repair/audit.
 
+Commit9aa8721: [SQL41613759087](https://github.com/nspirit2/bild_1c_server/actions/runs/41613759087) success SQL2022/Linux; [Build41613759049](https://github.com/nspirit2/bild_1c_server/actions/runs/41613759049) success Windows/Ubuntu.
+
 ## Проверки
 
 Отдельные SQL tests проверяют до/после intent, owner/admin/foreign/revoked membership, неизменность stage reconciliation и всех lifecycle/quota/audit scalar fields, fail-closed на повреждённых metadata pins. Node renderer tests проверяют текст и отсутствие новых операций/HTML injection. Это наблюдение metadata, не подтверждение состояния 1С или SQL target. Локальный Release657passed/0failed (SQL134 explicitly skipped без opt-in), Node42/42passed. Locked restore success, diff check success. Первый Windows SQL134 прогон:132passed/2failed — старые exact serialization allowlists ещё не включали новые RestoreIntent/restoreIntentHold поля. Allowlists обновлены целевым образом; это не разрешает пути/секреты/произвольные поля. Окончательный Windows SQL2019 прогон: **134passed/0failed/0skipped**, включая повреждение source hash и staging accounting без repair. Итого791 .NET cases плюс42 Node; EF has-pending-model-changes — no changes. TRX отдельно TestRuns/restore-intent-status-fixed-20261103; рабочий IIS/Agent не обновлялся.
