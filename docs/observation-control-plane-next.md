@@ -1,5 +1,7 @@
 # Следующий интеграционный срез: observation-only control plane
 
+Первый реализуемый durable foundation описан отдельно: [historical receipt outbox](target-observation-outbox.md). Он ещё не замыкает server issuance/agent dispatch/server acceptance; локальный DTO assignment не является authentic server authority.
+
 После paired coordinator основной gap — не новый safety wrapper, а доставка server-assigned observation до agent и durable receipt обратно. Ниже design, не реализованный endpoint/grant.
 
 ## Границы

@@ -16,6 +16,8 @@ Scheduled-jobs-deny=on обязателен до/после restore и посл�
 
 Следующий содержательный срез после этого library coordinator — observation-only control plane с server assignment, durable local outbox и immutable server acknowledgement (design: [следующий интеграционный срез](observation-control-plane-next.md)); новые цепочки safety wrappers без доставки evidence не заменяют эту интеграцию.
 
+Commitd5a065c: [SQL41619657718](https://github.com/nspirit2/bild_1c_server/actions/runs/41619657718) success138/138; [Build41619657653](https://github.com/nspirit2/bild_1c_server/actions/runs/41619657653) success Windows/Ubuntu.
+
 ## Проверки
 
 Тесты concrete adapters используют fake IProcessRunner и DbConnection, проходя настоящий RAC parser, SQL visibility/identity gates и paired assessor. Проверяются4occupancy outcomes, exactfanout имен/пинов, разныеIDs внутри и между вызовами, прерывание цепочки при ошибках/отмене/timeout, отсутствие partial result и безопасные diagnostics. Это не реальный RAC+SQL E2E и не доказательство создания target. Filtered21/21passed; полный локальный Release **848passed/0failed**, SQL138explicitly skipped без opt-in. Locked restore и diff check successful. Независимый review не нашёл correctness blocker; общий elapsed timeout во время RAC покрыт, SQL async cleanup-specific overall timeout остаётся дополнительным coverage (SQL observer собственный cleanup-deadline test уже есть), не заявляем exhaustive cancellation coverage. Предыдущий assessment/deadlinefix commit31801dc CI Windows/Ubuntu и SQL138 зелёный. Ни EF migrations, ни package versions, ни production configuration этим срезом не меняются.
