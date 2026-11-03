@@ -1,12 +1,14 @@
 # Durable outbox historical target observations
 
+Последующее локальное усиление: полный Release **1076passed/0failed**, Agent471cases (9новых cross-role/ACK/reopen/legacy collision checks), SQL164skipped без opt-in. Locked restore/diff check и независимый read-only review успешны; schema/Worker/production не менялись. Локальная проверка теперь симметрична серверному evidence-ID conflict guard.
+
 ## Назначение
 
 Observation control plane начинает с bounded protocol и immutable durable outbox. Assignment — будущий server-assigned request со строгими intent/agent/operation/environment/stageJob/fence/reservation/incarnation/canonical targets и endpoint mapping pins. Сам по себе полученный объект не доказывает authentic server issuance: серверная issuance/claim/authentication ещё отдельный этап. Нет stage-lease promotion.
 
 Успешный полный paired outcome сохраняется до HTTP доставки. Receipt имеет собственный ID, immutable assignment, отдельные RAC/SQL observation IDs, один из четырёх occupancy outcomes и timestamp наблюдения. Credentials, stdout, SQL diagnostic, connection strings, paths и executable instructions не хранятся. Исполнение всегда false, scheduled-jobs mandatory всегда true. Timestamp — label агента, не server-attested freshness.
 
-После lost ACK/restart отправляется тот же receipt, не новый timestamp и не повторное наблюдение. Exact enqueue replay idempotent даже после ACK; receipt ID/request/payload конфликт отвергается. На один observation request допускается ровно один outcome/receipt навсегда. ACK только отмечает receipt delivered, не удаляет историю и не освобождает slots/artifact. Локальный journal single-owner SQLite/FULL synchronous не является distributed lock; observations не переводят creation intent в CreationInFlight и не меняют leases/quotas.
+После lost ACK/restart отправляется тот же receipt, не новый timestamp и не повторное наблюдение. Exact enqueue replay idempotent даже после ACK; receipt ID/request/payload конфликт отвергается. Любой RAC/SQL observation ID сохраняет идентичность независимо от роли и остаётся зарезервированным между requests и после ACK: journal API откажет до enqueue, включая cross-role collisions. Legacy/raw SQL corruption не считается доказуемо обнаруженной глобально: это application-API guard, а не server-level UNIQUE constraint для union двух столбцов. На один observation request допускается ровно один outcome/receipt навсегда. ACK только отмечает receipt delivered, не удаляет историю и не освобождает slots/artifact. Локальный journal single-owner SQLite/FULL synchronous не является distributed lock; observations не переводят creation intent в CreationInFlight и не меняют leases/quotas.
 
 Pending читает только bounded первую страницу; это delivery queue, не полнота всех historical observations и не очередной permit. Assignment с отсутствующим report может требовать нового read-only наблюдения по будущему orchestration policy, но этот срез не запускает execution/retry/reconciliation автоматически. Partial/failure result не маскируется под absence.
 

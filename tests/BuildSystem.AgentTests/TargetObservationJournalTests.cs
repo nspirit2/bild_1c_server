@@ -212,6 +212,54 @@ public sealed class TargetObservationJournalTests : IDisposable
         Assert.Equal(parsed.Assignment.InfobaseName, parsed.Assignment.SqlDatabaseName);
     }
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void EvidenceIdsRemainReservedAcrossRequestsAndRolesAfterReopen(bool acknowledged, bool sourceSql, bool destinationSql)
+    {
+        var firstAssignment = Assignment(); var first = Report(firstAssignment);
+        using (var journal = new AgentJournal(directory))
+        {
+            journal.SaveTargetObservationAssignment(firstAssignment); journal.EnqueueTargetObservation(first);
+            if (acknowledged) journal.AckTargetObservation(first.ReceiptId);
+        }
+        using var reopened = new AgentJournal(directory);
+        var secondAssignment = Assignment(); reopened.SaveTargetObservationAssignment(secondAssignment);
+        var second = Report(secondAssignment);
+        var reused = sourceSql ? first.SqlObservationId : first.RacObservationId;
+        var conflict = destinationSql ? second with { SqlObservationId = reused } : second with { RacObservationId = reused };
+        var error = Assert.Throws<InvalidOperationException>(() => reopened.EnqueueTargetObservation(conflict));
+        Assert.DoesNotContain(reused.ToString(), error.Message);
+        Assert.Null(reopened.GetTargetObservationReport(secondAssignment.ObservationRequestId));
+        Assert.Equal(first, reopened.GetTargetObservationReport(firstAssignment.ObservationRequestId));
+        reopened.EnqueueTargetObservation(first); // Exact historical replay remains valid, even after ACK.
+        reopened.EnqueueTargetObservation(second); // A fresh pair is still accepted after the failed transaction.
+        Assert.Equal(second, reopened.GetTargetObservationReport(secondAssignment.ObservationRequestId));
+        Assert.Equal(acknowledged ? 1 : 2, reopened.PendingTargetObservations().Count);
+    }
+
+    [Fact]
+    public void ExactReplayRejectsAnAdditionalConflictingLegacyEvidenceRow()
+    {
+        var firstAssignment = Assignment(); var first = Report(firstAssignment);
+        var secondAssignment = Assignment(); var second = Report(secondAssignment);
+        using (var journal = new AgentJournal(directory))
+        {
+            journal.SaveTargetObservationAssignment(firstAssignment); journal.EnqueueTargetObservation(first);
+            journal.SaveTargetObservationAssignment(secondAssignment); journal.EnqueueTargetObservation(second);
+        }
+        // Simulate an older writer/out-of-band corruption, not an authorized journal API mutation.
+        Raw("UPDATE target_observation_reports SET rac_observation='" + first.SqlObservationId + "' WHERE request='" + secondAssignment.ObservationRequestId + "'");
+        using var reopened = new AgentJournal(directory);
+        Assert.Throws<InvalidOperationException>(() => reopened.EnqueueTargetObservation(first));
+    }
+
     [Fact]
     public void ToStringAndConflictsAreRedacted()
     {

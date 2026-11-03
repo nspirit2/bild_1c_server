@@ -155,8 +155,11 @@ public sealed partial class AgentJournal
         var saved = GetTargetObservationAssignment(report.Assignment.ObservationRequestId);
         if (saved is null || saved != report.Assignment)
             throw new InvalidOperationException("Unknown or conflicting observation assignment.");
-        using (var command = Command($"SELECT {JoinedObservationColumns} FROM target_observation_reports r JOIN target_observation_assignments a ON a.request=r.request WHERE r.receipt=$0 OR r.request=$1",
-            report.ReceiptId.ToString(), report.Assignment.ObservationRequestId.ToString()))
+        // Evidence IDs are independent of their RAC/SQL role and remain reserved after ACK.
+        // Reject cross-request reuse before persisting an outbox report the server cannot accept.
+        using (var command = Command($"SELECT {JoinedObservationColumns} FROM target_observation_reports r JOIN target_observation_assignments a ON a.request=r.request WHERE r.receipt=$0 OR r.request=$1 OR r.rac_observation IN ($2,$3) OR r.sql_observation IN ($2,$3)",
+            report.ReceiptId.ToString(), report.Assignment.ObservationRequestId.ToString(),
+            report.RacObservationId.ToString(), report.SqlObservationId.ToString()))
         using (var reader = command.ExecuteReader())
         {
             if (reader.Read())
