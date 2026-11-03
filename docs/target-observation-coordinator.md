@@ -18,6 +18,8 @@ Executable=false/ScheduledJobsMustRemainBlocked=true остаются hard polic
 
 Окончательный полный Release **1067passed/0failed**, SQL161explicitly skipped без opt-in; Agent tests **462passed** (55новых coordinator/executor/history cases). Locked restore/diff check успешны. Core pipeline использует fake transport/process/SQL adapters и real SQLite journal; live targets не вызывались. Предыдущий transport7bba569 CI Windows/Ubuntu и SQL163 полностью зелёный; Windows нового coordinator будет проверен обычным CI после push.
 
+Commitc27515f: [Build41628420613](https://github.com/nspirit2/bild_1c_server/actions/runs/41628420613) success Windows/Ubuntu; [SQL41628420615](https://github.com/nspirit2/bild_1c_server/actions/runs/41628420615) success163/163. Новый Tools/Execution/Yaml project graph и framework-pruned lock успешно прошли обе платформы.
+
 ## Проверки
 
 Coordinator tests используют real SQLite journal + trusted fake transport/executor, проверяют durable order/history/ACK/no-reobserve/current server auth/conflicts/cancel/concurrency. Executor tests используют concrete paired RAC/SQL observers с fake runner/DbConnection, не live targets. Это не live network/1C E2E и не автоматический restore.
