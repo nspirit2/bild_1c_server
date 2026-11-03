@@ -60,6 +60,7 @@
 - [Review-only план восстановления DT](docs/dt-restore-planning.md)
 - [Паспорт первого DT restore-smoke](docs/dt-restore-smoke-passport.md)
 - [Локальный барьер попытки создания цели](docs/target-creation-barrier.md)
+- [Серверный restore intent и удержание артефакта](docs/restore-intent-hold.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

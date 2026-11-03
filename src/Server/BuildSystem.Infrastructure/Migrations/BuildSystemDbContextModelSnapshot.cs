@@ -698,6 +698,132 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("ProjectPools");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.RestoreIntentRecord", b =>
+                {
+                    b.Property<Guid>("RestoreIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ArchiveVersionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ArtifactId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalClusterId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalSqlServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EnvironmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Executable")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("FencingToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("InfobaseName")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("PoolId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("PreparationProfileVersion")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RootId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("ScheduledJobsMustRemainBlocked")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SnapshotSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SqlDbName")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("StageJobId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TargetIncarnation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("RestoreIntentId");
+
+                    b.HasIndex("AgentId");
+
+                    b.HasIndex("ArtifactId")
+                        .IsUnique();
+
+                    b.HasIndex("EnvironmentId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestedBy");
+
+                    b.HasIndex("ReservationId")
+                        .IsUnique();
+
+                    b.HasIndex("StageJobId")
+                        .IsUnique();
+
+                    b.HasIndex("TargetIncarnation")
+                        .IsUnique();
+
+                    b.HasIndex("CanonicalClusterId", "InfobaseName")
+                        .IsUnique();
+
+                    b.HasIndex("CanonicalSqlServerId", "SqlDbName")
+                        .IsUnique();
+
+                    b.ToTable("RestoreIntents", t =>
+                        {
+                            t.HasCheckConstraint("CK_RestoreIntents_NonExecutable", "[Executable] = 0");
+
+                            t.HasCheckConstraint("CK_RestoreIntents_ScheduledJobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.StageCleanupAuthorizationRecord", b =>
                 {
                     b.Property<Guid>("AuthorizationId")
@@ -1240,6 +1366,45 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.RestoreIntentRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.StagedArtifact", null)
+                        .WithMany()
+                        .HasForeignKey("ArtifactId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvironmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.BuildSystemUser", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentReservation", null)
+                        .WithMany()
+                        .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentJob", null)
+                        .WithMany()
+                        .HasForeignKey("StageJobId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

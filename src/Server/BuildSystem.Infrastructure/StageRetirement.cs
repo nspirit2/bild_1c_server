@@ -81,6 +81,10 @@ public sealed class SqlStageRetirement(BuildSystemDbContext db) : IStageRetireme
             }
             catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException)
             { throw Mismatch(); }
+            // Permanent retained-artifact hold wins even over retirement replay.
+            if (await db.RestoreIntents.AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId ||
+                x.EnvironmentId == i.e.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
+                throw Reject(409, "RestoreIntentHold");
             var prior = await db.StageRetirementIntents.SingleOrDefaultAsync(x => x.EnvironmentId == environmentId, ct);
             if (prior is not null)
             {

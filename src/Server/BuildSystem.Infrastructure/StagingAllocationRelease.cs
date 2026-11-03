@@ -73,6 +73,9 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
                     !string.Equals(s.GetProperty("Sha256").GetString(), plan.Sha256, StringComparison.OrdinalIgnoreCase)) throw Mismatch();
             }
             catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException) { throw Mismatch(); }
+            if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == plan.ArtifactId ||
+                x.EnvironmentId == plan.EnvironmentId || x.StageJobId == plan.JobId || x.ReservationId == plan.ReservationId, ct))
+                throw new RequestRejectedException(409, "RestoreIntentHold");
             var priors = await db.StagingAllocationReleases.Where(x => x.ResultId == resultId || x.ReservationId == plan.ReservationId).Take(2).ToListAsync(ct);
             if (priors.Count > 1) throw Mismatch();
             var prior = priors.SingleOrDefault();
