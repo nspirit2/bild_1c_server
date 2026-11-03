@@ -2,13 +2,49 @@ using System.Diagnostics;
 using System.Text;
 
 Console.OutputEncoding = new UTF8Encoding(false);
-Console.Error.WriteLine(); // stderr is deliberately available even when no mode writes to it
+// RAC-like invocations must have genuinely empty stderr on success. Preserve the
+// original stderr behavior for every pre-existing fixture mode (including no args).
+if (args.Length == 0 || args[0] != "infobase")
+    Console.Error.WriteLine(); // stderr is deliberately available even when no mode writes to it
 
 if (args.Length == 0)
     return 64;
 
 switch (args[0])
 {
+    case "infobase":
+        // Accept the observer's real read-only RAC command, without a synthetic
+        // mode argument inserted by the test bridge. Only the endpoint selects behavior.
+        if (args.Length != 7 || args[1] != "info" ||
+            !args[2].StartsWith("--cluster=", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(args[2]["--cluster=".Length..], "D", out _) ||
+            !args[3].StartsWith("--infobase=", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(args[3]["--infobase=".Length..], "D", out var infobase) ||
+            !args[4].StartsWith("--cluster-user=", StringComparison.Ordinal) ||
+            !args[5].StartsWith("--cluster-pwd=", StringComparison.Ordinal) ||
+            args[6] is not ("fixture-ok" or "fixture-stderr" or "fixture-hang" or "fixture-off"))
+            return 64;
+        var response = $"infobase : {infobase:D}\nscheduled-jobs-deny : {(args[6] == "fixture-off" ? "off" : "on")}\n";
+        // Split field names, values and newlines across flushed writes. The runner's
+        // tiny line limit also makes fragmentation deterministic at the callback boundary.
+        for (var offset = 0; offset < response.Length; offset += 3)
+        {
+            Console.Out.Write(response.Substring(offset, Math.Min(3, response.Length - offset)));
+            Console.Out.Flush();
+        }
+        if (args[6] == "fixture-stderr")
+        {
+            foreach (var credential in new[] { args[4]["--cluster-user=".Length..], args[5]["--cluster-pwd=".Length..] })
+            {
+                var middle = credential.Length / 2;
+                Console.Error.Write("private diagnostic: " + credential[..middle]);
+                Console.Error.Flush();
+                Console.Error.WriteLine(credential[middle..]);
+            }
+        }
+        if (args[6] == "fixture-hang")
+            await Task.Delay(Timeout.InfiniteTimeSpan);
+        return 0;
     case "echo":
         Console.Out.WriteLine("stdout:" + string.Join("|", args.Skip(1)));
         Console.Error.WriteLine("stderr:λ🌍");
