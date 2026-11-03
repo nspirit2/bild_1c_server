@@ -22,6 +22,8 @@ Scheduled-jobs-deny=on остаётся mandatory до/после restore и п�
 
 Полный локальный Release **1012passed/0failed**, SQL161explicitly skipped без opt-in; Agent tests **407passed** (новых transport/outbox97cases). Locked restore и diff check успешны. Первичный compile поймал CS8619 в null-ACK test fake; исправлена явная nonnullable Task generic с intentional null!, негативная проверка сохранена. SQL schema/server/services не менялись в этом срезе; предыдущий f485a57 CI Windows/Ubuntu и SQL163 полностью зелёный. Windows транспортные тесты будут дополнительно проверены после push в обычном CI, отдельный live сетевой стенд не запускался.
 
+Commit7bba569: [Build41627452313](https://github.com/nspirit2/bild_1c_server/actions/runs/41627452313) success Windows/Ubuntu; [SQL41627452278](https://github.com/nspirit2/bild_1c_server/actions/runs/41627452278) success163/163.
+
 ## Проверки
 
 Fake-handler transport tests и real SQLite journal tests проверяют fixed paths, HTTPS/root/config bounds, credentials rotation, wire JSON/ACK/limits/deadline failures, immutable retransmission/restart, partial ACK/cancellation/concurrency. Это не network TLS E2E, live adapter invocation и не автоматический restore.

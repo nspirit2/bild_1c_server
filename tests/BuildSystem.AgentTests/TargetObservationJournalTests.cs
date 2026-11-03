@@ -39,6 +39,30 @@ public sealed class TargetObservationJournalTests : IDisposable
     }
 
     [Fact]
+    public void AddressedHistoricalLookupRetainsAcknowledgedReportAndRejectsCorruption()
+    {
+        var assignment = Assignment(); var report = Report(assignment);
+        using (var journal = new AgentJournal(directory))
+        {
+            Assert.Null(journal.GetTargetObservationReport(assignment.ObservationRequestId));
+            Assert.Throws<ArgumentException>(() => journal.GetTargetObservationReport(Guid.Empty));
+            journal.SaveTargetObservationAssignment(assignment);
+            Assert.Null(journal.GetTargetObservationReport(assignment.ObservationRequestId));
+            journal.EnqueueTargetObservation(report);
+            Assert.Equal(report, journal.GetTargetObservationReport(assignment.ObservationRequestId));
+            journal.AckTargetObservation(report.ReceiptId);
+        }
+        using (var journal = new AgentJournal(directory))
+        {
+            Assert.Empty(journal.PendingTargetObservations());
+            Assert.Equal(report, journal.GetTargetObservationReport(assignment.ObservationRequestId));
+        }
+        Raw("UPDATE target_observation_reports SET observed_at='invalid' WHERE request='" + assignment.ObservationRequestId + "'");
+        using var corrupt = new AgentJournal(directory);
+        Assert.Throws<InvalidOperationException>(() => corrupt.GetTargetObservationReport(assignment.ObservationRequestId));
+    }
+
+    [Fact]
     public void AssignmentAndPendingReceiptSurviveReopenThenAckRemainsRetained()
     {
         var a = Assignment(); var r = Report(a);

@@ -177,6 +177,15 @@ public sealed partial class AgentJournal
         transaction.Commit();
     }
 
+    /// <summary>Returns retained historical evidence even after ACK; never establishes fresh absence.</summary>
+    public ReportTargetObservation? GetTargetObservationReport(Guid requestId)
+    {
+        if (requestId == Guid.Empty) throw new ArgumentException("Invalid observation request.", nameof(requestId));
+        using var command = Command($"SELECT {JoinedObservationColumns} FROM target_observation_reports r JOIN target_observation_assignments a ON a.request=r.request WHERE r.request=$0", requestId.ToString());
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadObservationReport(reader) : null;
+    }
+
     /// <summary>Ordered bounded snapshot, never an executable queue or a freshness grant.</summary>
     public IReadOnlyList<ReportTargetObservation> PendingTargetObservations(int limit = 100)
     {

@@ -7,5 +7,6 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.13" />
     <ProjectReference Include="../../Contracts/BuildSystem.Contracts/BuildSystem.Contracts.csproj" />
     <ProjectReference Include="../BuildSystem.Agent.Archives/BuildSystem.Agent.Archives.csproj" />
+    <ProjectReference Include="../BuildSystem.Agent.Tools/BuildSystem.Agent.Tools.csproj" />
   </ItemGroup>
 </Project>
