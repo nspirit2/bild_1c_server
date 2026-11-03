@@ -149,6 +149,24 @@ public sealed class TestEnvironmentTests
         Error("StaleEvidence", () => env.PublishReady(Verify(env, Now.AddHours(4)), Now.AddHours(3)));
     }
 
+    [Theory]
+    [InlineData(EnvironmentKind.Empty, CheckOutcome.Unknown)]
+    [InlineData(EnvironmentKind.Empty, CheckOutcome.Failed)]
+    [InlineData(EnvironmentKind.Empty, (CheckOutcome)99)]
+    [InlineData(EnvironmentKind.Restored, CheckOutcome.Unknown)]
+    [InlineData(EnvironmentKind.Restored, CheckOutcome.Failed)]
+    [InlineData(EnvironmentKind.Restored, (CheckOutcome)99)]
+    public void Scheduled_jobs_suppression_is_mandatory_for_every_kind(EnvironmentKind kind, CheckOutcome outcome)
+    {
+        var env = Preparing(kind);
+        Error("VerificationIncomplete", () => env.PublishReady(Verify(env) with
+            { ScheduledJobsSuppressedThroughoutRestore = outcome }, Now.AddHours(3)));
+        Assert.Equal(EnvironmentState.Preparing, env.State);
+        Assert.Null(env.ReadyAt);
+        Assert.Null(env.LastVerification);
+        Assert.True(env.HoldsQuota);
+    }
+
     [Fact]
     public void EmptyRequiresPreparationButDoesNotPromiseApplicationScenario()
     {
