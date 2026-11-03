@@ -20,9 +20,9 @@ Scope содержит operation/fence/incarnation/cluster/IB/service epoch/obse
 
 ## Перед реальным restore
 
-По документации [1Ci](https://kb.1ci.com/1C_Enterprise_Platform/1C_Enterprise_Platform_Overview/Administration_tools/Dumping_and_restoring_infobases/) восстановление **полностью заменяет текущую IB**. Поэтому следующий исполняющий адаптер потребует fresh server-owned authority, target incarnation/ownership journal, доказательство пустой цели, отсутствие конфликтующей операции/сессий, disabled scheduled jobs и изоляцию внешних интеграций. Результат процесса с exit code 0 не заменяет verification.
+По документации [1Ci](https://kb.1ci.com/1C_Enterprise_Platform/1C_Enterprise_Platform_Overview/Administration_tools/Dumping_and_restoring_infobases/) восстановление **полностью заменяет текущую IB**. Поэтому следующий исполняющий адаптер потребует fresh server-owned authority, target incarnation/ownership journal, доказательство пустой цели, отсутствие конфликтующей операции/сессий и disabled scheduled jobs с readback до/после restore и после restart. По решению владельца дополнительный security profile/egress isolation не является обязательным gate; наличие внешних интеграций не скрывается и запрет scheduled jobs не объявляется их блокировкой. Результат процесса с exit code 0 не заменяет verification.
 
-Пока не зафиксирован CLI recipe под проверенную версию платформы. [Designer batch mode](https://1c-dn.com/1c_enterprise/designer_batch_mode/) подтверждает наличие пакетного режима, но этот пакет не обещает валидность конкретного набора CLI flags. BAK/SQL RESTORE в scope не входят.
+Для автоматического исполнителя пока не зафиксирован versioned CLI recipe; ручной restore и Designer dump на 8.3.22.2557 x64 уже прошли отдельный smoke (см. актуальный паспорт). [Designer batch mode](https://1c-dn.com/1c_enterprise/designer_batch_mode/) подтверждает наличие пакетного режима, но этот пакет не обещает валидность конкретного набора CLI flags. BAK/SQL RESTORE в scope не входят.
 
 ## Стенд и доказательства
 
