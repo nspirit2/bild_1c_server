@@ -79,13 +79,23 @@ public sealed class ProcessRunnerTests : IDisposable
         using var cancellation = new CancellationTokenSource();
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var task = Runner().RunAsync(Command("tree", pidFile), cancellationToken: cancellation.Token);
-        var childPid = await AwaitChildPid(pidFile, task, watchdog.Token);
-        cancellation.Cancel();
-        var result = await task.WaitAsync(TimeSpan.FromSeconds(12));
-        Assert.Equal(ProcessCompletion.Cancelled, result.Completion);
-        Assert.True(result.ProcessId > 0);
-        await AssertEventuallyGone(result.ProcessId!.Value);
-        await AssertEventuallyGone(childPid);
+        try
+        {
+            var childPid = await AwaitChildPid(pidFile, task, watchdog.Token);
+            cancellation.Cancel();
+            var result = await task.WaitAsync(TimeSpan.FromSeconds(12));
+            Assert.Equal(ProcessCompletion.Cancelled, result.Completion);
+            Assert.True(result.ProcessId > 0);
+            await AssertEventuallyGone(result.ProcessId!.Value);
+            await AssertEventuallyGone(childPid);
+        }
+        finally
+        {
+            // Readiness failure must not leave the runner alive until its own timeout.
+            cancellation.Cancel();
+            try { await task.WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch { /* Best-effort cleanup must not mask the original test failure. */ }
+        }
     }
 
     [Fact]

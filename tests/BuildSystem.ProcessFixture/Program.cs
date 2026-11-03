@@ -119,7 +119,11 @@ switch (args[0])
             RedirectStandardError = true
         }) ?? throw new InvalidOperationException("Child did not start"))
         {
-            File.WriteAllText(args[1], child.Id.ToString());
+            // Publish only a closed, complete PID file: existence is the test's
+            // readiness signal, and reading an open writer can fail on Windows.
+            var pendingPidFile = args[1] + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(pendingPidFile, child.Id.ToString());
+            File.Move(pendingPidFile, args[1]);
             Console.Out.WriteLine("tree-ready");
             Console.Out.Flush();
             await Task.Delay(Timeout.InfiniteTimeSpan);
