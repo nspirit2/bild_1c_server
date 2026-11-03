@@ -18,6 +18,16 @@ Scope содержит operation/fence/incarnation/cluster/IB/service epoch/obse
 
 Правило владельца: scheduled jobs deny включать до восстановления, проверять после него и после рестарта; не снимать без явного разрешения. Security-profile assignment не является обязательным этапом. Замороженный review-v1 не меняется: `PrepareIsolation`/preparation profile — общая подготовка приложения, не обязательное назначение security profile. Ручной успешный smoke не превращает stage-only authority в разрешение автоматического restore.
 
+## Read-only RAC adapter
+
+`ScheduledJobsObserver` в Tools явно вызывается с operator-owned tool ID/endpoint/workspace/timeout (до60s) и отдельными credentials. Выполняет только фиксированную команду `rac infobase info` с точными cluster/IB IDs. Arbitrary argv, update/create/drop/restore/restart и DI/worker/CLI registration отсутствуют. Возвращает тот же ограниченный readback, не Ready/grant.
+
+Observer принимает только нормальное завершение process Exited/exit0, полный stdout в пределах лимита и пустой stderr; timeout/cancellation/callback/read errors, overflow и невалидный parser result отклоняются без raw output/inner exceptions. Password/user аргументы sensitive и известны redactor. Это не скрывает credentials от локального process inspection администратора; production запуск требует отдельного credential/identity design. ProcessRunner редактирует stdout, поэтому пересечение секретов с RAC fields может дать консервативный отказ, но не разрешение.
+
+Время наблюдения, canonical external target ownership, получение fresh authority, выпуск/потребление observation IDs и restart epochs остаются обязанностями будущего coordinator. Реальная RAC версия/путь должны быть operator-pinned allowlist, а не pipeline input. Этот адаптер не исполняет restore и не гарантирует, что запрет оставался активным между проверками.
+
+Observer:38новых fake-runner tests, Process suite60passed. Полный Release после добавления adapter:599.NET passed, 0failed, 114SQL explicitly skipped; locked restore success. В lockfiles изменён project graph (Tools→Execution и существующий транзитивный YamlDotNet18.1.0), версии пакетов не обновлялись. Реальный RAC этим новым .NET adapter ещё не запускался; portable Windows/CI checks выполняются отдельно.
+
 ## Проверка первого инкремента
 
 Commit1a7dc96: локальный Release прогон решения — 561passed, 0failed, 114SQL explicitly skipped. Pipeline79passed (20 новых cases), остальные suite без регрессий. [SQL CI41603110444](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110444) success. [Build CI41603110199](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110199): итог success, Windows/Ubuntu jobs success. Node UI38passed локально; локальный прогон не заменяет Windows gate.

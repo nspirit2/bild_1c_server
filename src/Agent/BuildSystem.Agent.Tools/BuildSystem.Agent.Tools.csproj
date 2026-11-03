@@ -5,4 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BuildSystem.Agent.Execution/BuildSystem.Agent.Execution.csproj" />
+  </ItemGroup>
 </Project>
