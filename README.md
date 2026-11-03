@@ -77,6 +77,7 @@
 - [Explicit observation coordinator and concrete executor](docs/target-observation-coordinator.md)
 - [Metadata-only full observation round-trip](docs/target-observation-round-trip.md)
 - [Explicit observation command foundation](docs/explicit-observation-command.md)
+- [Observation host configuration and protected credentials](docs/observation-host-safety.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
