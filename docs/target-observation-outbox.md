@@ -20,6 +20,8 @@ Pending отбирает acked=0: искусственно испорченны�
 
 Полный локальный Release **874passed/0failed**, SQL138explicitly skipped без opt-in. AgentTests310passed включая26новыхcases. Locked restore и diff check successful; пакеты/SQL EF migrations не менялись. Предыдущий coordinator commitd5a065c BuildWindows/Ubuntu и SQL138 CI прошёл; новый outbox не меняет SQL server metadata и не требует rollout.
 
+Commit3ce3245: [Build41620650868](https://github.com/nspirit2/bild_1c_server/actions/runs/41620650868) success Windows/Ubuntu; [SQL41620650869](https://github.com/nspirit2/bild_1c_server/actions/runs/41620650869) success138/138.
+
 ## Проверки
 
 Review учёл SQLite dynamic typing: GetInt64 может нормализовать повреждённый REAL payload в integer; новый reader требует actual long storage type для fence/outcome/ack, а GUID и timestamp — canonical representation. ACK сначала валидирует полный retained report, не blindly принимает malformed row.

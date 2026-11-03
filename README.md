@@ -69,6 +69,7 @@
 - [Paired read-only target presence](docs/paired-target-presence.md)
 - [Sequential read-only presence observer](docs/target-presence-observer.md)
 - [Durable historical observation outbox](docs/target-observation-outbox.md)
+- [Server observation-only assignment](docs/server-target-observation.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)

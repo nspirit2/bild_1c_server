@@ -1053,6 +1053,83 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("StagingAllocationReleases");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationRecord", b =>
+                {
+                    b.Property<Guid>("ObservationRequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalClusterId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalSqlServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EnvironmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Executable")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("FencingToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RacEndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RestoreIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("ScheduledJobsMustRemainBlocked")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("SqlEndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("StageJobId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TargetIncarnationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ObservationRequestId");
+
+                    b.HasIndex("AgentId");
+
+                    b.HasIndex("OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestedBy");
+
+                    b.HasIndex("RestoreIntentId")
+                        .IsUnique();
+
+                    b.ToTable("TargetObservations", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetObservations_NonExecutable", "[Executable] = 0");
+
+                            t.HasCheckConstraint("CK_TargetObservations_NonemptyIds", "[ObservationRequestId] <> '00000000-0000-0000-0000-000000000000' AND [RestoreIntentId] <> '00000000-0000-0000-0000-000000000000' AND [AgentId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [EnvironmentId] <> '00000000-0000-0000-0000-000000000000' AND [StageJobId] <> '00000000-0000-0000-0000-000000000000' AND [ReservationId] <> '00000000-0000-0000-0000-000000000000' AND [TargetIncarnationId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalClusterId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalSqlServerId] <> '00000000-0000-0000-0000-000000000000' AND [RacEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [SqlEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [RequestedBy] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_TargetObservations_PositiveFence", "[FencingToken] > 0");
+
+                            t.HasCheckConstraint("CK_TargetObservations_ScheduledJobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
+                        });
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1552,6 +1629,27 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.ArchiveRoot", null)
                         .WithMany()
                         .HasForeignKey("RootId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.BuildSystemUser", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.RestoreIntentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RestoreIntentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

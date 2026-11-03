@@ -54,6 +54,8 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
     private void GuardImmutableSnapshots()
     {
         ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<TargetObservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Target observation assignments are immutable.");
         if (ChangeTracker.Entries<RestoreIntentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Restore intents and retained holds are immutable.");
         if (ChangeTracker.Entries<StagingAllocationReleaseRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
@@ -83,6 +85,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureArtifactModel(b);
         ConfigureStageRetirementModel(b);
         ConfigureRestoreIntentModel(b);
+        ConfigureTargetObservationModel(b);
         ConfigureStageCleanupModel(b);
         ConfigureStageCleanupResultModel(b);
         ConfigureStagingAllocationReleaseModel(b);
