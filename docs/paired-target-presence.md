@@ -14,4 +14,6 @@
 
 Независимый read-only review: замечаний к exact pins/null/all4 outcomes/no-authority не обнаружено. Filtered14passed, полный Release после SQL deadline fix **827passed/0failed**, SQL138explicitly skipped без opt-in. Последний WindowsSQL2019 прогон138/138passed предыдущегоSQLobserver; paired assessment DB IO не меняет. Locked restore и diff check successful. Новый result имеет ровно4 getter-only поля, internal ctor; SQL result reflection используется только в tests и не расширяет production surface.
 
+Commit31801dc: [SQL41618690577](https://github.com/nspirit2/bild_1c_server/actions/runs/41618690577) success SQL2022/Linux138/138; [Build41618690453](https://github.com/nspirit2/bild_1c_server/actions/runs/41618690453) Windows/Ubuntu success, включая исправленный SQL timeout regression.
+
 Для настоящего CREATE/restore позже потребуются отдельный executable server issuance + fence/lease, trusted physical-target ownership/barrier и внешняя reconciliation; owner approval на новое side effect не получено. При restore всегда scheduled-jobs-deny=on до, после и после restart. Security profile не mandatory gate.

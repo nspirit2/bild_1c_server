@@ -67,6 +67,7 @@
 - [Read-only RAC inventory observer](docs/infobase-inventory-observer.md)
 - [Read-only SQL database observer](docs/sql-database-observer.md)
 - [Paired read-only target presence](docs/paired-target-presence.md)
+- [Sequential read-only presence observer](docs/target-presence-observer.md)
 - [Пример развёртывания архива](examples/provision-from-disk.yaml)
 - [Пример заказа базы из шаблона](examples/provision-test-base.yaml)
 - [Ответы реализатору: 39 решений и уточнений](docs/implementation-decisions.md)
