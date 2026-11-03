@@ -10,6 +10,14 @@
 
 В public API нет `ProcessCommand`, аргументов запуска, converter-to-command, filesystem IO, runner/CLI/worker/DI регистрации. Код не расширяет stage-only lease: он не даёт права восстановления. Stage completion и cleanup receipt не превращаются в Ready.
 
+## Проверка запрета регламентных заданий
+
+Добавлен отдельный pure parser `ScheduledJobsReadback` для полного stdout RAC `infobase info`. Принимает только exit0, непрерванный/неусечённый вывод до16384characters, точный GUID IB и единственное `scheduled-jobs-deny : on`. CRLF/LF поддержаны; дубликаты полей, missing/off/unknown, повреждённый вывод и чужая IB отклоняются. Диагностика не включает содержимое вывода.
+
+Scope содержит operation/fence/incarnation/cluster/IB/service epoch/observation/checkpoint. `RequireMatch` проверяет точное совпадение, включая отдельные BeforeRestore, AfterRestore и AfterServiceRestart. **Это caller-supplied correlation, не доказательство свежести, подлинности, владения или полномочий**: RAC info не возвращает operation/cluster/epoch. Новый observation ID/epoch должен выдавать доверенный будущий coordinator; повторное использование того же scope само по себе парсер не предотвращает. Нет clock/IO/runner/worker/DI, реального исполнения restore и обязательного порядка checkpoint пока нет. Результат не является Ready или restore grant.
+
+Правило владельца: scheduled jobs deny включать до восстановления, проверять после него и после рестарта; не снимать без явного разрешения. Security-profile assignment не является обязательным этапом. Замороженный review-v1 не меняется: `PrepareIsolation`/preparation profile — общая подготовка приложения, не обязательное назначение security profile. Ручной успешный smoke не превращает stage-only authority в разрешение автоматического restore.
+
 ## Перед реальным restore
 
 По документации [1Ci](https://kb.1ci.com/1C_Enterprise_Platform/1C_Enterprise_Platform_Overview/Administration_tools/Dumping_and_restoring_infobases/) восстановление **полностью заменяет текущую IB**. Поэтому следующий исполняющий адаптер потребует fresh server-owned authority, target incarnation/ownership journal, доказательство пустой цели, отсутствие конфликтующей операции/сессий, disabled scheduled jobs и изоляцию внешних интеграций. Результат процесса с exit code 0 не заменяет verification.
