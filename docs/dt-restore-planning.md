@@ -30,6 +30,8 @@ Observer:38новых fake-runner tests, Process suite60passed. Полный Rel
 
 Дополнительно11real-process fixture cases проверяют настоящий ProcessRunner+observer: fragmented stdout (3characters/callback), секреты/Unicode, stderr, timeout даже после полного валидного ответа, усечение и redactor collisions. Это настоящий локальный процесс, но **не настоящий RAC/1С и не лицензирование**. Process suite71passed; полный Release с шестью дополнительными domain deny regressions — 616passed/0failed, 114SQL skipped. Domain regressions подтверждают существующий отказ PublishReady при Unknown/Failed/undefined suppression для Empty и Restored, не добавляют новые разрешения. Commitba8e3e8: [Build41604470428](https://github.com/nspirit2/bild_1c_server/actions/runs/41604470428) Windows/Ubuntu jobs success; [SQL41604470843](https://github.com/nspirit2/bild_1c_server/actions/runs/41604470843) success.
 
+Commit a59d334 real-process tests: [Build41605230160](https://github.com/nspirit2/bild_1c_server/actions/runs/41605230160) success Windows/Ubuntu, [SQL41605230167](https://github.com/nspirit2/bild_1c_server/actions/runs/41605230167) success.
+
 ## Проверка первого инкремента
 
 Commit1a7dc96: локальный Release прогон решения — 561passed, 0failed, 114SQL explicitly skipped. Pipeline79passed (20 новых cases), остальные suite без регрессий. [SQL CI41603110444](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110444) success. [Build CI41603110199](https://github.com/nspirit2/bild_1c_server/actions/runs/41603110199): итог success, Windows/Ubuntu jobs success. Node UI38passed локально; локальный прогон не заменяет Windows gate.
