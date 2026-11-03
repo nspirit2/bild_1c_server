@@ -33,3 +33,11 @@ public sealed record ReportTargetObservation(Guid ReceiptId, TargetObservationAs
     public bool ScheduledJobsMustRemainBlocked => true;
     public override string ToString() => "ReportTargetObservation [historical observation only; details omitted]";
 }
+
+/// <summary>Acknowledges storage only, never target ownership, freshness or permission to execute.</summary>
+public sealed record TargetObservationReceipt(Guid ReceiptId, Guid ObservationRequestId, string State)
+{
+    public bool Executable => false;
+    public bool ScheduledJobsMustRemainBlocked => true;
+    public override string ToString() => "TargetObservationReceipt [historical observation only; details omitted]";
+}

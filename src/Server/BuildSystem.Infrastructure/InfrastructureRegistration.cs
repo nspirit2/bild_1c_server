@@ -26,6 +26,7 @@ public static class InfrastructureRegistration
         services.AddScoped<IRestoreIntents, SqlRestoreIntents>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetObservationOptions());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<ITargetObservations, SqlTargetObservations>(services);
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<ITargetObservationReceipts, SqlTargetObservationReceipts>(services);
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new StageRetirementOptions());
         services.AddScoped<IStageRetirementPlans, SqlStageRetirementPlans>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new StageCleanupOptions());

@@ -16,6 +16,8 @@ Owner/admin + текущая enabled project membership; полный retained i
 
 Полный локальный Release **877passed/0failed**, SQL146explicitly skipped без opt-in; Windows Server2019 + SQL2019 **146/146passed**,0failed/0skipped. TRX `E:\BuildSystem\TestRuns\server-observation-20261103\results\ustiantsev.is_SK-CICD-1C-01_2026-11-03_13_45_23.trx`. EF has-pending-model-changes no changes, locked restore и diff check successful. Portable RID-only lock updates не войдут в commit. Production IIS/metadata/агент не обновлялись; disposable SQL fixture создаёт/удаляет только собственные bs_ci_metadata_* DB.
 
+Commit1003d36: [Build41622191159](https://github.com/nspirit2/bild_1c_server/actions/runs/41622191159) success Windows/Ubuntu; [SQL41622191162](https://github.com/nspirit2/bild_1c_server/actions/runs/41622191162) success146/146.
+
 ## Проверки
 
 SQL metadata tests используют только disposable fixture bs_ci_metadata_* DB, stage completion/restore intent создаются как metadata, без внешних SQL/1С targets или /RestoreIB. Нужны concurrency/replay/current ACL/current config/historical cleanup/source hash и DB constraints regressions. Model/API tests проверяют default-off DI без DB IO, sync/async immutability и migration parity.

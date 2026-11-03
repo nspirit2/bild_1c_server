@@ -1053,6 +1053,60 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("StagingAllocationReleases");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationReceiptRecord", b =>
+                {
+                    b.Property<Guid>("ReceiptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("Executable")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("ObservationRequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RacObservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("ScheduledJobsMustRemainBlocked")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("SqlObservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ReceiptId");
+
+                    b.HasIndex("ObservationRequestId")
+                        .IsUnique();
+
+                    b.HasIndex("RacObservationId")
+                        .IsUnique();
+
+                    b.HasIndex("SqlObservationId")
+                        .IsUnique();
+
+                    b.ToTable("TargetObservationReceipts", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetObservationReceipts_DistinctObservationIds", "[RacObservationId] <> [SqlObservationId]");
+
+                            t.HasCheckConstraint("CK_TargetObservationReceipts_NonExecutable", "[Executable] = 0");
+
+                            t.HasCheckConstraint("CK_TargetObservationReceipts_NonemptyIds", "[ReceiptId] <> '00000000-0000-0000-0000-000000000000' AND [ObservationRequestId] <> '00000000-0000-0000-0000-000000000000' AND [RacObservationId] <> '00000000-0000-0000-0000-000000000000' AND [SqlObservationId] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_TargetObservationReceipts_Outcome", "[Outcome] BETWEEN 0 AND 3");
+
+                            t.HasCheckConstraint("CK_TargetObservationReceipts_ScheduledJobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationRecord", b =>
                 {
                     b.Property<Guid>("ObservationRequestId")
@@ -1629,6 +1683,15 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.ArchiveRoot", null)
                         .WithMany()
                         .HasForeignKey("RootId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationReceiptRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.TargetObservationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ObservationRequestId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
