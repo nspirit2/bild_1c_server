@@ -2,6 +2,7 @@ using System.Text.Json;
 using BuildSystem.Application;
 using BuildSystem.Contracts;
 using BuildSystem.Infrastructure;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -26,8 +27,10 @@ public sealed class SqlRestoreIntentTests
         var options = new RestoreIntentOptions { Enabled = true,
             CanonicalMappings = new() { [pool] = new(cluster, server) } };
         await using var db = sql.NewContext();
-        db.Users.AddRange(new BuildSystemUser { Id = admin.UserId, UserName = "admin", NormalizedUserName = "ADMIN" },
-            new BuildSystemUser { Id = owner.UserId, UserName = "owner", NormalizedUserName = "OWNER" });
+        db.Users.AddRange(new BuildSystemUser { Id = admin.UserId, UserName = "admin-" + admin.UserId.ToString("N"),
+                NormalizedUserName = "ADMIN-" + admin.UserId.ToString("N") },
+            new BuildSystemUser { Id = owner.UserId, UserName = "owner-" + owner.UserId.ToString("N"),
+                NormalizedUserName = "OWNER-" + owner.UserId.ToString("N") });
         db.Projects.Add(new Project { Id = project, Name = "restore-intent", IsolationPolicyId = "isolated", PreparationProfileVersion = "v1" });
         db.ProjectMemberships.Add(new ProjectMembership { UserId = owner.UserId, ProjectId = project });
         db.ArchiveRoots.Add(new ArchiveRoot { Id = root, Enabled = true, AgentScopeId = agent,
@@ -311,6 +314,81 @@ public sealed class SqlRestoreIntentTests
         Assert.All(receipts, receipt => Assert.Equal(receipts[0], receipt));
         await using (var db = sql.NewContext()) Assert.Single(await db.RestoreIntents.ToListAsync());
         Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Service_snapshots_canonical_mapping_before_operator_dictionary_is_mutated()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var options = new RestoreIntentOptions { Enabled = true,
+            CanonicalMappings = new(seed.Options.CanonicalMappings) };
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        await using var db = sql.NewContext();
+        var service = new SqlRestoreIntents(db, options);
+        options.CanonicalMappings.Clear();
+        var receipt = await service.RequestAsync(seed.Owner, seed.Order.EnvironmentId, Input(seed), Ct);
+        Assert.Equal(seed.Options.CanonicalMappings[seed.Pool].CanonicalClusterId, receipt.CanonicalClusterId);
+        Assert.Equal(seed.Options.CanonicalMappings[seed.Pool].CanonicalSqlServerId, receipt.CanonicalSqlServerId);
+        options.CanonicalMappings[seed.Pool] = new(Guid.NewGuid(), Guid.NewGuid());
+        Assert.Equal(receipt, await service.RequestAsync(seed.Owner, seed.Order.EnvironmentId, Input(seed), Ct));
+        Assert.Equal(receipt, await RequestAsync(sql, seed));
+        await using (var inspect = sql.NewContext()) Assert.Single(await inspect.RestoreIntents.ToListAsync());
+        Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Sql_unique_constraints_independently_protect_sql_and_cluster_slots_across_pools_and_agents()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var firstSeed = await PrepareAsync(sql); var secondSeed = await PrepareAsync(sql);
+        var first = await RequestAsync(sql, firstSeed); var second = await RequestAsync(sql, secondSeed);
+        Assert.NotEqual(firstSeed.Pool, secondSeed.Pool);
+        Assert.NotEqual(firstSeed.Credential.AgentId, secondSeed.Credential.AgentId);
+        Assert.NotEqual(first.CanonicalClusterId, second.CanonicalClusterId);
+        Assert.NotEqual(first.CanonicalSqlServerId, second.CanonicalSqlServerId);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        // Both graphs and rows are valid. Bypass the EF immutability guard only inside this
+        // disposable metadata DB, colliding one independently unique target slot at a time.
+        await using (var db = sql.NewContext())
+        {
+            var error = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [RestoreIntents] SET [CanonicalSqlServerId] = {first.CanonicalSqlServerId}, [SqlDbName] = {first.SqlDbName} WHERE [RestoreIntentId] = {second.RestoreIntentId}", Ct));
+            Assert.Contains(error.Number, new[] { 2601, 2627 });
+            Assert.Contains("IX_RestoreIntents_CanonicalSqlServerId_SqlDbName", error.Message);
+        }
+        await using (var db = sql.NewContext())
+        {
+            var error = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [RestoreIntents] SET [CanonicalClusterId] = {first.CanonicalClusterId}, [InfobaseName] = {first.InfobaseName} WHERE [RestoreIntentId] = {second.RestoreIntentId}", Ct));
+            Assert.Contains(error.Number, new[] { 2601, 2627 });
+            Assert.Contains("IX_RestoreIntents_CanonicalClusterId_InfobaseName", error.Message);
+        }
+        await using (var db = sql.NewContext()) Assert.Equal(2, await db.RestoreIntents.CountAsync());
+        Assert.Equal(first, await RequestAsync(sql, firstSeed)); Assert.Equal(second, await RequestAsync(sql, secondSeed));
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Sql_check_constraints_keep_intent_nonexecuting_and_scheduled_jobs_blocked_without_Ef_guard()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var receipt = await RequestAsync(sql, seed); var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        // Direct metadata updates intentionally bypass SaveChanges to prove the migrated SQL constraints.
+        await using (var db = sql.NewContext())
+        {
+            var error = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [RestoreIntents] SET [Executable] = CAST(1 AS bit) WHERE [RestoreIntentId] = {receipt.RestoreIntentId}", Ct));
+            Assert.Equal(547, error.Number); Assert.Contains("CK_RestoreIntents_NonExecutable", error.Message);
+        }
+        await using (var db = sql.NewContext())
+        {
+            var error = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [RestoreIntents] SET [ScheduledJobsMustRemainBlocked] = CAST(0 AS bit) WHERE [RestoreIntentId] = {receipt.RestoreIntentId}", Ct));
+            Assert.Equal(547, error.Number); Assert.Contains("CK_RestoreIntents_ScheduledJobsBlocked", error.Message);
+        }
+        await using (var db = sql.NewContext())
+        {
+            var row = Assert.Single(await db.RestoreIntents.ToListAsync());
+            Assert.False(row.Executable); Assert.True(row.ScheduledJobsMustRemainBlocked);
+        }
+        Assert.Equal(receipt, await RequestAsync(sql, seed));
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
     }
 
     [SqlServerFact]

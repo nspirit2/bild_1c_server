@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using BuildSystem.Application;
 using BuildSystem.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +57,34 @@ public sealed class RestoreIntentModelTests
         var error = await Assert.ThrowsAsync<RequestRejectedException>(() => service.RequestAsync(
             new Actor(Guid.NewGuid(), false), Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid()), default));
         Assert.Equal("RestoreIntentDisabled", error.Code);
+    }
+
+    [Fact]
+    public async Task DisabledServiceRemainsClosedAfterCallerMutatesOptionsDictionary()
+    {
+        using var db = Context();
+        var options = new RestoreIntentOptions { Enabled = false };
+        var service = new SqlRestoreIntents(db, options);
+        // Enabled is init-only; the caller-owned dictionary remains mutable after construction.
+        options.CanonicalMappings.Add(Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid()));
+        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => service.RequestAsync(
+            new Actor(Guid.NewGuid(), false), Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid()), default));
+        Assert.Equal("RestoreIntentDisabled", error.Code);
+    }
+
+    [Fact]
+    public void ReceiptJsonCannotInjectExecutableAuthorityOrChangePins()
+    {
+        var receipt = new RestoreIntentReceipt(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "bs_test_sensitive", "bs_test_sensitive", DateTimeOffset.UtcNow);
+        var json = JsonNode.Parse(JsonSerializer.Serialize(receipt))!.AsObject();
+        Assert.False(json["Executable"]!.GetValue<bool>());
+        json["Executable"] = true;
+        var restored = JsonSerializer.Deserialize<RestoreIntentReceipt>(json.ToJsonString())!;
+        Assert.Equal(receipt, restored);
+        Assert.False(restored.Executable);
+        Assert.False(JsonNode.Parse(JsonSerializer.Serialize(restored))!["Executable"]!.GetValue<bool>());
+        Assert.DoesNotContain(receipt.SqlDbName, restored.ToString());
     }
 
     [Fact]
