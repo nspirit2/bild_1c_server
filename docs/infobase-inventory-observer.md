@@ -10,6 +10,8 @@ Stdout собирается bounded per invocation до parser limit, callback s
 
 Первый real ProcessRunner прогон выявил ошибку fixture: разбиение .NET UTF-16 строки по3char с Flush разрывало surrogate pair emoji до кодирования, заменяя его на replacement chars. Это не parser/runner decode баг; fixture исправляется на surrogate-safe границы, Unicode assertions сохраняются, а не ослабляются.
 
+Commit40fa89d CI: [Build41615835132](https://github.com/nspirit2/bild_1c_server/actions/runs/41615835132) success Windows/Ubuntu; [SQL41615835129](https://github.com/nspirit2/bild_1c_server/actions/runs/41615835129) success SQL2022/Linux.
+
 ## Проверки
 
 Fake-runner tests должны закрепить argv/mapping mismatch до запуска, sensitive arguments, split callbacks, malformed output, stderr, exit/completion/truncation/overflow/callback errors/cancel и diagnostic redaction. Отдельные real ProcessRunner tests используют fixture DLL через bridge, который только добавляет DLL-path, но не переписывает fixed RAC argv. Fixture принимает только infobase summary list и отдаёт fragmented вывод; проверяются Present/emptyAbsent, timeout после полногоstdout, stderr и redaction, outputlimit/truncation, malformed/casealias и credential collisions с именем/UUID/field key. Реальный RAC adapter smoke остаётся отдельной проверкой, не следствием fake/fixture tests. Окончательный полный Release: **781passed/0failed**, SQL134 explicitly skipped без opt-in; ProcessTests142passed (71previous+61fake+10real new). Locked restore success, diff check success. SQL134/134 прошёл в предыдущем status-срезе, DB code этим adapter не меняется. Независимый review подтвердил completion/callback/mapping fail-closed guards; redaction falseAbsent устранён до фиксации.

@@ -14,6 +14,7 @@
     </PackageReference>
     <ProjectReference Include="../../src/Server/BuildSystem.Infrastructure/BuildSystem.Infrastructure.csproj" />
     <ProjectReference Include="../../src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" />
+    <ProjectReference Include="../../src/Agent/BuildSystem.Agent.Tools/BuildSystem.Agent.Tools.csproj" />
     <ProjectReference Include="../../src/Server/BuildSystem.Api/BuildSystem.Api.csproj" />
   </ItemGroup>
 </Project>
