@@ -14,6 +14,8 @@ ACK означает лишь сохранение historical evidence. Executab
 
 Окончательный полный локальный Release **882passed/0failed**, SQL153explicitly skipped без opt-in (integration suite содержит ещё1providerlessFact, который прошёл локально). Windows SQL2019 integration **154/154passed**,0failed/0skipped, включая153SQL-backed +1providerless validation. TRX `E:\BuildSystem\TestRuns\observation-receipts-20261103\results\ustiantsev.is_SK-CICD-1C-01_2026-11-03_13_58_15.trx`. EF model parity no changes; locked restore/diff check successful. RID-only lock updates portablepublish исключены. Новая metadata миграция20261103105308_TargetObservationReceipt production не применялась.
 
+Commitb517a50: [SQL41623807809](https://github.com/nspirit2/bild_1c_server/actions/runs/41623807809) success154/154; [Build41623807621](https://github.com/nspirit2/bild_1c_server/actions/runs/41623807621) success Windows/Ubuntu.
+
 ## Проверки
 
 SQL regressions покрывают immutable replay/ACK, token revocation/foreign agent, каждый assignment pin, payload/outcome/time/observationID conflicts, current bindings/ACL, concurrent report, EF/SQL constraints. Model tests проверяют migration parity, default-off no-DB, sync/async guards и JSON отсутствие injected execution authority.

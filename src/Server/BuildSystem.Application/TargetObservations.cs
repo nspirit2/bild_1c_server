@@ -21,4 +21,6 @@ public interface ITargetObservations
     Task<TargetObservationAssignment> RequestAsync(Actor actor, Guid environmentId,
         Guid expectedRestoreIntentId, CancellationToken ct);
 }
+/// <summary>Requests observation correlation for an exact retained restore intent, never execution authority.</summary>
+public sealed record RequestTargetObservation(Guid ExpectedRestoreIntentId);
 // end

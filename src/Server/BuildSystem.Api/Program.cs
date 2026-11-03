@@ -42,6 +42,29 @@ builder.Services.AddSingleton(services =>
                 entry => entry.Value)
     };
 });
+// Endpoint identities are operator configuration; validate the final configuration even when disabled.
+builder.Services.AddSingleton(services =>
+{
+    var configuration = services.GetRequiredService<IConfiguration>();
+    var section = configuration.GetSection("TargetObservation:EndpointMappings");
+    var entries = section.GetChildren().ToArray();
+    if (section.Value is not null || entries.Length > 1024 || entries.Any(entry =>
+            entry.Value is not null || !entry.GetChildren().Any()))
+        throw new InvalidOperationException("TargetObservation endpoint mappings require nonempty objects and at most 1024 entries.");
+    var mappings = section.Get<Dictionary<string, TargetObservationEndpointMapping>>(
+        options => options.ErrorOnUnknownConfiguration = true) ?? [];
+    if (mappings.Values.Any(mapping => mapping is null || mapping.RacEndpointMappingId == Guid.Empty ||
+            mapping.SqlEndpointMappingId == Guid.Empty))
+        throw new InvalidOperationException("TargetObservation endpoint mappings require nonempty endpoint GUIDs.");
+    return new TargetObservationOptions
+    {
+        Enabled = configuration.GetValue<bool>("TargetObservation:Enabled"),
+        // Parsing after binding also makes differently formatted duplicate GUIDs fail startup.
+        EndpointMappings = mappings.ToDictionary(entry => Guid.TryParse(entry.Key, out var poolId) && poolId != Guid.Empty
+                ? poolId : throw new InvalidOperationException("TargetObservation endpoint mapping keys must be nonempty pool GUIDs."),
+            entry => entry.Value)
+    };
+});
 builder.Services.AddSingleton(new StageCleanupOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanup:Enabled") });
 builder.Services.AddSingleton(new StageCleanupResultOptions { Enabled = builder.Configuration.GetValue<bool>("StageCleanupResult:Enabled") });
 builder.Services.AddSingleton(new StagingAllocationReleaseOptions { Enabled = builder.Configuration.GetValue<bool>("StagingAllocationRelease:Enabled") });
@@ -86,6 +109,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 var app = builder.Build();
 // Resolve before accepting traffic (also when disabled), after all host configuration providers apply.
 _ = app.Services.GetRequiredService<RestoreIntentOptions>();
+_ = app.Services.GetRequiredService<TargetObservationOptions>();
 if (args.Length > 0 && args[0] == "bootstrap-admin")
 {
     Environment.ExitCode = await AdminBootstrap.RunAsync(app.Services, args.Skip(1).ToArray());
@@ -206,6 +230,14 @@ app.MapPost("/api/test-environments/{id:guid}/restore-intents", async (Guid id,
     RequestRestoreIntent request, ClaimsPrincipal user, IRestoreIntents intents, CancellationToken ct) =>
     Results.Ok(await intents.RequestAsync(CurrentActor(user), id, request, ct)))
     .RequireAuthorization();
+app.MapPost("/api/test-environments/{id:guid}/target-observations", async (Guid id,
+    RequestTargetObservation input, ClaimsPrincipal user, ITargetObservations observations, CancellationToken ct) =>
+    Results.Ok(await observations.RequestAsync(CurrentActor(user), id, input.ExpectedRestoreIntentId, ct)))
+    .RequireAuthorization();
+app.MapPost("/api/agents/target-observation-receipts", async (HttpContext context,
+    ReportTargetObservation input, ITargetObservationReceipts receipts, CancellationToken ct) =>
+    Results.Ok(await receipts.ReportAsync(context.Request.Headers.Authorization.ToString()[7..], input, ct)))
+    .RequireAuthorization("AgentOnly").WithMetadata(new AgentMachineEndpoint());
 app.MapPost("/api/admin/stage-cleanup-results/{resultId:guid}/release-staging", async (Guid resultId,
     ReleaseStagingAllocation input, ClaimsPrincipal user, IStagingAllocationRelease release, CancellationToken ct) =>
     Results.Ok(await release.ReleaseAsync(CurrentActor(user), resultId, input, ct)))
