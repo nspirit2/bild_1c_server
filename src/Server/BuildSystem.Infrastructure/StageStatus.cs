@@ -53,11 +53,14 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
                     !string.Equals(version.Sha256, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw Inconsistent();
             }
+            var restoreIntent = await RestoreIntentStatus.ReadAsync(db, environment, request, job, reservation,
+                lease, artifact, "StageStatusInconsistent", ct);
             var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
             var code = Classify(job, environment, request, reservation, lease, artifact, now);
             var result = new StageStatusView(environment.Id, request.Id, job.Id, job.State, environment.State,
                 request.State, reservation.State, reservation.StagingBytes, environment.HasUnsettledProvisioningOperation,
-                artifact?.ArtifactId, artifact?.State, lease?.State, lease?.ExpiresAt, code, now);
+                artifact?.ArtifactId, artifact?.State, lease?.State, lease?.ExpiresAt, code, now)
+            { RestoreIntent = restoreIntent };
             await tx.CommitAsync(ct);
             return result;
         });

@@ -87,11 +87,14 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             if (release is not null && (result is null || auth is null || artifact is null || release.ResultId != result.ResultId || release.AuthorizationId != auth.AuthorizationId ||
                 release.ReservationId != reservation.Id || release.PoolId != reservation.PoolId || release.RootId != rootId || release.ReleasedBytes != reservation.StagingBytes ||
                 release.ReleasedBytes != artifact.SizeBytes || release.ReleasedBytes <= 0)) throw Inconsistent();
+            var restoreIntent = await RestoreIntentStatus.ReadAsync(db, env, request, job, reservation,
+                lease, artifact, "CleanupStatusInconsistent", ct);
             var state = release is not null ? "StagingReleased" : result is not null ? "DeletedReported" : auth is not null ? "Authorized" : intent is not null ? "IntentRequested" : "None";
             var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
             var released = release?.ReleasedBytes ?? 0;
             var view = new CleanupStatusView(env.Id, job.Id, artifact?.ArtifactId, intent?.RetirementId, auth?.AuthorizationId, result?.ResultId, release?.ReleaseId,
-                state, reservation.StagingBytes, reservation.StagingBytes - released, released, now);
+                state, reservation.StagingBytes, reservation.StagingBytes - released, released, now)
+            { RestoreIntentHold = restoreIntent is not null };
             await tx.CommitAsync(ct); return view;
         });
     }

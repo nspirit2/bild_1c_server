@@ -29,4 +29,6 @@ HTTP boundary tests используют fake application service и тесто�
 
 Локальный полный Release: **657 passed / 0 failed**, SQL131 skipped без explicit opt-in; locked restore success, diff check success. Новый fake HTTP/config subset23passed, включая real default-off service409 без SQL connection, malformed canonical mappings и unknown authority body fields. Полный Windows SQL2019 прогон: **131 passed / 0 failed / 0 skipped**, включая все3 новых real Identity cookie HTTP cases. Суммарно788 .NET cases; реальные cookies/CSRF проверены через HTTPS TestServer, не IIS/network end-to-end. Включение сервиса происходило только в disposable test host. TRX retained отдельно TestRuns/restore-intent-cookie-20261103; рабочая API DB не мигрировалась.
 
+Commit3136821: [Build41611937868](https://github.com/nspirit2/bild_1c_server/actions/runs/41611937868) success Windows/Ubuntu; [SQL41611937857](https://github.com/nspirit2/bild_1c_server/actions/runs/41611937857) success SQL2022/Linux, включая131SQL без skips.
+
 Изменения исходников не публикуют API в IIS и не запускают migration: это отдельные действия, которые здесь не выполняются.

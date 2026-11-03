@@ -46,7 +46,7 @@ public sealed class CleanupStatusApiTests : IClassFixture<CleanupStatusApiFactor
     {
         using var c = Client(); var id = Guid.NewGuid(); var r = await c.GetAsync(Route(id)); Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         var v = await r.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-        Assert.Equal(new[] { "artifactId", "authorizationId", "cleanupState", "environmentId", "heldStagingBytes", "jobId", "observedAt", "releaseId", "releasedStagingBytes", "reservedStagingBytes", "resultId", "retirementId" }.Order(StringComparer.Ordinal), v.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "artifactId", "authorizationId", "cleanupState", "environmentId", "heldStagingBytes", "jobId", "observedAt", "releaseId", "releasedStagingBytes", "reservedStagingBytes", "restoreIntentHold", "resultId", "retirementId" }.Order(StringComparer.Ordinal), v.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
         Assert.Equal(id, v.GetProperty("environmentId").GetGuid()); Assert.Equal(10, v.GetProperty("reservedStagingBytes").GetInt64());
         Assert.Equal(0, v.GetProperty("heldStagingBytes").GetInt64()); Assert.Equal("StagingReleased", v.GetProperty("cleanupState").GetString());
     }

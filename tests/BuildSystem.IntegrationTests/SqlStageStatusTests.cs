@@ -183,7 +183,7 @@ public sealed class SqlStageStatusTests
         using var document = JsonDocument.Parse(json);
         Assert.Equal(new[] { "ArtifactId", "ArtifactState", "EnvironmentId", "EnvironmentState", "JobId", "JobState",
             "LeaseExpiresAt", "LeaseState", "ObservedAt", "ReconciliationCode", "RequestId", "RequestState",
-            "ReservationState", "StagingBytes", "Unsettled" },
+            "ReservationState", "RestoreIntent", "StagingBytes", "Unsettled" },
             document.RootElement.EnumerateObject().Select(x => x.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray());
         Assert.DoesNotContain(seed.Credential.Token, json);
         Assert.DoesNotContain(seed.Credential.AgentId.ToString(), json);

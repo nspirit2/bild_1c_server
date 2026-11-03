@@ -372,6 +372,30 @@ test('forgotten intent warning survives failed logout and explicit logout retry'
 const cleanupDetail = overrides => ({ environmentId:env1, jobId:env1, artifactId:env2, retirementId:env1,
   authorizationId:env2, resultId:env1, releaseId:env2, cleanupState:'StagingReleased', reservedStagingBytes:65536,
   heldStagingBytes:0, releasedStagingBytes:65536, observedAt:'2026-01-01T00:01:00Z', ...overrides });
+const restoreStatus = overrides => ({restoreIntentId:env1,targetIncarnation:env2,requestedAt:'2026-01-01T00:00:00Z',restoreIntentCode:'AwaitingTrustedTarget',executable:false,artifactRetained:true,...overrides});
+test('restore hold is separate from stage history and never execution or target ownership',async()=>{
+  const {nodes,calls}=await retentionHarness(retainedDetail({restoreIntent:restoreStatus()}));
+  const text=nodes.get('detail-values').querySelectorAll('dd').map(x=>x.textContent).join('\n');
+  assert.match(text,/Stage завершён/);assert.match(text,/AwaitingTrustedTarget/);assert.match(text,/retirement запрещён/);
+  assert.match(text,/не владение целью/);assert.match(text,/Автоматического продолжения/);assert.match(text,/Выполнение|выполнение/);
+  assert.equal(calls.some(x=>x.options?.method==='POST'),false);assert.equal(nodes.get('detail-values').querySelectorAll('button').length,0);
+});
+test('restore status rejects executable claims and malicious identifiers without rendering raw fields',async()=>{
+  for(const value of [restoreStatus({executable:true}),restoreStatus({artifactRetained:false}),restoreStatus({restoreIntentId:'<img onerror=bad>'}),restoreStatus({restoreIntentCode:'<script>'})]){
+    const {nodes}=await retentionHarness(retainedDetail({restoreIntent:value}));
+    assert.equal(nodes.get('detail-values').querySelectorAll('dd').length,0);
+    assert.doesNotMatch(nodes.get('detail-message').textContent,/<img|<script>/);
+  }
+});
+test('restore status allowlists fields and ignores paths snapshots and commands',async()=>{
+  const hostile='<img onerror=bad>';const {nodes}=await retentionHarness(retainedDetail({restoreIntent:restoreStatus({sourcePath:hostile,snapshot:hostile,command:hostile})}));
+  assert.doesNotMatch(nodes.get('detail-values').querySelectorAll('dd').map(x=>x.textContent).join('\n'),/<img|sourcePath|snapshot/);
+});
+test('cleanup hold prevents apparent eligibility without adding actions',async()=>{
+  const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({cleanupState:'None',retirementId:null,authorizationId:null,resultId:null,releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0,restoreIntentHold:true})));
+  assert.match(cleanupText(nodes),/retirement запрещён/);assert.match(cleanupText(nodes),/Постоянное удержание/);
+  assert.equal(calls.some(x=>x.options?.method==='POST'),false);assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length,0);
+});
 const cleanupText = nodes => nodes.get('cleanup-values').querySelectorAll('dd').map(x => x.textContent).join('\n');
 async function cleanupHarness(respond) {
   const calls = [];

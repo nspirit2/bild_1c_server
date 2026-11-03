@@ -100,7 +100,7 @@ public sealed class SqlCleanupStatusTests
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(await ReadAsync(sql, seed), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        Assert.Equal(new[] { "artifactId", "authorizationId", "cleanupState", "environmentId", "heldStagingBytes", "jobId", "observedAt", "releaseId", "releasedStagingBytes", "reservedStagingBytes", "resultId", "retirementId" },
+        Assert.Equal(new[] { "artifactId", "authorizationId", "cleanupState", "environmentId", "heldStagingBytes", "jobId", "observedAt", "releaseId", "releasedStagingBytes", "reservedStagingBytes", "restoreIntentHold", "resultId", "retirementId" },
             json.RootElement.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
     }
     [SqlServerFact]

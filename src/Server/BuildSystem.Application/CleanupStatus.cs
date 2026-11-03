@@ -3,7 +3,11 @@ namespace BuildSystem.Application;
 /// <summary>Historical cleanup/accounting metadata, never a current filesystem presence claim.</summary>
 public sealed record CleanupStatusView(Guid EnvironmentId, Guid JobId, Guid? ArtifactId, Guid? RetirementId,
     Guid? AuthorizationId, Guid? ResultId, Guid? ReleaseId, string CleanupState,
-    long ReservedStagingBytes, long HeldStagingBytes, long ReleasedStagingBytes, DateTimeOffset ObservedAt);
+    long ReservedStagingBytes, long HeldStagingBytes, long ReleasedStagingBytes, DateTimeOffset ObservedAt)
+{
+    /// <summary>Permanent logical hold; retirement is prohibited, not a current file presence claim.</summary>
+    public bool RestoreIntentHold { get; init; }
+}
 
 public interface ICleanupStatus
 {

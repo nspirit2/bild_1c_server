@@ -281,6 +281,17 @@
       nextCursor = null; message(errorText(error), true);
     } finally { if (op.version === generation) { busy = false; controls(); } }
   }
+  const restoreHoldExplanation = 'Постоянное удержание артефакта: retirement запрещён. Ожидается доверенное подтверждение цели; выполнение невозможно. Это не Ready, не владение целью и не разрешение на restore. Наличие файла сейчас не подтверждено. Автоматического продолжения и снятия hold нет.';
+  function restoreIntentEntries(value) {
+    if (value == null) return [];
+    if (!hasGuid(value.restoreIntentId) || !hasGuid(value.targetIncarnation) ||
+        typeof value.requestedAt !== 'string' || !Number.isFinite(Date.parse(value.requestedAt)) ||
+        value.restoreIntentCode !== 'AwaitingTrustedTarget' || value.executable !== false || value.artifactRetained !== true)
+      throw new Error('Invalid nonexecutable restore intent');
+    return [['Restore intent', value.restoreIntentId], ['Инкарнация цели (не владение)', value.targetIncarnation],
+      ['Intent записан', date(value.requestedAt)], ['Состояние restore intent', 'AwaitingTrustedTarget'],
+      ['Выполнение restore', 'Невозможно'], ['Удержание restore intent', restoreHoldExplanation]];
+  }
   function renderRetention(value) {
     const validDate = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
     const absentArtifact = value.artifactId === null && value.artifactState === null;
@@ -338,12 +349,16 @@
       if (['retirementId','authorizationId','resultId','releaseId'].some((k, index) => (index < step) !== hasGuid(value[k])) ||
           (step > 0 && !hasGuid(value.artifactId)) ||
           (step < 4 && value.releasedStagingBytes !== 0) ||
-          (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0))) throw new Error('Inconsistent cleanup response');
+          (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0)) ||
+          (value.restoreIntentHold !== undefined && typeof value.restoreIntentHold !== 'boolean') ||
+          (value.restoreIntentHold === true && (step !== 0 || !hasGuid(value.artifactId) || value.heldStagingBytes <= 0)))
+        throw new Error('Inconsistent cleanup response');
       const entries = [['Состояние cleanup',cleanupStates[value.cleanupState]], ['Задание cleanup',text(value.jobId)],
         ['Артефакт cleanup',text(value.artifactId)], ['Retirement intent',text(value.retirementId)], ['Authorization',text(value.authorizationId)],
         ['Результат агента',text(value.resultId)], ['Staging release',text(value.releaseId)],
         ['Исторически зарезервировано staging',bytes(value.reservedStagingBytes)], ['Удерживается staging сейчас',bytes(value.heldStagingBytes)],
         ['Освобождено staging по ledger',bytes(value.releasedStagingBytes)], ['Наблюдение cleanup',date(value.observedAt)]];
+      if (value.restoreIntentHold === true) entries.push(['Постоянное удержание restore intent', restoreHoldExplanation]);
       const fragment = document.createDocumentFragment();
       for (const [label, content] of entries) { const dt=document.createElement('dt'), dd=document.createElement('dd'); dt.textContent=label; dd.textContent=content; fragment.append(dt,dd); }
       ui['cleanup-values'].replaceChildren(fragment);
@@ -367,6 +382,7 @@
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
       if (version !== detailGeneration || session !== generation || !authenticated) return;
       if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase()) throw new Error('Invalid detail response');
+      const restoreEntries = restoreIntentEntries(value.restoreIntent);
       const entries = [
         ['Окружение', text(value.environmentId)], ['Запрос', text(value.requestId)], ['Задание', text(value.jobId)],
         ['Состояние задания', stateText(value.jobState)], ['Состояние окружения', stateText(value.environmentState)],
@@ -374,7 +390,8 @@
         ['Исторический staging-резерв', bytes(value.stagingBytes)], ['Provisioning не завершён', value.unsettled === true ? 'Да' : value.unsettled === false ? 'Нет' : '—'],
         ['Артефакт', text(value.artifactId)], ['Квитанция артефакта', stateText(value.artifactState)],
         ['Lease', stateText(value.leaseState)], ['Срок lease', date(value.leaseExpiresAt)],
-        ['Оценка состояния', stateText(value.reconciliationCode)], ['Наблюдение сервера', date(value.observedAt)]
+        ['Оценка состояния stage', stateText(value.reconciliationCode)], ['Наблюдение сервера', date(value.observedAt)],
+        ...restoreEntries
       ];
       const fragment = document.createDocumentFragment();
       for (const [label, content] of entries) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd); }
