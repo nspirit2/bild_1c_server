@@ -1,0 +1,17 @@
+# Owner-authorized observation smoke operations utility
+
+Windows-only fixed-scope `prepare|stage|intent|inspect`. This is NOT an API/worker feature and never runs on service startup. Requires explicit environment opt-in `BUILDSYSTEM_OBSERVATION_SMOKE_APPROVED=20261104-stage-only`, existing closed ACL root `E:\BuildSystem\ObservationSmoke-20261104` and separately authorized deployment identity. No target SQL CREATE/restore/drop, RAC, Enterprise or target observation is executed here. Actual observation later uses the normal explicit Agent CLI and HTTPS routes.
+
+Owner approvals captured in the session: update active API; one-off RKF\ustiantsev.is identity without changing LocalService/sysadmin rights; new real-bound stage graph and authorized DT copy; permanent retained hold; quota 2 active /2GiB /owner concurrency2 /TTL1 (pool concurrency1). Existing synthetic reservation/history remains untouched.
+
+`prepare` persists independent GUID manifest before mutation; verifies original and no-overwrite copied source DT hash/length; transactionally changes ONLY exact existing old quota1/16MiB/concurrency1/TTL1, audits change and creates new project/root/pool/source graph. All target-readiness flags false. Canonical cluster actual3ca4be26-0f43-4910-956e-b43c6aebdaa4; independent stable SQL GUID is operator assertion pinned later to actual machine/instance, not discovery. New agent enrolled/registered/approved using standard services; token CurrentUser DPAPI only, no plaintext handoff/log. Ready archive catalog means inventory/admission availability, NOT restore validation.
+
+`stage` uses `archive-stage-only` order, real StageWorker/Journal/ArchiveStaging/ArtifactDelivery/StageCompletionDelivery and fresh scoped standard server-service adapters. DB StageCompleted alone insufficient: local journal must also be settled with no pending artifacts/completions. No HTTP stage transport here; this ops path is explicit admin/service exercise, not a claim of HTTP authentication acceptance. `intent` invokes standard nonexecutable retained intent and observation assignment services. `inspect` prints only manifest metadata and scoped environment/job states.
+
+Feature options are local to this utility provider; it does not enable API features/config. Before actual CLI GET/POST, API operator mappings must be configured separately. API config loaded from preserved9cd2901Production file for metadata connection only, not copied to client. Credentials stay under deployment identity/closed directory.
+
+Failure is fixed `OpsFailure`/5. No autocredential reissue after partial enrollment; manual reconciliation is required if approval committed before token publication. No compensating deletes/hold releases/source overwrites. Exact old quota guard is intentional; already-modified/foreign state fails closed. Durable manifest/operation.lock gates operations; do not edit manifest to repair mismatches. Additional retries require reading actual state first.
+
+## Validation
+
+Local restore/build and portable publish succeeded with0warnings/errors; independent review identified no demonstrated critical source bug after explicit local-settlement guard. No modes executed on server yet. SQL CI0d0bf49 passed168results/no skips for application admission+newmode roundtrip; Windows CI pending at preparation. Utility is outside main solution and has its own lock file. No live secrets in repository.
