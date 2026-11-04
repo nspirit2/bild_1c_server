@@ -58,7 +58,7 @@ public sealed class SqlRestoreIntents : IRestoreIntents
                            where e.Id == environmentId
                            select new { e, q, j, r, l, artifact, agent, v, a, root, pool }).SingleOrDefaultAsync(ct);
             if (i is null || i.j.Id != input.ExpectedStageJobId || i.artifact.ArtifactId != input.ExpectedArtifactId ||
-                i.j.Kind != "ProvisionArchive" || i.j.State != "StageCompleted" || i.l.State != "Completed" ||
+                !StageAdmission.IsStageJob(i.j) || i.j.State != "StageCompleted" || i.l.State != "Completed" ||
                 i.artifact.State != "ContentVerified" || i.r.State != "Held" || !i.e.HasUnsettledProvisioningOperation ||
                 i.e.State is not ("Requested" or "Provisioning") || i.q.State is not ("Pending" or "Provisioning") ||
                 i.q.EnvironmentId != i.e.Id || i.j.EnvironmentId != i.e.Id || i.j.RequestId != i.q.Id ||
@@ -66,7 +66,8 @@ public sealed class SqlRestoreIntents : IRestoreIntents
                 i.artifact.JobId != i.j.Id || i.artifact.ReservationId != i.r.Id || i.artifact.ArchiveVersionId != i.v.Id ||
                 i.artifact.AgentId != i.agent.Id || i.l.AgentId != i.agent.Id || i.l.FencingToken <= 0 ||
                 i.artifact.FencingToken != i.l.FencingToken || i.root.Id != rootId.Value || !i.root.Enabled ||
-                !i.pool.Enabled || !i.pool.SupportsDt || !i.pool.ScheduledJobsSuppressionVerified || i.agent.State != "Approved" || i.pool.Id != i.r.PoolId || i.pool.Id != i.agent.PoolId ||
+                !i.pool.Enabled || !i.pool.SupportsDt ||
+                (i.j.Kind == "ProvisionArchive" && !i.pool.ScheduledJobsSuppressionVerified) || i.agent.State != "Approved" || i.pool.Id != i.r.PoolId || i.pool.Id != i.agent.PoolId ||
                 i.root.AgentScopeId != i.agent.Id || i.pool.AgentScopeId != i.agent.Id ||
                 i.artifact.SizeBytes <= 0 || i.r.StagingBytes < i.artifact.SizeBytes || i.v.SizeBytes != i.artifact.SizeBytes ||
                 i.artifact.Format != "dt" || i.v.Format != i.artifact.Format ||

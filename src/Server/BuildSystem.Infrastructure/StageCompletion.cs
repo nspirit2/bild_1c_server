@@ -48,7 +48,7 @@ public sealed partial class SqlAgentControl
             if (i is null || i.artifact.JobId != request.JobId || i.artifact.AgentId != agent.Id ||
                 i.artifact.FencingToken != request.FencingToken || i.artifact.State != "ContentVerified" ||
                 i.lease.JobId != request.JobId || i.lease.AgentId != agent.Id || i.lease.FencingToken != request.FencingToken ||
-                i.job.Kind != "ProvisionArchive" || i.q.JobId != i.job.Id || i.q.EnvironmentId != i.e.Id ||
+                !StageAdmission.IsStageJob(i.job) || i.q.JobId != i.job.Id || i.q.EnvironmentId != i.e.Id ||
                 i.e.RequestId != i.q.Id || i.job.EnvironmentId != i.e.Id || i.q.OwnerId != i.e.OwnerId ||
                 i.q.OwnerId != i.r.OwnerId || i.q.ProjectId != i.e.ProjectId || i.r.State != "Held" ||
                 i.e.State is not ("Requested" or "Provisioning") || i.q.State is not ("Pending" or "Provisioning") ||

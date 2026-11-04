@@ -54,9 +54,10 @@ internal static class TargetObservationAccess
             assigned.FencingToken != retained.FencingToken || assigned.TargetIncarnationId != retained.TargetIncarnation ||
             assigned.CanonicalClusterId != retained.CanonicalClusterId || assigned.CanonicalSqlServerId != retained.CanonicalSqlServerId ||
             i.q.EnvironmentId != i.e.Id || i.j.EnvironmentId != i.e.Id || i.j.RequestId != i.q.Id ||
-            i.j.Kind != "ProvisionArchive" || i.q.OwnerId != i.e.OwnerId || i.r.OwnerId != i.e.OwnerId ||
+            !StageAdmission.IsStageJob(i.j) || i.q.OwnerId != i.e.OwnerId || i.r.OwnerId != i.e.OwnerId ||
             i.q.ProjectId != i.e.ProjectId || i.root.Id != source.RootId || i.pool.Id != source.PoolId ||
-            !i.root.Enabled || !i.pool.Enabled || !i.pool.SupportsDt || !i.pool.ScheduledJobsSuppressionVerified ||
+            !i.root.Enabled || !i.pool.Enabled || !i.pool.SupportsDt ||
+            (i.j.Kind == "ProvisionArchive" && !i.pool.ScheduledJobsSuppressionVerified) ||
             agent.Id != retained.AgentId || agent.PoolId != i.pool.Id ||
             i.root.AgentScopeId != agent.Id || i.pool.AgentScopeId != agent.Id ||
             !SqlAgentControl.CanonicalStagePath(i.a.RelativePath, retained.Format) ||

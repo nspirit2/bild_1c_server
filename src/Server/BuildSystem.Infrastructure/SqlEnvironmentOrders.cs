@@ -34,7 +34,7 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                                 join p in db.EnvironmentPools on mapping.PoolId equals p.Id
                                 where mapping.ProjectId == input.ProjectId && mapping.Enabled && p.Enabled &&
                                     p.AgentScopeId == source.Root.AgentScopeId && p.IsolationPolicyId == source.Root.IsolationPolicyId &&
-                                    p.IsolationVerified && p.ScheduledJobsSuppressionVerified && p.ResourceLimitVerified &&
+                                    (input.StageOnly || (p.IsolationVerified && p.ScheduledJobsSuppressionVerified && p.ResourceLimitVerified)) &&
                                     (source.Version.Format == "dt" ? p.SupportsDt : p.SupportsBak)
                                 orderby p.Id select (Guid?)p.Id).FirstOrDefaultAsync(ct)
                 ?? throw Reject(409, "PoolUnavailable");
@@ -48,8 +48,8 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 pool.SqlServerId == Guid.Empty || pool.ClusterId == Guid.Empty || pool.AgentScopeId == Guid.Empty ||
                 pool.AgentScopeId != source.Root.AgentScopeId || string.IsNullOrWhiteSpace(project.PreparationProfileVersion) ||
                 string.IsNullOrWhiteSpace(project.IsolationPolicyId) || project.IsolationPolicyId != pool.IsolationPolicyId ||
-                pool.IsolationPolicyId != source.Root.IsolationPolicyId || !pool.IsolationVerified ||
-                !pool.ScheduledJobsSuppressionVerified || !pool.ResourceLimitVerified ||
+                pool.IsolationPolicyId != source.Root.IsolationPolicyId ||
+                (!input.StageOnly && (!pool.IsolationVerified || !pool.ScheduledJobsSuppressionVerified || !pool.ResourceLimitVerified)) ||
                 (source.Version.Format == "dt" ? !pool.SupportsDt : !pool.SupportsBak) || pool.MaxStagingBytes <= 0)
                 throw Reject(409, "PoolNotReady");
             var limits = await db.EnvironmentQuotas.SingleOrDefaultAsync(x => x.SubjectId == actor.UserId, ct)
@@ -93,12 +93,15 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 ProjectId = input.ProjectId, PoolId = poolId, ReservationId = reservationId, DisplayName = input.DisplayName });
             // Durable intent only; NOT a compiled pipeline and there is intentionally no executor here.
             db.EnvironmentJobs.Add(new EnvironmentJob { Id = receipt.JobId, RequestId = receipt.RequestId, EnvironmentId = receipt.EnvironmentId, CreatedAt = now,
+                Kind = input.StageOnly ? "ObserveArchiveStage" : "ProvisionArchive",
                 SnapshotJson = JsonSerializer.Serialize(new { reservationId, poolId, pool.SqlServerId, pool.ClusterId, pool.AgentScopeId,
                     sqlDbName = name, infobaseName = name, sourceRootId = source.Root.Id, sourceArchiveId = source.Archive.Id, sourceRelativePath = source.Archive.RelativePath,
                     automaticDeletionEnabled = false, automaticDeletionGraceDays = (int?)null,
                     archiveVersionId = source.Version.Id, source.Version.Sha256, source.Version.SizeBytes, source.Version.Format,
                     reservedBytes = source.Version.EstimatedDbBytes, stagingBytes = source.Version.SizeBytes,
-                    project.PreparationProfileVersion, project.IsolationPolicyId, input.TtlDays }) });
+                    project.PreparationProfileVersion, project.IsolationPolicyId, input.TtlDays,
+                    admissionMode = input.StageOnly ? "archive-stage-only" : "archive",
+                    stageOnly = input.StageOnly, executable = false, scheduledJobsMustRemainBlocked = true }) });
             db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = actor.UserId, Action = "EnvironmentOrderAccepted", TargetId = receipt.RequestId, CreatedAt = now });
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);

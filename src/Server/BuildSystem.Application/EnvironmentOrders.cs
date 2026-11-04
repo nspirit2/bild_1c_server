@@ -27,14 +27,14 @@ public sealed class RequestRejectedException(int statusCode, string code, string
 }
 
 public sealed record ValidatedOrder(string IdempotencyKey, Guid ProjectId, string DisplayName,
-    Guid ArchiveVersionId, int TtlDays, string PayloadHash);
+    Guid ArchiveVersionId, int TtlDays, string PayloadHash, bool StageOnly = false);
 
 public static class OrderInput
 {
     public static ValidatedOrder Validate(string idempotencyKey, CreateEnvironmentRequest request)
     {
         if (request is null || request.ProjectId == Guid.Empty || request.Source is null ||
-            request.Source.ArchiveVersionId == Guid.Empty || request.Mode != "archive" ||
+            request.Source.ArchiveVersionId == Guid.Empty || request.Mode is not ("archive" or "archive-stage-only") ||
             request.DisplayName is null || request.DisplayName.Length is < 1 or > 120 ||
             string.IsNullOrWhiteSpace(request.DisplayName) ||
             request.DisplayName != request.DisplayName.Trim() ||
@@ -47,10 +47,10 @@ public static class OrderInput
         var payload = JsonSerializer.Serialize(new
         {
             projectId = request.ProjectId.ToString("D"), displayName = request.DisplayName,
-            mode = "archive", archiveVersionId = request.Source.ArchiveVersionId.ToString("D"), ttlDays = request.TtlDays
+            mode = request.Mode, archiveVersionId = request.Source.ArchiveVersionId.ToString("D"), ttlDays = request.TtlDays
         });
         return new ValidatedOrder(idempotencyKey, request.ProjectId, request.DisplayName,
             request.Source.ArchiveVersionId, request.TtlDays,
-            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))));
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))), request.Mode == "archive-stage-only");
     }
 }

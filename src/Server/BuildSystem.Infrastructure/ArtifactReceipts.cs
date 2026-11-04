@@ -50,7 +50,7 @@ public sealed class SqlArtifactReceipts(BuildSystemDbContext db) : IArtifactRece
                                     join pool in db.EnvironmentPools on environment.PoolId equals pool.Id
                                     where job.Id == report.JobId
                                     select new { job, request, environment, reservation, version, archive, root, pool }).SingleOrDefaultAsync(ct);
-                if (intent is null || intent.job.Kind != "ProvisionArchive" || intent.job.State != "Leased" ||
+                if (intent is null || !StageAdmission.IsStageJob(intent.job) || intent.job.State != "Leased" ||
                     intent.job.RequestId != intent.request.Id || intent.request.JobId != intent.job.Id ||
                     intent.job.EnvironmentId != intent.request.EnvironmentId ||
                     intent.request.OwnerId != intent.environment.OwnerId || intent.request.OwnerId != intent.reservation.OwnerId ||

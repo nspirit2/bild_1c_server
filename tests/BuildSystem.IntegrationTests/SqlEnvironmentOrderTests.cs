@@ -41,6 +41,31 @@ public sealed class SqlEnvironmentOrderTests
     }
 
     [SqlServerFact]
+    public async Task Explicit_stage_only_admits_unverified_targets_without_promoting_provision_orders()
+    {
+        await using var database = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(database);
+        await using var db = database.NewContext();
+        var pool = await db.EnvironmentPools.SingleAsync();
+        pool.IsolationVerified = false; pool.ResourceLimitVerified = false; pool.ScheduledJobsSuppressionVerified = false;
+        await db.SaveChangesAsync();
+        var service = new SqlEnvironmentOrders(db);
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => service.CreateAsync(seed.Actor, "legacy", seed.Order(), Ct));
+        Assert.Equal("PoolUnavailable", rejected.Code);
+        var request = seed.Order() with { Mode = "archive-stage-only" };
+        var order = await service.CreateAsync(seed.Actor, "stage", request, Ct);
+        var job = await db.EnvironmentJobs.AsNoTracking().SingleAsync(x => x.Id == order.JobId);
+        Assert.Equal("ObserveArchiveStage", job.Kind);
+        using var snapshot = System.Text.Json.JsonDocument.Parse(job.SnapshotJson);
+        Assert.True(snapshot.RootElement.GetProperty("stageOnly").GetBoolean());
+        Assert.False(snapshot.RootElement.GetProperty("executable").GetBoolean());
+        Assert.True(snapshot.RootElement.GetProperty("scheduledJobsMustRemainBlocked").GetBoolean());
+        var conflict = await Assert.ThrowsAsync<RequestRejectedException>(() => service.CreateAsync(seed.Actor, "stage", seed.Order(), Ct));
+        Assert.Equal("IdempotencyConflict", conflict.Code);
+        Assert.Single(await db.EnvironmentReservations.ToListAsync());
+    }
+
+    [SqlServerFact]
     public async Task Changed_payload_returns_409()
     {
         await using var database = await SqlServerTestDatabase.CreateAsync();

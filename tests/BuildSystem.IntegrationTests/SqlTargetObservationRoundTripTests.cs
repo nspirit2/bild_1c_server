@@ -27,7 +27,7 @@ public sealed class SqlTargetObservationRoundTripTests
         AgentCredential Credential, RestoreIntentReceipt Restore, TargetObservationEndpointMapping Mapping);
 
     // Minimal local copy of the existing private stage/Identity fixtures; preparation is not HTTP under test.
-    private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql)
+    private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql, bool stageOnly = false)
     {
         await sql.ApplyMigrationsAsync();
         var admin = new Actor(Guid.NewGuid(), true); var owner = new Actor(Guid.NewGuid(), false);
@@ -48,8 +48,8 @@ public sealed class SqlTargetObservationRoundTripTests
         db.EnvironmentPools.Add(new EnvironmentPool { Id = pool, Enabled = true, ClusterId = cluster,
             SqlServerId = server, AgentScopeId = agent, IsolationPolicyId = "isolated", CapacityBytes = 100000,
             MaxEnvironmentBytes = 10000, MaxStagingBytes = 10000, MaxConcurrentProvisioning = 5,
-            SupportsDt = true, SupportsBak = true, IsolationVerified = true,
-            ScheduledJobsSuppressionVerified = true, ResourceLimitVerified = true });
+            SupportsDt = true, SupportsBak = true, IsolationVerified = !stageOnly,
+            ScheduledJobsSuppressionVerified = !stageOnly, ResourceLimitVerified = !stageOnly });
         db.ProjectPools.Add(new ProjectPool { ProjectId = project, PoolId = pool, Enabled = true });
         db.EnvironmentQuotas.Add(new EnvironmentQuota { SubjectId = owner.UserId, MaxActiveEnvironments = 5,
             MaxConcurrentProvisioning = 5, MaxStorageBytes = 100000, MaxTtlDays = 30 });
@@ -59,7 +59,7 @@ public sealed class SqlTargetObservationRoundTripTests
         await control.RegisterAsync(new(agent, ticket.EnrollmentId, ticket.Token, "observation-http-worker"), Ct);
         var credential = await control.ApproveAsync(admin, agent, Ct);
         var order = await new SqlEnvironmentOrders(db).CreateAsync(owner, "observation-http-order",
-            new(project, "observation-http", "archive", new(version), 7), Ct);
+            new(project, "observation-http", stageOnly ? "archive-stage-only" : "archive", new(version), 7), Ct);
         var grant = Assert.IsType<StageLeaseGrant>(await new SqlArchiveStageControl(db,
             new ArchiveStageOptions { Enabled = true }).PollAsync(credential.Token, Ct));
         var artifact = Guid.NewGuid();
@@ -266,6 +266,27 @@ public sealed class SqlTargetObservationRoundTripTests
         Assert.Equal(assignment.ObservationRequestId, requested.TargetId); Assert.Equal(seed.Owner.UserId, requested.ActorId);
         var recorded = Assert.Single(await db.AuditEvents.Where(a => a.Action == "TargetObservationRecorded").ToListAsync());
         Assert.Equal(receipt.ReceiptId, recorded.TargetId); Assert.Equal(seed.Credential.AgentId, recorded.ActorId);
+    }
+
+    [SqlServerFact]
+    public async Task Explicit_stage_only_with_all_target_readiness_false_roundtrips_without_promotion()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql, stageOnly: true);
+        using var factory = new CookieFactory(sql.ConnectionString, seed);
+        using var owner = factory.Client(); await Login(factory, owner, seed.Owner);
+        var assignment = await Request(owner, seed);
+        using var local = new JournalFixture();
+        var wire = new WireHandler(factory.Server.CreateHandler()); using var transport = Transport(wire, seed);
+        var report = await new TargetObservationCoordinator(local.Journal, transport, new Executor(local.Journal)).ObserveAsync(assignment.ObservationRequestId);
+        Assert.Equal(1, await new TargetObservationOutboxDelivery(local.Journal, transport).DeliverRequestAsync(assignment.ObservationRequestId));
+        await using var db = sql.NewContext();
+        var pool = await db.EnvironmentPools.SingleAsync();
+        Assert.False(pool.IsolationVerified); Assert.False(pool.ResourceLimitVerified); Assert.False(pool.ScheduledJobsSuppressionVerified);
+        var job = await db.EnvironmentJobs.SingleAsync(); Assert.Equal("ObserveArchiveStage", job.Kind); Assert.Equal("StageCompleted", job.State);
+        Assert.Equal("Requested", (await db.TestEnvironments.SingleAsync()).State);
+        Assert.False(assignment.Executable); Assert.True(assignment.ScheduledJobsMustRemainBlocked);
+        Assert.Single(await db.TargetObservationReceipts.ToListAsync());
+        Assert.False(report.Executable);
     }
 
     [SqlServerFact]

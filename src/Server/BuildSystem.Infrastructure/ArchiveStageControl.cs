@@ -33,8 +33,8 @@ public sealed partial class SqlAgentControl
         var existing = await db.AgentLeases.SingleOrDefaultAsync(x => x.AgentId == agent.Id && x.State == "Active", ct);
         if (existing is not null)
         {
-            var kind = await db.EnvironmentJobs.Where(x => x.Id == existing.JobId).Select(x => x.Kind).SingleAsync(ct);
-            if (kind != "ProvisionArchive") return null;
+            var existingJob = await db.EnvironmentJobs.SingleAsync(x => x.Id == existing.JobId, ct);
+            if (!StageAdmission.IsStageJob(existingJob)) return null;
             var plan = await CompileStagePlanAsync(agent, existing.JobId, "Leased", ct);
             if (existing.ExpiresAt <= await StageNowAsync(ct)) throw Reject(409, "StaleLease");
             return new StageLeaseGrant(existing.JobId, existing.FencingToken, existing.ExpiresAt, "ArchiveStageOnly", plan);
@@ -43,7 +43,7 @@ public sealed partial class SqlAgentControl
         var candidate = await (from j in db.EnvironmentJobs
                                join e in db.TestEnvironments on j.EnvironmentId equals e.Id
                                join r in db.EnvironmentReservations on e.ReservationId equals r.Id
-                               where j.Kind == "ProvisionArchive" && j.State == "Pending" &&
+                               where (j.Kind == "ProvisionArchive" || j.Kind == "ObserveArchiveStage") && j.State == "Pending" &&
                                    e.PoolId == agent.PoolId && r.PoolId == agent.PoolId && r.State == "Held" &&
                                    !db.AgentLeases.Any(l => l.JobId == j.Id)
                                orderby j.CreatedAt, j.Id select (Guid?)j.Id).FirstOrDefaultAsync(ct);
@@ -106,7 +106,7 @@ public sealed partial class SqlAgentControl
                        join root in db.ArchiveRoots on a.RootId equals root.Id
                        join pool in db.EnvironmentPools on e.PoolId equals pool.Id
                        where j.Id == jobId select new { j, q, e, r, v, a, root, pool }).SingleOrDefaultAsync(ct);
-        if (i is null || i.j.Kind != "ProvisionArchive" || i.j.State != state ||
+        if (i is null || !StageAdmission.IsStageJob(i.j) || i.j.State != state ||
             i.q.JobId != i.j.Id || i.q.EnvironmentId != i.e.Id || i.e.RequestId != i.q.Id ||
             i.j.EnvironmentId != i.e.Id || i.q.OwnerId != i.e.OwnerId || i.q.OwnerId != i.r.OwnerId ||
             i.q.ProjectId != i.e.ProjectId || i.r.State != "Held" ||
