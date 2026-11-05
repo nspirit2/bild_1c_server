@@ -71,14 +71,44 @@ public sealed class ScheduledJobsObserverProcessTests : IDisposable
     public async Task RealTimeoutRejectsEvenACompleteBlockedResponse()
     {
         var scope = Scope();
-        var bridge = Bridge();
-        await Reject(Observer(bridge, "fixture-hang", TimeSpan.FromSeconds(2)), scope, Credentials(),
-            "ScheduledJobsReadbackUnavailable");
+        var expected = $"infobase : {scope.InfobaseId:D}\nscheduled-jobs-deny : on\n";
+        var clock = new ControlledProcessClock();
+        var captured = new System.Text.StringBuilder();
+        var responseCaptured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bridge = Bridge(clock: clock, afterCapture: output =>
+        {
+            if (output.Stream != ProcessOutputStream.StandardOutput) return;
+            captured.Append(output.Text);
+            if (captured.ToString() == expected) responseCaptured.TrySetResult();
+        });
+        using var cleanup = new CancellationTokenSource();
+        var rejection = Reject(Observer(bridge, "fixture-hang", TimeSpan.FromSeconds(2)), scope, Credentials(),
+            "ScheduledJobsReadbackUnavailable", cleanup.Token);
+        try
+        {
+            // The real process and observer must deliver the complete response before
+            // the runner's own deadline fires. Wall time is only a hang watchdog here;
+            // ProcessRunnerTests retains real-system-clock timeout/termination coverage.
+            await responseCaptured.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(expected, Stdout(bridge));
+            Assert.False(rejection.IsCompleted);
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await rejection;
 
-        Assert.NotNull(bridge.Result);
-        Assert.Equal(ProcessCompletion.TimedOut, bridge.Result.Completion);
-        Assert.True(bridge.Result.ProcessId > 0);
-        Assert.Equal($"infobase : {scope.InfobaseId:D}\nscheduled-jobs-deny : on\n", Stdout(bridge));
+            Assert.NotNull(bridge.Result);
+            Assert.Equal(ProcessCompletion.TimedOut, bridge.Result.Completion);
+            Assert.True(bridge.Result.ProcessId > 0);
+            Assert.Equal(expected, Stdout(bridge));
+        }
+        finally
+        {
+            cleanup.Cancel();
+            try
+            {
+                if (bridge.Running is { } running) await running.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            catch { /* Cleanup must not mask the original test failure. */ }
+        }
     }
 
     [Fact]
@@ -124,14 +154,15 @@ public sealed class ScheduledJobsObserverProcessTests : IDisposable
         Assert.DoesNotContain(secret, Stdout(bridge), StringComparison.Ordinal);
     }
 
-    private FixtureBridge Bridge(int outputLimit = 65536) => new(fixture, new ProcessRunner(new ProcessRunnerOptions
+    private FixtureBridge Bridge(int outputLimit = 65536, TimeProvider? clock = null,
+        Action<ProcessOutput>? afterCapture = null) => new(fixture, new ProcessRunner(new ProcessRunnerOptions
     {
         TrustedTools = new Dictionary<string, string> { [ToolId] = FindDotnetHost() },
         AllowedWorkspaceRoots = [root],
         InheritedEnvironmentVariables = [],
         MaxLineCharacters = LineLimit,
         MaxOutputCharacters = outputLimit
-    }));
+    }, clock ?? TimeProvider.System), afterCapture);
 
     private ScheduledJobsObserver Observer(IProcessRunner runner, string endpoint, TimeSpan? timeout = null) => new(runner, new()
     {
@@ -158,10 +189,10 @@ public sealed class ScheduledJobsObserverProcessTests : IDisposable
     }
 
     private static async Task Reject(ScheduledJobsObserver observer, ScheduledJobsReadbackScope scope,
-        ScheduledJobsObserverCredentials credentials, string code)
+        ScheduledJobsObserverCredentials credentials, string code, CancellationToken cancellationToken = default)
     {
         var error = await Assert.ThrowsAsync<ScheduledJobsReadbackException>(() =>
-            observer.ObserveAsync(scope, credentials).WaitAsync(TimeSpan.FromSeconds(15)));
+            observer.ObserveAsync(scope, credentials, cancellationToken).WaitAsync(TimeSpan.FromSeconds(15)));
         Assert.Equal(code, error.Code);
         Assert.Null(error.InnerException);
         Assert.DoesNotContain(User, error.ToString(), StringComparison.Ordinal);
@@ -174,21 +205,25 @@ public sealed class ScheduledJobsObserverProcessTests : IDisposable
 
     // No fake process outcome or synthetic RAC arguments: the only command change
     // is the fixture DLL prepended for the explicitly trusted dotnet host.
-    private sealed class FixtureBridge(string fixture, ProcessRunner runner) : IProcessRunner
+    private sealed class FixtureBridge(string fixture, ProcessRunner runner,
+        Action<ProcessOutput>? afterCapture = null) : IProcessRunner
     {
         public ProcessCommand? Command { get; private set; }
         public ProcessResult? Result { get; private set; }
+        public Task<ProcessResult>? Running { get; private set; }
         public ConcurrentQueue<ProcessOutput> Output { get; } = new();
 
         public async Task<ProcessResult> RunAsync(ProcessCommand command, Func<ProcessOutput, Task>? onOutput = null,
             CancellationToken cancellationToken = default)
         {
             Command = command;
-            Result = await runner.RunAsync(command with { Arguments = [new(fixture), .. command.Arguments] }, async output =>
+            Running = runner.RunAsync(command with { Arguments = [new(fixture), .. command.Arguments] }, async output =>
             {
                 Output.Enqueue(output);
                 if (onOutput is not null) await onOutput(output);
+                afterCapture?.Invoke(output);
             }, cancellationToken);
+            Result = await Running;
             return Result;
         }
     }

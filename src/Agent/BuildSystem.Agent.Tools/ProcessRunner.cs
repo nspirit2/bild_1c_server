@@ -9,11 +9,15 @@ public sealed class ProcessRunner : IProcessRunner
     private readonly string[] roots;
     private readonly string[] environment;
     private readonly int lineLimit, outputLimit;
+    private readonly TimeProvider clock;
     private static readonly HashSet<string> Shells = new(StringComparer.OrdinalIgnoreCase)
         { "cmd", "powershell", "pwsh", "bash", "sh", "ash", "dash", "zsh", "csh", "tcsh", "ksh", "fish", "busybox", "wsl", "wscript", "cscript" };
 
-    public ProcessRunner(ProcessRunnerOptions options)
+    public ProcessRunner(ProcessRunnerOptions options) : this(options, TimeProvider.System) { }
+
+    public ProcessRunner(ProcessRunnerOptions options, TimeProvider clock)
     {
+        this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         tools = new(options.TrustedTools, StringComparer.Ordinal);
         roots = options.AllowedWorkspaceRoots.Select(ValidateDirectory).ToArray();
         environment = options.InheritedEnvironmentVariables.ToArray();
@@ -70,7 +74,7 @@ public sealed class ProcessRunner : IProcessRunner
         try { if (!process.Start()) throw new InvalidOperationException(); }
         catch { throw new ProcessRunnerException("start_failed"); }
         var pid = process.Id;
-        using var timeout = new CancellationTokenSource(command.Timeout);
+        using var timeout = new CancellationTokenSource(command.Timeout, clock);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         var failure = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var budget = outputLimit;

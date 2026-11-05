@@ -62,6 +62,13 @@ public sealed class ProcessRunnerTests : IDisposable
     }
 
     [Fact]
+    public void MissingTrustedClockFailsBeforeAnyProcessCanStart()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() => new ProcessRunner(new ProcessRunnerOptions { TrustedTools = new Dictionary<string, string>(), AllowedWorkspaceRoots = [] }, null!));
+        Assert.Equal("clock", error.ParamName);
+    }
+
+    [Fact]
     public async Task TimeoutTerminatesProcess()
     {
         var command = Command("hang") with { Timeout = TimeSpan.FromMilliseconds(200) };
