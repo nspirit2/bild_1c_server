@@ -1,6 +1,12 @@
 # Owner-authorized observation smoke operations utility
 
-Windows-only fixed-scope `prepare|stage|intent|inspect`. This is NOT an API/worker feature and never runs on service startup. Requires explicit environment opt-in `BUILDSYSTEM_OBSERVATION_SMOKE_APPROVED=20261104-stage-only`, existing closed ACL root `E:\BuildSystem\ObservationSmoke-20261104` and separately authorized deployment identity. No target SQL CREATE/restore/drop, RAC, Enterprise or target observation is executed here. Actual observation later uses the normal explicit Agent CLI and HTTPS routes.
+Windows-only fixed-scope `prepare|stage|intent|inspect|credentials|tls|diagnose`.
+
+`credentials` checks cluster pin in existing LocalMachine DPAPI envelope, imports only cluster user/password through ObservationCredentialStore into CurrentUser store, zeroes byte buffers, prints no secret. No overwrite/token reissue.
+
+`tls` diagnoses exact IPv4 endpoint using unchanged FQDN/SNI/normal certificate-chain verification (no trust bypass), no proxy/redirect/cookies, authenticated assignment GET only. `diagnose` reads local historical report/ACK indicators and standard production transport assignment GET, plus scoped receipt/audit/environment evidence; it never creates executor/coordinator/delivery. Modes require explicit owner opt-in and closed directory. Ordinary CLI should use normal production transport, not diagnostic ConnectCallback.
+
+Live result05.11.2026: default DNS includes ::1 but IIS binds IPv4; default production transport failed before assignment. Process-only DOTNET_SYSTEM_NET_DISABLEIPV6=1 made same transport read succeed without DNS/hosts/bindings/cert changes. ExplicitCLI using combined publish shared-framework runtimeconfig/deps recorded one BothObservedAbsent report/receipt287f09e1-2089-46a6-83bb-a68f6f46fba5, localACKconfirmed, audit1. No targetmutation; environmentstillRequested. Do not repeat observer for this assignment; retainedreportalreadyACKed. This is NOT an API/worker feature and never runs on service startup. Requires explicit environment opt-in `BUILDSYSTEM_OBSERVATION_SMOKE_APPROVED=20261104-stage-only`, existing closed ACL root `E:\BuildSystem\ObservationSmoke-20261104` and separately authorized deployment identity. No target SQL CREATE/restore/drop, RAC, Enterprise or target observation is executed here. Actual observation later uses the normal explicit Agent CLI and HTTPS routes.
 
 Owner approvals captured in the session: update active API; one-off RKF\ustiantsev.is identity without changing LocalService/sysadmin rights; new real-bound stage graph and authorized DT copy; permanent retained hold; quota 2 active /2GiB /owner concurrency2 /TTL1 (pool concurrency1). Existing synthetic reservation/history remains untouched.
 

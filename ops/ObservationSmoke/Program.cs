@@ -32,7 +32,7 @@ static class Ops
     }
     public static async Task Run(string[] args)
     {
-        if (!OperatingSystem.IsWindows() || args.Length != 1 || args[0] is not ("prepare" or "stage" or "intent" or "inspect")) throw new InvalidOperationException();
+        if (!OperatingSystem.IsWindows() || args.Length != 1 || args[0] is not ("prepare" or "stage" or "intent" or "inspect" or "credentials" or "tls" or "diagnose")) throw new InvalidOperationException();
         // Explicit local opt-in only after independent review and passing CI; never service startup.
         RequireOwnerOptIn();
         // Parent provisions a CLOSED Admin/SYSTEM/deployment-identity ACL before any directory/file creation.
@@ -61,7 +61,66 @@ static class Ops
         registrations.AddSingleton(new RestoreIntentOptions { Enabled = true, CanonicalMappings = new() { [m.PoolId] = new(m.ClusterId, m.SqlServerId) } });
         registrations.AddSingleton(new TargetObservationOptions { Enabled = true, EndpointMappings = new() { [m.PoolId] = new(m.RacMappingId, m.SqlMappingId) } });
         await using var provider = registrations.BuildServiceProvider();
-        if (args[0] == "prepare")
+        if (args[0] == "diagnose")
+        {
+            using var journal = new AgentJournal(Home + @"\Data");
+            var id = m.Observation!.ObservationRequestId;
+            Console.WriteLine(JsonSerializer.Serialize(new { AssignmentRetained = journal.GetTargetObservationAssignment(id) is not null,
+                ReportRetained = journal.GetTargetObservationReport(id) is not null,
+                PendingReport = journal.GetPendingTargetObservationReport(id) is not null,
+                ReceiptId = journal.GetTargetObservationReport(id)?.ReceiptId,
+                Outcome = journal.GetTargetObservationReport(id)?.Outcome.ToString(),
+                UnsettledStage = journal.Unsettled().Count }));
+            using var transport = new TargetObservationHttpClient(new() { BaseUri = new("https://sk-cicd-1c-01.erkapharm.ru"), AgentId = m.AgentId }, () => TokenStore.Load(TokenPath));
+            try { var assignment = await transport.ReadAsync(id, default); Console.WriteLine("ProductionTransportAssignmentReadOk=" + (assignment == m.Observation)); }
+            catch (TargetObservationTransportException) { Console.WriteLine("ProductionTransportAssignmentReadFailed"); }
+            using var directHandler = new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false, UseCookies = false };
+            using var directHttp = new HttpClient(directHandler) { Timeout = TimeSpan.FromSeconds(20) };
+            directHttp.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TokenStore.Load(TokenPath));
+            try { using var response = await directHttp.GetAsync("https://sk-cicd-1c-01.erkapharm.ru/api/agents/target-observations/" + id);
+                Console.WriteLine("DefaultDnsDirectHttp=" + (int)response.StatusCode); }
+            catch (Exception ex) { Console.WriteLine("DefaultDnsDirectFailureType=" + ex.GetBaseException().GetType().Name); }
+            Console.WriteLine(JsonSerializer.Serialize(await db.TargetObservationReceipts.AsNoTracking().Where(r => r.ObservationRequestId == id)
+                .Select(r => new { r.ReceiptId, r.Outcome, r.Executable, r.ScheduledJobsMustRemainBlocked, r.ObservedAt, r.AcceptedAt }).ToListAsync()));
+            Console.WriteLine("RecordedAuditCount=" + await db.AuditEvents.CountAsync(a => a.Action == "TargetObservationRecorded" && db.TargetObservationReceipts.Any(r => r.ObservationRequestId == id && r.ReceiptId == a.TargetId)));
+            Console.WriteLine(JsonSerializer.Serialize(await db.TestEnvironments.AsNoTracking().Where(e => e.Id == m.Order!.EnvironmentId).Select(e => new { e.State, e.HasUnsettledProvisioningOperation }).SingleAsync()));
+            // No executor, coordinator or report delivery is instantiated in this mode.
+        }
+        else if (args[0] == "tls")
+        {
+            // Exact IPv4 connect pin avoids the machine's ::1 DNS entry without changing hosts/DNS,
+            // while normal URI/SNI/certificate-chain validation remains fully enabled.
+            using var handler = new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false, UseCookies = false, ConnectCallback = async (_, ct) =>
+            {
+                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                try { await socket.ConnectAsync("10.21.0.149", 443, ct); return new System.Net.Sockets.NetworkStream(socket, true); }
+                catch { socket.Dispose(); throw; }
+            }};
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+            try {
+                var result = await http.GetAsync("https://sk-cicd-1c-01.erkapharm.ru/api/auth/me"); Console.WriteLine("PinnedVerifiedTlsHttp" + (int)result.StatusCode);
+                http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TokenStore.Load(TokenPath));
+                var assignmentResponse = await http.GetAsync("https://sk-cicd-1c-01.erkapharm.ru/api/agents/target-observations/" + m.Observation!.ObservationRequestId);
+                Console.WriteLine("AssignmentGetHttp" + (int)assignmentResponse.StatusCode);
+            }
+            catch (Exception ex) { Console.WriteLine("VerifiedTlsProbeFailed:" + ex.GetBaseException().GetType().Name); }
+        }
+        else if (args[0] == "credentials")
+        {
+            await VerifyGraph(db, m);
+            var cipher = await File.ReadAllBytesAsync(@"E:\BuildSystem\OneC\Secrets\admin.dpapi");
+            var plain = ProtectedData.Unprotect(cipher, null, DataProtectionScope.LocalMachine);
+            try
+            {
+                using var envelope = JsonDocument.Parse(plain);
+                var fields = envelope.RootElement;
+                if (fields.GetProperty("ClusterId").GetGuid() != m.ClusterId) throw new InvalidOperationException();
+                ObservationCredentialStore.Import(Home + @"\Data", fields.GetProperty("ClusterUser").GetString()!, fields.GetProperty("ClusterPassword").GetString()!);
+                Console.WriteLine("Observation credentials imported CurrentUser; no secret output.");
+            }
+            finally { CryptographicOperations.ZeroMemory(plain); CryptographicOperations.ZeroMemory(cipher); }
+        }
+        else if (args[0] == "prepare")
         {
             Directory.CreateDirectory(Home + @"\Source"); Directory.CreateDirectory(Home + @"\Data");
             await VerifyBytes(Original);
