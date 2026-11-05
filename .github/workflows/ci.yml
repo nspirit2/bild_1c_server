@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: '22'
       - name: Test operator UI behavior
-        run: node --test tests/stage-ui.test.cjs
+        run: node --test tests/stage-ui.test.cjs tests/creation-diagnostics-ui.test.cjs
       - name: Restore pinned dependencies
         run: dotnet restore BuildSystem.slnx --locked-mode
       - name: Restore pinned EF tooling

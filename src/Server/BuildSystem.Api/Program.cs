@@ -22,6 +22,16 @@ else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironm
     throw new InvalidOperationException("Production key protection is configured for Windows only.");
 
 builder.Services.AddBuildSystemInfrastructure(connection);
+// A dedicated read instance leaves the concrete ledger and mutation port disabled by default.
+builder.Services.AddSingleton(new TargetCreationDiagnosticsOptions
+{
+    Enabled = builder.Configuration.GetValue<bool>("TargetCreationDiagnostics:Enabled")
+});
+builder.Services.AddScoped<ITargetCreationOperationReads>(services => new SqlTargetCreationOperations(
+    services.GetRequiredService<BuildSystemDbContext>(), new TargetCreationOperationOptions
+    {
+        Enabled = services.GetRequiredService<TargetCreationDiagnosticsOptions>().Enabled
+    }));
 builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Configuration.GetValue<bool>("ArchiveStage:Enabled") });
 builder.Services.AddSingleton(new StageRetirementOptions { Enabled = builder.Configuration.GetValue<bool>("StageRetirement:Enabled") });
 // Canonical identity assertions are operator-owned configuration, never HTTP input.
@@ -121,6 +131,21 @@ if (args.Length == 1 && args[0] == "migrate")
     await scope.ServiceProvider.GetRequiredService<BuildSystemDbContext>().Database.MigrateAsync();
     return;
 }
+// Run before redirects, body limits and authorization so failures cannot cache sensitive diagnostics.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/admin/target-creation-operations") ||
+        context.Request.Path.StartsWithSegments("/admin/creation-diagnostics"))
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Task.CompletedTask;
+        });
+    }
+    await next(context);
+});
 if (!app.Environment.IsDevelopment()) app.UseHsts();
 app.UseHttpsRedirection();
 app.Use(async (context, next) =>
@@ -180,6 +205,8 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
 }).RequireAuthorization();
 app.MapAdministration();
 app.MapAgentEndpoints();
+app.MapTargetCreationDiagnostics();
+app.MapTargetCreationDiagnosticsUi();
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => Results.Ok(new
 {
     id = user.FindFirstValue(ClaimTypes.NameIdentifier), name = user.Identity!.Name,

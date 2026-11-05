@@ -5,6 +5,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="wwwroot/stage/*" />
+    <EmbeddedResource Include="wwwroot/creation-diagnostics/*" LogicalName="BuildSystem.Api.wwwroot.creation-diagnostics.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
 <!-- end -->
