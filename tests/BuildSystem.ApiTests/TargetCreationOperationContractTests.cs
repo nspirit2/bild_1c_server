@@ -2,6 +2,7 @@ using BuildSystem.Application;
 using BuildSystem.Domain;
 using BuildSystem.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace BuildSystem.ApiTests;
@@ -43,6 +44,35 @@ public sealed class TargetCreationOperationContractTests
             row.AttemptExpectedRevision = null; row.QuarantineReason = null; }
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
         Assert.Equal("Creation ledger transition is not permitted.", error.Message);
+    }
+
+    [Fact]
+    public async Task InternalReadDefaultsOffAndRejectsEmptyIdWithoutOpeningSqlConnection()
+    {
+        await using var db = new BuildSystemDbContext(new DbContextOptionsBuilder<BuildSystemDbContext>()
+            .UseSqlServer("Server=unused;Database=unused;Integrated Security=true").Options);
+        var actor = new Actor(Guid.NewGuid(), true);
+        var disabled = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlTargetCreationOperations(db, new()).GetAsync(actor, Guid.NewGuid(), CancellationToken.None));
+        Assert.Equal(409, disabled.StatusCode); Assert.Equal("TargetCreationDisabled", disabled.Code);
+        var invalid = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlTargetCreationOperations(db, new() { Enabled = true }).GetAsync(actor, Guid.Empty, CancellationToken.None));
+        Assert.Equal(400, invalid.StatusCode); Assert.Equal("InvalidTargetCreation", invalid.Code);
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void ReadAndWriteInterfacesShareScopedInternalServiceWithoutNewMutationMethods()
+    {
+        var services = new ServiceCollection();
+        services.AddBuildSystemInfrastructure("Server=unused;Database=unused;Integrated Security=true");
+        using var provider = services.BuildServiceProvider(); using var scope = provider.CreateScope();
+        Assert.Same(scope.ServiceProvider.GetRequiredService<ITargetCreationOperations>(),
+            scope.ServiceProvider.GetRequiredService<ITargetCreationOperationReads>());
+        Assert.False(scope.ServiceProvider.GetRequiredService<TargetCreationOperationOptions>().Enabled);
+        Assert.Equal("GetAsync", Assert.Single(typeof(ITargetCreationOperationReads).GetMethods()).Name);
+        Assert.DoesNotContain(typeof(ITargetCreationOperationReads).GetMethods(), m =>
+            m.Name.Contains("Reset") || m.Name.Contains("Release") || m.Name.Contains("Execute"));
     }
 
     [Fact]

@@ -25,7 +25,9 @@ public static class InfrastructureRegistration
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new RestoreIntentOptions());
         services.AddScoped<IRestoreIntents, SqlRestoreIntents>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetCreationOperationOptions());
-        services.AddScoped<ITargetCreationOperations, SqlTargetCreationOperations>();
+        services.AddScoped<SqlTargetCreationOperations>();
+        services.AddScoped<ITargetCreationOperations>(sp => sp.GetRequiredService<SqlTargetCreationOperations>());
+        services.AddScoped<ITargetCreationOperationReads>(sp => sp.GetRequiredService<SqlTargetCreationOperations>());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetObservationOptions());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<ITargetObservations, SqlTargetObservations>(services);
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<ITargetObservationReceipts, SqlTargetObservationReceipts>(services);

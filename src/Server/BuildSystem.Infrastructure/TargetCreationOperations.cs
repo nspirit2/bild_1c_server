@@ -6,10 +6,31 @@ using Microsoft.EntityFrameworkCore;
 namespace BuildSystem.Infrastructure;
 
 /// <summary>Admin-only SQL one-attempt ledger. Neither this service nor a receipt can execute creation.</summary>
-public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetCreationOperationOptions options) : ITargetCreationOperations
+public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetCreationOperationOptions options) : ITargetCreationOperations, ITargetCreationOperationReads
 {
     private readonly Dictionary<Guid, RestoreIntentCanonicalMapping> mappings = options.CanonicalMappings is { Count: <= 1024 }
         ? new(options.CanonicalMappings) : [];
+
+    public Task<TargetCreationOperationReceipt> GetAsync(Actor actor, Guid operationId, CancellationToken ct)
+    {
+        if (!options.Enabled) throw Reject(409, "TargetCreationDisabled");
+        if (operationId == Guid.Empty) throw Reject(400, "InvalidTargetCreation");
+        return db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            db.ChangeTracker.Clear();
+            await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            await Lock("BuildSystem:agent-control", ct);
+            await Admin(actor, ct); // Current database role before lookup, even for revoked bindings.
+            var row = await db.TargetCreationOperations.AsNoTracking().SingleOrDefaultAsync(x => x.OperationId == operationId, ct)
+                ?? throw Reject(404, "TargetCreationNotFound");
+            var intent = await db.RestoreIntents.AsNoTracking().SingleOrDefaultAsync(x => x.RestoreIntentId == row.RestoreIntentId, ct)
+                ?? throw Reject(409, "TargetCreationMismatch");
+            // Metadata only: do not call Admission, change state or touch target/artifact storage.
+            var result = Receipt(row, intent, false);
+            await tx.CommitAsync(ct);
+            return result;
+        });
+    }
 
     public Task<TargetCreationOperationReceipt> RegisterAsync(Actor actor, Guid environmentId, Guid expectedRestoreIntentId, CancellationToken ct)
     {

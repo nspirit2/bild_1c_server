@@ -84,6 +84,13 @@ public sealed class SqlTargetCreationOperationTests
         return await new SqlTargetCreationOperations(db, options ?? seed.Options).RegisterAsync(actor ?? seed.Admin,
             seed.Order.EnvironmentId, expected ?? seed.Restore.RestoreIntentId, Ct);
     }
+    private static async Task<TargetCreationOperationReceipt> GetAsync(SqlServerTestDatabase sql, Seed seed,
+        Guid operation, Actor? actor = null, TargetCreationOperationOptions? options = null)
+    {
+        await using var db = sql.NewContext();
+        ITargetCreationOperationReads reads = new SqlTargetCreationOperations(db, options ?? seed.Options);
+        return await reads.GetAsync(actor ?? seed.Admin, operation, Ct);
+    }
     private static async Task<TargetCreationOperationReceipt> BeginAsync(SqlServerTestDatabase sql, Seed seed,
         Guid operation, long revision, Guid attempt, Actor? actor = null)
     {
@@ -104,6 +111,15 @@ public sealed class SqlTargetCreationOperationTests
     private static async Task<int> AuditsAsync(SqlServerTestDatabase sql)
     {
         await using var db = sql.NewContext(); return await db.AuditEvents.CountAsync();
+    }
+
+    private static async Task<string> LedgerAsync(SqlServerTestDatabase sql)
+    {
+        await using var db = sql.NewContext();
+        await db.TargetCreationOperations.LoadAsync();
+        return JsonSerializer.Serialize(db.ChangeTracker.Entries()
+            .Select(e => JsonSerializer.Serialize(e.Properties.OrderBy(p => p.Metadata.Name)
+                .ToDictionary(p => p.Metadata.Name, p => p.CurrentValue))).OrderBy(s => s).ToArray());
     }
 
     // Include every scalar and rowversion: ledger writes must not alter leases, holds, stage or environment state.
@@ -167,6 +183,143 @@ public sealed class SqlTargetCreationOperationTests
         Assert.Equal(1, fault.FaultCount);
         // Quarantine's retry rejects the stale revision before committing a second transaction.
         Assert.True(fault.PhysicalCommitReturnedCount >= 1);
+    }
+
+    [SqlServerFact]
+    public async Task Get_reads_registered_attempt_and_terminal_snapshots_without_audit_or_lifecycle_changes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        async Task AssertSnapshotAsync(TargetCreationOperationReceipt expected)
+        {
+            var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+            var actual = await GetAsync(sql, seed, expected.OperationId);
+            Assert.Equal(Pins(expected), Pins(actual)); Assert.Equal(expected.State, actual.State);
+            Assert.Equal(expected.Revision, actual.Revision); Assert.Equal(expected.AttemptId, actual.AttemptId);
+            Assert.Equal(expected.AttemptExpectedRevision, actual.AttemptExpectedRevision);
+            Assert.Equal(expected.QuarantineReason, actual.QuarantineReason);
+            Assert.False(actual.NewlyRecorded); Nonexecuting(actual);
+            Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+            Assert.Equal(before, await LifecycleAsync(sql));
+        }
+        await AssertSnapshotAsync(registered);
+        var begun = await BeginAsync(sql, seed, registered.OperationId, registered.Revision, Guid.NewGuid());
+        await AssertSnapshotAsync(begun);
+        var terminal = await QuarantineAsync(sql, seed, begun.OperationId, begun.Revision,
+            TargetCreationQuarantineReason.Cancelled);
+        await AssertSnapshotAsync(terminal);
+    }
+
+    [SqlServerFact]
+    public async Task Get_allows_revoked_bindings_and_mapping_drift_while_exact_begin_replay_is_denied()
+    {
+        // Each change is independent, so a prior revocation cannot mask a later admission regression.
+        foreach (var change in new[] { "project-pool", "pool", "project", "membership", "agent", "mapping" })
+        {
+            await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+            var registered = await RegisterAsync(sql, seed); var attempt = Guid.NewGuid();
+            var begun = await BeginAsync(sql, seed, registered.OperationId, registered.Revision, attempt);
+            var options = seed.Options;
+            await using (var db = sql.NewContext())
+            {
+                switch (change)
+                {
+                    case "project-pool":
+                        await db.ProjectPools.Where(p => p.ProjectId == seed.Project && p.PoolId == seed.Pool)
+                            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, false));
+                        break;
+                    case "pool":
+                        await db.EnvironmentPools.Where(p => p.Id == seed.Pool)
+                            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, false));
+                        break;
+                    case "project":
+                        await db.Projects.Where(p => p.Id == seed.Project)
+                            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, false));
+                        break;
+                    case "membership":
+                        await db.ProjectMemberships.Where(p => p.UserId == seed.Owner.UserId && p.ProjectId == seed.Project)
+                            .ExecuteDeleteAsync();
+                        break;
+                    case "agent":
+                        await new SqlAgentControl(db).RevokeAsync(seed.Admin, seed.Credential.AgentId, Ct);
+                        break;
+                    case "mapping":
+                        options = new TargetCreationOperationOptions { Enabled = true,
+                            CanonicalMappings = new() { [seed.Pool] = new(Guid.NewGuid(), Guid.NewGuid()) } };
+                        break;
+                }
+            }
+            var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+            var read = await GetAsync(sql, seed, begun.OperationId, options: options);
+            Assert.Equal(Pins(begun), Pins(read)); Assert.Equal(begun.State, read.State);
+            Assert.Equal(begun.Revision, read.Revision); Assert.Equal(attempt, read.AttemptId);
+            Assert.Equal(begun.AttemptExpectedRevision, read.AttemptExpectedRevision);
+            Assert.Null(read.QuarantineReason); Assert.False(read.NewlyRecorded); Nonexecuting(read);
+            await using (var db = sql.NewContext())
+                await RejectedAsync(() => new SqlTargetCreationOperations(db, options)
+                    .BeginAttemptAsync(seed.Admin, registered.OperationId, registered.Revision, attempt, Ct));
+            Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+            Assert.Equal(before, await LifecycleAsync(sql));
+        }
+    }
+
+    [SqlServerFact]
+    public async Task Get_requires_enabled_valid_id_and_current_database_admin_before_disclosing_missing_operations()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        async Task AssertRejectedAsync(Func<Task<TargetCreationOperationReceipt>> action, int status, string code)
+        {
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(action);
+            Assert.Equal(status, error.StatusCode); Assert.Equal(code, error.Code);
+        }
+        await AssertRejectedAsync(() => GetAsync(sql, seed, registered.OperationId, options: new()), 409, "TargetCreationDisabled");
+        await AssertRejectedAsync(() => GetAsync(sql, seed, Guid.Empty), 400, "InvalidTargetCreation");
+        await AssertRejectedAsync(() => GetAsync(sql, seed, Guid.NewGuid()), 404, "TargetCreationNotFound");
+        foreach (var actor in new[] { seed.Owner, new Actor(seed.Owner.UserId, true), new Actor(seed.Admin.UserId, false) })
+        {
+            await AssertRejectedAsync(() => GetAsync(sql, seed, registered.OperationId, actor), 403, "TargetCreationForbidden");
+            await AssertRejectedAsync(() => GetAsync(sql, seed, Guid.NewGuid(), actor), 403, "TargetCreationForbidden");
+        }
+        await using (var db = sql.NewContext())
+            await db.UserRoles.Where(r => r.UserId == seed.Admin.UserId).ExecuteDeleteAsync();
+        await AssertRejectedAsync(() => GetAsync(sql, seed, registered.OperationId), 403, "TargetCreationForbidden");
+        await AssertRejectedAsync(() => GetAsync(sql, seed, Guid.NewGuid()), 403, "TargetCreationForbidden");
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Get_rejects_malformed_retained_names_and_ids_without_audit_or_mutation()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        var corruptions = new (FormattableString Corrupt, FormattableString Restore)[]
+        {
+            ($"UPDATE [RestoreIntents] SET [SqlDbName] = N'invalid_retained_name' WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}",
+             $"UPDATE [RestoreIntents] SET [SqlDbName] = {seed.Restore.SqlDbName} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}"),
+            ($"UPDATE [RestoreIntents] SET [InfobaseName] = N'invalid_retained_name' WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}",
+             $"UPDATE [RestoreIntents] SET [InfobaseName] = {seed.Restore.InfobaseName} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}"),
+            ($"UPDATE [RestoreIntents] SET [TargetIncarnation] = {Guid.Empty} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}",
+             $"UPDATE [RestoreIntents] SET [TargetIncarnation] = {seed.Restore.TargetIncarnation} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}"),
+            ($"UPDATE [RestoreIntents] SET [CanonicalClusterId] = {Guid.Empty} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}",
+             $"UPDATE [RestoreIntents] SET [CanonicalClusterId] = {seed.Restore.CanonicalClusterId} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}"),
+            ($"UPDATE [RestoreIntents] SET [CanonicalSqlServerId] = {Guid.Empty} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}",
+             $"UPDATE [RestoreIntents] SET [CanonicalSqlServerId] = {seed.Restore.CanonicalSqlServerId} WHERE [RestoreIntentId] = {seed.Restore.RestoreIntentId}")
+        };
+        foreach (var corruption in corruptions)
+        {
+            await using (var db = sql.NewContext())
+                Assert.Equal(1, await db.Database.ExecuteSqlInterpolatedAsync(corruption.Corrupt, Ct));
+            var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => GetAsync(sql, seed, registered.OperationId));
+            Assert.Equal(409, error.StatusCode); Assert.Equal("TargetCreationMismatch", error.Code);
+            Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+            Assert.Equal(before, await LifecycleAsync(sql));
+            await using (var db = sql.NewContext())
+                Assert.Equal(1, await db.Database.ExecuteSqlInterpolatedAsync(corruption.Restore, Ct));
+        }
     }
 
     [SqlServerFact]

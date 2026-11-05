@@ -29,4 +29,12 @@ public interface ITargetCreationOperations
     Task<TargetCreationOperationReceipt> BeginAttemptAsync(Actor actor, Guid operationId, long expectedRevision, Guid attemptId, CancellationToken ct);
     Task<TargetCreationOperationReceipt> QuarantineAsync(Actor actor, Guid operationId, long expectedRevision, TargetCreationQuarantineReason reason, CancellationToken ct);
 }
-// end
+/// <summary>
+/// Current-administrator metadata lookup, including after admission revocation. No target read,
+/// execution grant or success assertion. NewlyRecorded is always false; absence of a prior HTTP
+/// response never implies rollback. No public route or worker delivery is provided.
+/// </summary>
+public interface ITargetCreationOperationReads
+{
+    Task<TargetCreationOperationReceipt> GetAsync(Actor actor, Guid operationId, CancellationToken ct);
+}
