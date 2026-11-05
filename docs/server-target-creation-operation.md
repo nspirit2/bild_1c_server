@@ -14,7 +14,7 @@ Registered(revision1) → AttemptRecorded(revision2) → ReconciliationRequired,
 
 Наблюдение BothObservedAbsent остаётся историей, не fresh permission. Для записи barrier historical receipt не должен молча становиться доказательством freshness или owned empty target. ObserveArchiveStage автоматически не становится ProvisionArchive. Общую проверку retained bindings нужно выделять явно с regression coverage.
 
-Перед реализацией записывающего SQL service требуется зафиксировать operator policy: кто инициирует/записывает попытку (admin-only internal service или assigned-agent), возможность safety quarantine после отзыва project/pool authorization и какие постоянные holds потребует реальное применение. Inert domain не принимает это решение за владельца.
+После domain review владелец согласовал следующий [SQL срез](server-creation-sql-ledger.md): admin-only внутренний service, current authorization/bindings до register/begin/replay, conservative quarantine текущим admin после отключения project/pool без изменения pins. Нет публичного endpoint/worker, reset/release/reassignment и live target changes. Эта политика не задаёт срок executable lease и не разрешает side effects.
 
 ## Позже: executable authority
 

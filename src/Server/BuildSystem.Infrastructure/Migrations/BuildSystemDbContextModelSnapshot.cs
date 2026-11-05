@@ -296,6 +296,60 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.CreationOperationRecord", b =>
+                {
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long?>("AttemptExpectedRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("AttemptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Executable")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("QuarantineReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("RestoreIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("ScheduledJobsMustRemainBlocked")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("OperationId");
+
+                    b.HasIndex("AttemptId")
+                        .IsUnique()
+                        .HasFilter("[AttemptId] IS NOT NULL");
+
+                    b.HasIndex("RestoreIntentId")
+                        .IsUnique();
+
+                    b.ToTable("TargetCreationOperations", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetCreationOperations_Ids", "[OperationId] <> '00000000-0000-0000-0000-000000000000' AND [RestoreIntentId] <> '00000000-0000-0000-0000-000000000000' AND ([AttemptId] IS NULL OR [AttemptId] <> '00000000-0000-0000-0000-000000000000')");
+
+                            t.HasCheckConstraint("CK_TargetCreationOperations_JobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
+
+                            t.HasCheckConstraint("CK_TargetCreationOperations_NonExecutable", "[Executable] = 0");
+
+                            t.HasCheckConstraint("CK_TargetCreationOperations_RevisionState", "([State] = 'Registered' AND [Revision] = 1 AND [AttemptId] IS NULL AND [AttemptExpectedRevision] IS NULL AND [QuarantineReason] IS NULL) OR ([State] = 'AttemptRecorded' AND [Revision] = 2 AND [AttemptId] IS NOT NULL AND [AttemptExpectedRevision] IS NOT NULL AND [AttemptExpectedRevision] = 1 AND [QuarantineReason] IS NULL) OR ([State] = 'ReconciliationRequired' AND [Revision] IN (2, 3) AND [QuarantineReason] IS NOT NULL AND [QuarantineReason] IN ('OutcomeUnknown', 'Cancelled', 'AuthorityRejected', 'TargetConflict') AND (([Revision] = 2 AND [AttemptId] IS NULL AND [AttemptExpectedRevision] IS NULL) OR ([Revision] = 3 AND [AttemptId] IS NOT NULL AND [AttemptExpectedRevision] IS NOT NULL AND [AttemptExpectedRevision] = 1)))");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.DiskArchive", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1374,6 +1428,15 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.ArchiveRoot", null)
                         .WithMany()
                         .HasForeignKey("RootId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.CreationOperationRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.RestoreIntentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RestoreIntentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -58,6 +58,28 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
             throw new InvalidOperationException("Target observation receipts are immutable.");
         if (ChangeTracker.Entries<TargetObservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Target observation assignments are immutable.");
+        if (ChangeTracker.Entries<CreationOperationRecord>().Any(x => x.State == EntityState.Deleted ||
+            x.State == EntityState.Modified && (x.Property(nameof(CreationOperationRecord.OperationId)).IsModified ||
+                x.Property(nameof(CreationOperationRecord.RestoreIntentId)).IsModified ||
+                x.Property(nameof(CreationOperationRecord.Executable)).IsModified ||
+                x.Property(nameof(CreationOperationRecord.ScheduledJobsMustRemainBlocked)).IsModified)))
+            throw new InvalidOperationException("Creation operation anchors and safety flags are immutable.");
+        foreach (var entry in ChangeTracker.Entries<CreationOperationRecord>().Where(x => x.State == EntityState.Modified))
+        {
+            var original = (CreationOperationRecord)entry.OriginalValues.ToObject();
+            var current = entry.Entity;
+            var fromRegistered = original.State == BuildSystem.Domain.TargetCreationOperationState.Registered && original.Revision == 1 &&
+                original.AttemptId is null && original.AttemptExpectedRevision is null && original.QuarantineReason is null;
+            var fromAttempt = original.State == BuildSystem.Domain.TargetCreationOperationState.AttemptRecorded && original.Revision == 2 &&
+                original.AttemptId is not null && original.AttemptId != Guid.Empty && original.AttemptExpectedRevision == 1 && original.QuarantineReason is null;
+            var toAttempt = fromRegistered && current.State == BuildSystem.Domain.TargetCreationOperationState.AttemptRecorded &&
+                current.AttemptId is not null && current.AttemptId != Guid.Empty && current.AttemptExpectedRevision == 1 && current.QuarantineReason is null;
+            var toQuarantine = (fromRegistered || fromAttempt) && current.State == BuildSystem.Domain.TargetCreationOperationState.ReconciliationRequired &&
+                current.AttemptId == original.AttemptId && current.AttemptExpectedRevision == original.AttemptExpectedRevision &&
+                current.QuarantineReason is not null && Enum.IsDefined(current.QuarantineReason.Value);
+            if (current.Revision != original.Revision + 1 || !(toAttempt || toQuarantine))
+                throw new InvalidOperationException("Creation ledger transition is not permitted.");
+        }
         if (ChangeTracker.Entries<RestoreIntentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Restore intents and retained holds are immutable.");
         if (ChangeTracker.Entries<StagingAllocationReleaseRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
@@ -87,6 +109,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureArtifactModel(b);
         ConfigureStageRetirementModel(b);
         ConfigureRestoreIntentModel(b);
+        ConfigureCreationOperationModel(b);
         ConfigureTargetObservationModel(b);
         ConfigureTargetObservationReceiptModel(b);
         ConfigureStageCleanupModel(b);
