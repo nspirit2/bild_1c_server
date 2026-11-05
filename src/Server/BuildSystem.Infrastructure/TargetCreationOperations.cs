@@ -33,11 +33,12 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
             }
             var operation = new CreationOperationRecord { OperationId = Guid.NewGuid(), RestoreIntentId = intent.RestoreIntentId,
                 State = TargetCreationOperationState.Registered, Revision = 1, ScheduledJobsMustRemainBlocked = true, Executable = false };
+            var result = Receipt(operation, intent, true);
             db.TargetCreationOperations.Add(operation);
             await Audit(actor, "TargetCreationRegistered", operation.OperationId, ct);
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-            return Receipt(operation, intent, true);
+            return result;
         });
     }
 
@@ -56,7 +57,7 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
             var intent = await db.RestoreIntents.AsNoTracking().SingleOrDefaultAsync(x => x.RestoreIntentId == row.RestoreIntentId, ct)
                 ?? throw Reject(409, "TargetCreationMismatch");
             await Admission(intent, ct); // Even exact replay requires CURRENT authorization and retained stage binding.
-            Validate(row);
+            _ = Receipt(row, intent, false);
             var sameAttempt = row.AttemptId == attemptId && row.AttemptExpectedRevision == expectedRevision;
             if (!sameAttempt && await db.TargetCreationOperations.AnyAsync(x => x.AttemptId == attemptId && x.OperationId != operationId, ct))
                 throw Reject(409, "TargetCreationConflict");
@@ -71,8 +72,9 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
                 await Audit(actor, "TargetCreationAttemptRecorded", operationId, ct);
                 await db.SaveChangesAsync(ct);
             }
+            var result = Receipt(row, intent, !sameAttempt);
             await tx.CommitAsync(ct);
-            return Receipt(row, intent, !sameAttempt);
+            return result;
         });
     }
 
@@ -97,10 +99,11 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
             row.State = TargetCreationOperationState.ReconciliationRequired;
             row.QuarantineReason = reason;
             row.Revision++;
+            var result = Receipt(row, intent, true);
             await Audit(actor, "TargetCreationQuarantined", operationId, ct);
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-            return Receipt(row, intent, true);
+            return result;
         });
     }
 

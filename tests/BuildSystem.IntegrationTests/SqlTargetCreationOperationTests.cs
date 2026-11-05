@@ -346,6 +346,150 @@ public sealed class SqlTargetCreationOperationTests
     }
 
     [SqlServerFact]
+    public async Task Concurrent_registration_in_two_contexts_records_one_operation_and_one_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        await using var leftDb = sql.NewContext(); await using var rightDb = sql.NewContext();
+        var left = new SqlTargetCreationOperations(leftDb, seed.Options);
+        var right = new SqlTargetCreationOperations(rightDb, seed.Options);
+        var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<TargetCreationOperationReceipt> CompeteAsync(SqlTargetCreationOperations service)
+        {
+            await ready.Task;
+            return await service.RegisterAsync(seed.Admin, seed.Order.EnvironmentId, seed.Restore.RestoreIntentId, Ct);
+        }
+        var tasks = new[] { CompeteAsync(left), CompeteAsync(right) };
+        ready.SetResult(true); var results = await Task.WhenAll(tasks);
+        var recorded = Assert.Single(results, r => r.NewlyRecorded);
+        var replay = Assert.Single(results, r => !r.NewlyRecorded);
+        Assert.NotEqual(Guid.Empty, recorded.OperationId); Assert.Equal(Pins(recorded), Pins(replay));
+        Assert.Equal(seed.Restore.RestoreIntentId, recorded.RestoreIntentId);
+        foreach (var receipt in results)
+        {
+            Assert.Equal(TargetCreationOperationState.Registered, receipt.State); Assert.Equal(1L, receipt.Revision);
+            Assert.Null(receipt.AttemptId); Assert.Null(receipt.AttemptExpectedRevision); Assert.Null(receipt.QuarantineReason);
+            Nonexecuting(receipt);
+        }
+        await using var verify = sql.NewContext(); var row = Assert.Single(await verify.TargetCreationOperations.ToListAsync());
+        Assert.Equal(recorded.OperationId, row.OperationId); Assert.Equal(seed.Restore.RestoreIntentId, row.RestoreIntentId);
+        Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Quarantine_before_begin_rejects_every_begin_including_a_repeated_unrecorded_attempt()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var before = await LifecycleAsync(sql);
+        var terminal = await QuarantineAsync(sql, seed, registered.OperationId, registered.Revision);
+        Assert.Equal(TargetCreationOperationState.ReconciliationRequired, terminal.State);
+        Assert.Equal(registered.Revision + 1, terminal.Revision);
+        Assert.Null(terminal.AttemptId); Assert.Null(terminal.AttemptExpectedRevision); Nonexecuting(terminal);
+        var audits = await AuditsAsync(sql); var attempt = Guid.NewGuid();
+        await RejectedAsync(() => BeginAsync(sql, seed, terminal.OperationId, registered.Revision, attempt));
+        await RejectedAsync(() => BeginAsync(sql, seed, terminal.OperationId, registered.Revision, attempt));
+        await RejectedAsync(() => BeginAsync(sql, seed, terminal.OperationId, terminal.Revision, attempt));
+        await RejectedAsync(() => BeginAsync(sql, seed, terminal.OperationId, terminal.Revision, Guid.NewGuid()));
+        await using var verify = sql.NewContext(); var row = await verify.TargetCreationOperations.SingleAsync();
+        Assert.Equal(terminal.State, row.State); Assert.Equal(terminal.Revision, row.Revision);
+        Assert.Equal(terminal.QuarantineReason, row.QuarantineReason); Assert.Equal(terminal.RestoreIntentId, row.RestoreIntentId);
+        Assert.Null(row.AttemptId); Assert.Null(row.AttemptExpectedRevision);
+        Assert.False(row.Executable); Assert.True(row.ScheduledJobsMustRemainBlocked);
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task SaveChanges_rejects_attempt_reset_replacement_and_terminal_reopening()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var attempt = Guid.NewGuid();
+        var begun = await BeginAsync(sql, seed, registered.OperationId, registered.Revision, attempt);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        await using (var db = sql.NewContext())
+        {
+            var row = await db.TargetCreationOperations.SingleAsync();
+            row.State = TargetCreationOperationState.Registered; row.Revision = 1;
+            row.AttemptId = null; row.AttemptExpectedRevision = null;
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+            Assert.Equal("Creation ledger transition is not permitted.", error.Message);
+        }
+        await using (var db = sql.NewContext())
+        {
+            var row = await db.TargetCreationOperations.SingleAsync();
+            // Otherwise valid quarantine must not replace the already recorded attempt identity.
+            row.State = TargetCreationOperationState.ReconciliationRequired; row.Revision = begun.Revision + 1;
+            row.QuarantineReason = TargetCreationQuarantineReason.OutcomeUnknown; row.AttemptId = Guid.NewGuid();
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+            Assert.Equal("Creation ledger transition is not permitted.", error.Message);
+        }
+        var replay = await BeginAsync(sql, seed, registered.OperationId, registered.Revision, attempt);
+        Assert.False(replay.NewlyRecorded); Assert.Equal(begun.Revision, replay.Revision); Assert.Equal(attempt, replay.AttemptId);
+        Assert.Equal(audits, await AuditsAsync(sql));
+        var terminal = await QuarantineAsync(sql, seed, begun.OperationId, begun.Revision);
+        audits = await AuditsAsync(sql);
+        await using (var db = sql.NewContext())
+        {
+            var row = await db.TargetCreationOperations.SingleAsync();
+            row.State = TargetCreationOperationState.AttemptRecorded; row.Revision = begun.Revision; row.QuarantineReason = null;
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+            Assert.Equal("Creation ledger transition is not permitted.", error.Message);
+        }
+        await using var verify = sql.NewContext(); var retained = await verify.TargetCreationOperations.SingleAsync();
+        Assert.Equal(terminal.State, retained.State); Assert.Equal(terminal.Revision, retained.Revision);
+        Assert.Equal(attempt, retained.AttemptId); Assert.Equal(terminal.AttemptExpectedRevision, retained.AttemptExpectedRevision);
+        Assert.Equal(terminal.QuarantineReason, retained.QuarantineReason);
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task SaveChanges_rejects_each_hard_safety_flag_change_even_during_a_valid_transition()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        foreach (var executable in new[] { true, false })
+        {
+            await using var db = sql.NewContext(); var row = await db.TargetCreationOperations.SingleAsync();
+            row.State = TargetCreationOperationState.AttemptRecorded; row.Revision = registered.Revision + 1;
+            row.AttemptId = Guid.NewGuid(); row.AttemptExpectedRevision = registered.Revision;
+            if (executable) row.Executable = true;
+            else row.ScheduledJobsMustRemainBlocked = false;
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+            Assert.Equal("Creation operation anchors and safety flags are immutable.", error.Message);
+        }
+        var replay = await RegisterAsync(sql, seed);
+        Assert.Equal(registered.State, replay.State); Assert.Equal(registered.Revision, replay.Revision);
+        Assert.Null(replay.AttemptId); Assert.Null(replay.AttemptExpectedRevision); Nonexecuting(replay);
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Sql_constraints_reject_hard_flag_changes_and_malformed_attempt_shapes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        var attempt = Guid.NewGuid();
+        var mutations = new (FormattableString Sql, string Constraint)[]
+        {
+            ($"UPDATE [TargetCreationOperations] SET [Executable] = 1 WHERE [OperationId] = {registered.OperationId}", "CK_TargetCreationOperations_NonExecutable"),
+            ($"UPDATE [TargetCreationOperations] SET [ScheduledJobsMustRemainBlocked] = 0 WHERE [OperationId] = {registered.OperationId}", "CK_TargetCreationOperations_JobsBlocked"),
+            ($"UPDATE [TargetCreationOperations] SET [State] = N'AttemptRecorded', [Revision] = 2, [AttemptId] = {Guid.Empty}, [AttemptExpectedRevision] = 1 WHERE [OperationId] = {registered.OperationId}", "CK_TargetCreationOperations_Ids"),
+            ($"UPDATE [TargetCreationOperations] SET [AttemptId] = {attempt}, [AttemptExpectedRevision] = 1 WHERE [OperationId] = {registered.OperationId}", "CK_TargetCreationOperations_RevisionState"),
+            ($"UPDATE [TargetCreationOperations] SET [State] = N'AttemptRecorded', [Revision] = 2, [AttemptId] = {attempt}, [AttemptExpectedRevision] = NULL WHERE [OperationId] = {registered.OperationId}", "CK_TargetCreationOperations_RevisionState")
+        };
+        foreach (var mutation in mutations)
+        {
+            await using var db = sql.NewContext();
+            var error = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync(mutation.Sql, Ct));
+            Assert.Equal(547, error.Number); Assert.Contains(mutation.Constraint, error.Message);
+        }
+        var replay = await RegisterAsync(sql, seed);
+        Assert.Equal(Pins(registered), Pins(replay)); Assert.Equal(registered.State, replay.State);
+        Assert.Equal(registered.Revision, replay.Revision); Assert.Null(replay.AttemptId);
+        Assert.Null(replay.AttemptExpectedRevision); Assert.Null(replay.QuarantineReason); Nonexecuting(replay);
+        Assert.Equal(audits, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
     public async Task SaveChanges_rejects_deletion_and_anchor_rewrites_of_the_persisted_operation()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
