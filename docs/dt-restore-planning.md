@@ -18,6 +18,10 @@ Scope содержит operation/fence/incarnation/cluster/IB/service epoch/obse
 
 Правило владельца: scheduled jobs deny включать до восстановления, проверять после него и после рестарта; не снимать без явного разрешения. Security-profile assignment не является обязательным этапом. Замороженный review-v1 не меняется: `PrepareIsolation`/preparation profile — общая подготовка приложения, не обязательное назначение security profile. Ручной успешный smoke не превращает stage-only authority в разрешение автоматического restore.
 
+## Полный набор checkpoint correlation
+
+Pure [sequence verifier](scheduled-jobs-readback-sequence.md) дополнительно проверяет три distinct readback IDs, точные BeforeRestore/AfterRestore/AfterServiceRestart checkpoints и смену epoch после restart. Это consistency проверка caller-supplied scopes, не actual chronology/freshness/restart proof и не исполнение. Реальные checkpoint orchestration и consumption remain future coordinator work.
+
 ## Read-only RAC adapter
 
 `ScheduledJobsObserver` в Tools явно вызывается с operator-owned tool ID/endpoint/workspace/timeout (до60s) и отдельными credentials. Выполняет только фиксированную команду `rac infobase info` с точными cluster/IB IDs. Arbitrary argv, update/create/drop/restore/restart и DI/worker/CLI registration отсутствуют. Возвращает тот же ограниченный readback, не Ready/grant.
