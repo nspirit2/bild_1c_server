@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using BuildSystem.Application;
 using BuildSystem.Contracts;
@@ -6,6 +7,7 @@ using BuildSystem.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace BuildSystem.IntegrationTests;
@@ -127,6 +129,147 @@ public sealed class SqlTargetCreationOperationTests
     private static void Nonexecuting(TargetCreationOperationReceipt receipt)
     {
         Assert.False(receipt.Executable); Assert.True(receipt.ScheduledJobsMustRemainBlocked);
+    }
+
+    // This simulates a lost commit acknowledgement, NOT a real network failure. EF invokes this
+    // callback only after the provider's actual CommitAsync has returned; no commit is suppressed.
+    // Each instance is attached to one ledger-only context, created after all setup transactions.
+    private sealed class PostCommitTimeout : DbTransactionInterceptor
+    {
+        private int armed;
+        public int PhysicalCommitReturnedCount { get; private set; }
+        public int FaultCount { get; private set; }
+
+        public void Arm() => armed = 1;
+
+        public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            PhysicalCommitReturnedCount++;
+            if (Interlocked.Exchange(ref armed, 0) == 1)
+            {
+                FaultCount++;
+                throw new TimeoutException("Test-only simulated post-commit acknowledgement loss.");
+            }
+            return Task.CompletedTask;
+        }
+    }
+
+    private static BuildSystemDbContext FaultContext(SqlServerTestDatabase sql, PostCommitTimeout fault)
+        => new(new DbContextOptionsBuilder<BuildSystemDbContext>()
+            // SQL Server's native retry strategy recognizes TimeoutException; retain the fixture's
+            // retry count and transient lock code, but remove retry delay for deterministic tests.
+            .UseSqlServer(sql.ConnectionString, options => options.EnableRetryOnFailure(3, TimeSpan.Zero, new[] { 51001 }))
+            .AddInterceptors(fault).Options);
+
+    private static void AssertPostCommitFault(PostCommitTimeout fault)
+    {
+        Assert.Equal(1, fault.FaultCount);
+        // Quarantine's retry rejects the stale revision before committing a second transaction.
+        Assert.True(fault.PhysicalCommitReturnedCount >= 1);
+    }
+
+    [SqlServerFact]
+    public async Task Registration_post_commit_timeout_retries_to_the_durable_row_without_duplicate_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        var fault = new PostCommitTimeout();
+        TargetCreationOperationReceipt result;
+        await using (var db = FaultContext(sql, fault))
+        {
+            fault.Arm();
+            result = await new SqlTargetCreationOperations(db, seed.Options)
+                .RegisterAsync(seed.Admin, seed.Order.EnvironmentId, seed.Restore.RestoreIntentId, Ct);
+        }
+        AssertPostCommitFault(fault);
+        Assert.True(fault.PhysicalCommitReturnedCount >= 2); // Initial write plus retry's read-only replay commit.
+        Assert.False(result.NewlyRecorded); Assert.Equal(TargetCreationOperationState.Registered, result.State);
+        Assert.Equal(1L, result.Revision); Assert.Null(result.AttemptId);
+        Assert.Null(result.AttemptExpectedRevision); Assert.Null(result.QuarantineReason); Nonexecuting(result);
+        Assert.NotEqual(Guid.Empty, result.OperationId);
+        Assert.Equal(seed.Restore.RestoreIntentId, result.RestoreIntentId);
+        Assert.Equal(seed.Order.EnvironmentId, result.EnvironmentId); Assert.Equal(seed.Order.JobId, result.StageJobId);
+        Assert.Equal(seed.Grant.Plan.ReservationId, result.ReservationId); Assert.Equal(seed.Report.ArtifactId, result.ArtifactId);
+        Assert.Equal(seed.Credential.AgentId, result.AgentId); Assert.Equal(seed.Restore.TargetIncarnation, result.TargetIncarnationId);
+        Assert.Equal(seed.Restore.CanonicalClusterId, result.CanonicalClusterId);
+        Assert.Equal(seed.Restore.CanonicalSqlServerId, result.CanonicalSqlServerId);
+        Assert.Equal(seed.Restore.InfobaseName, result.InfobaseName); Assert.Equal(seed.Restore.SqlDbName, result.SqlDbName);
+        var replay = await RegisterAsync(sql, seed);
+        Assert.False(replay.NewlyRecorded); Assert.Equal(Pins(result), Pins(replay)); Nonexecuting(replay);
+        await using var verify = sql.NewContext();
+        var row = Assert.Single(await verify.TargetCreationOperations.AsNoTracking().ToListAsync());
+        Assert.Equal(result.OperationId, row.OperationId); Assert.Equal(result.RestoreIntentId, row.RestoreIntentId);
+        Assert.Equal(result.State, row.State); Assert.Equal(result.Revision, row.Revision);
+        Assert.Single(await verify.AuditEvents.Where(a => a.Action == "TargetCreationRegistered" && a.TargetId == result.OperationId).ToListAsync());
+        Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Begin_post_commit_timeout_retries_the_same_attempt_without_duplicate_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        var attempt = Guid.NewGuid(); var fault = new PostCommitTimeout();
+        TargetCreationOperationReceipt result;
+        await using (var db = FaultContext(sql, fault))
+        {
+            fault.Arm();
+            result = await new SqlTargetCreationOperations(db, seed.Options)
+                .BeginAttemptAsync(seed.Admin, registered.OperationId, 1, attempt, Ct);
+        }
+        AssertPostCommitFault(fault);
+        Assert.True(fault.PhysicalCommitReturnedCount >= 2); // Initial write plus retry's read-only replay commit.
+        Assert.False(result.NewlyRecorded); Assert.Equal(TargetCreationOperationState.AttemptRecorded, result.State);
+        Assert.Equal(2L, result.Revision); Assert.Equal(attempt, result.AttemptId);
+        Assert.Equal((long?)1, result.AttemptExpectedRevision); Assert.Null(result.QuarantineReason);
+        Assert.Equal(Pins(registered), Pins(result)); Nonexecuting(result);
+        var replay = await BeginAsync(sql, seed, registered.OperationId, 1, attempt);
+        Assert.False(replay.NewlyRecorded); Assert.Equal(Pins(result), Pins(replay));
+        Assert.Equal(result.State, replay.State); Assert.Equal(result.Revision, replay.Revision);
+        Assert.Equal(attempt, replay.AttemptId); Assert.Equal(result.AttemptExpectedRevision, replay.AttemptExpectedRevision);
+        Nonexecuting(replay);
+        await using var verify = sql.NewContext();
+        var row = Assert.Single(await verify.TargetCreationOperations.AsNoTracking().ToListAsync());
+        Assert.Equal(result.OperationId, row.OperationId); Assert.Equal(result.RestoreIntentId, row.RestoreIntentId);
+        Assert.Equal(result.State, row.State); Assert.Equal(2L, row.Revision);
+        Assert.Equal(attempt, row.AttemptId); Assert.Equal((long?)1, row.AttemptExpectedRevision);
+        Assert.Single(await verify.AuditEvents.Where(a => a.Action == "TargetCreationAttemptRecorded" && a.TargetId == result.OperationId).ToListAsync());
+        Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Quarantine_post_commit_timeout_retry_rejects_but_preserves_terminal_row_and_attempt_replay()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed); var attempt = Guid.NewGuid();
+        var begun = await BeginAsync(sql, seed, registered.OperationId, 1, attempt);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql); var fault = new PostCommitTimeout();
+        await using (var db = FaultContext(sql, fault))
+        {
+            fault.Arm();
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlTargetCreationOperations(db, seed.Options)
+                .QuarantineAsync(seed.Admin, registered.OperationId, 2, TargetCreationQuarantineReason.OutcomeUnknown, Ct));
+            Assert.Equal(409, error.StatusCode); Assert.Equal("RevisionConflict", error.Code);
+        }
+        AssertPostCommitFault(fault);
+        await using (var verify = sql.NewContext())
+        {
+            var row = Assert.Single(await verify.TargetCreationOperations.AsNoTracking().ToListAsync());
+            Assert.Equal(registered.OperationId, row.OperationId); Assert.Equal(registered.RestoreIntentId, row.RestoreIntentId);
+            Assert.Equal(TargetCreationOperationState.ReconciliationRequired, row.State); Assert.Equal(3L, row.Revision);
+            Assert.Equal(TargetCreationQuarantineReason.OutcomeUnknown, row.QuarantineReason);
+            Assert.Equal(attempt, row.AttemptId); Assert.Equal((long?)1, row.AttemptExpectedRevision);
+            Assert.False(row.Executable); Assert.True(row.ScheduledJobsMustRemainBlocked);
+            Assert.Single(await verify.AuditEvents.Where(a => a.Action == "TargetCreationQuarantined" && a.TargetId == registered.OperationId).ToListAsync());
+        }
+        var replay = await BeginAsync(sql, seed, registered.OperationId, 1, attempt);
+        Assert.False(replay.NewlyRecorded); Assert.Equal(TargetCreationOperationState.ReconciliationRequired, replay.State);
+        Assert.Equal(3L, replay.Revision); Assert.Equal(TargetCreationQuarantineReason.OutcomeUnknown, replay.QuarantineReason);
+        Assert.Equal(attempt, replay.AttemptId); Assert.Equal(begun.AttemptExpectedRevision, replay.AttemptExpectedRevision);
+        Assert.Equal(Pins(registered), Pins(replay)); Nonexecuting(replay);
+        await RejectedAsync(() => BeginAsync(sql, seed, registered.OperationId, 3, Guid.NewGuid()));
+        Assert.Equal(audits + 1, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
     }
 
     [SqlServerFact]
