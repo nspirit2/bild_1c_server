@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values', 'audit', 'audit-message', 'audit-events', 'audit-truncated'].map(id => [id, document.getElementById(id)]));
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
   const pins = [
@@ -10,10 +10,17 @@
     ['agentId', 'Агент UUID'], ['targetIncarnationId', 'Инкарнация цели UUID'],
     ['canonicalClusterId', 'Канонический кластер UUID'], ['canonicalSqlServerId', 'Канонический SQL-сервер UUID']
   ];
+  const auditActions = ['TargetCreationRegistered', 'TargetCreationAttemptRecorded', 'TargetCreationQuarantined'];
   let generation = 0, controller = null;
+  function clearAudit() {
+    ui.audit.hidden = true;
+    ui['audit-events'].replaceChildren();
+    ui['audit-message'].textContent = '';
+    ui['audit-truncated'].hidden = true;
+  }
   function clear() {
     generation++; controller?.abort(); controller = null;
-    ui.result.hidden = true; ui.values.replaceChildren();
+    ui.result.hidden = true; ui.values.replaceChildren(); clearAudit();
     ui['lookup-form'].setAttribute('aria-busy', 'false');
     ui['session-link'].hidden = true;
   }
@@ -42,6 +49,50 @@
     }
     ui.values.replaceChildren(fragment); ui.result.hidden = false;
   }
+  function validateAudit(value, id) {
+    return value && hasGuid(value.operationId) && value.operationId.toLowerCase() === id
+      && value.executable === false && value.scheduledJobsMustRemainBlocked === true
+      && typeof value.truncated === 'boolean' && Array.isArray(value.events) && value.events.length <= 50
+      && value.events.every(event => event && hasGuid(event.id) && hasGuid(event.actorId)
+        && auditActions.includes(event.action) && typeof event.createdAt === 'string'
+        && Number.isFinite(Date.parse(event.createdAt)));
+  }
+  function renderAudit(value) {
+    const fragment = document.createDocumentFragment();
+    // Preserve the server order, including ties; never infer a chronology from UUIDs.
+    for (const event of value.events) {
+      const item = document.createElement('li');
+      item.textContent = event.createdAt + ' · ' + event.action + ' · Actor UUID: ' + event.actorId + ' · Event UUID: ' + event.id;
+      fragment.append(item);
+    }
+    ui['audit-events'].replaceChildren(fragment);
+    ui['audit-message'].textContent = value.events.length ? 'Показаны сохранённые исторические события.' : 'Исторические события аудита отсутствуют.';
+    ui['audit-truncated'].hidden = !value.truncated;
+    ui.audit.hidden = false;
+  }
+  async function loadAudit(id, version, request) {
+    ui.audit.hidden = false; ui['audit-message'].textContent = 'Загрузка истории аудита…';
+    try {
+      const response = await fetch('/api/admin/target-creation-operations/' + id + '/audit', {
+        method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: request.signal
+      });
+      if (version !== generation) return;
+      if (response.status === 401 || response.status === 403) {
+        clear(); ui.message.textContent = errors[response.status];
+        ui['session-link'].hidden = response.status !== 401;
+        return;
+      }
+      if (!response.ok) throw new Error('Audit unavailable');
+      const value = await response.json();
+      if (version !== generation) return;
+      if (!validateAudit(value, id)) throw new Error('Invalid audit response');
+      renderAudit(value);
+    } catch (error) {
+      if (version !== generation) return;
+      clearAudit(); ui.audit.hidden = false;
+      ui['audit-message'].textContent = 'История аудита недоступна. Повторите поиск; метаданные записи показаны отдельно.';
+    }
+  }
   const errors = {
     400: 'Некорректный идентификатор операции.',
     401: 'Сеанс завершён. Войдите через существующую страницу Stage.',
@@ -69,6 +120,7 @@
       if (version !== generation) return;
       if (!validate(value, id)) throw new Error('Invalid diagnostic response');
       render(value); ui.message.textContent = 'Показаны только метаданные журнала. Выполнение не разрешено.';
+      await loadAudit(id, version, request);
     } catch (error) {
       if (version !== generation) return;
       ui.result.hidden = true; ui.values.replaceChildren();

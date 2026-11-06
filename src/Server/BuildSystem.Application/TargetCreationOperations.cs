@@ -22,6 +22,17 @@ public sealed record TargetCreationOperationReceipt(Guid OperationId, Guid Resto
     public override string ToString() => "TargetCreationOperationReceipt [NONEXECUTABLE]";
 }
 
+/// <summary>Allowlisted audit metadata only; never audit payloads or actor profile information.</summary>
+public sealed record TargetCreationOperationAuditEntry(Guid Id, Guid ActorId, string Action, DateTimeOffset CreatedAt);
+
+/// <summary>A bounded metadata timeline, never execution or release authorization.</summary>
+public sealed record TargetCreationOperationAuditView(Guid OperationId,
+    IReadOnlyList<TargetCreationOperationAuditEntry> Events, bool Truncated)
+{
+    public bool Executable => false;
+    public bool ScheduledJobsMustRemainBlocked => true;
+}
+
 /// <summary>Admin-only internal one-attempt barrier. No API, worker delivery or physical side effects.</summary>
 public interface ITargetCreationOperations
 {
@@ -32,9 +43,11 @@ public interface ITargetCreationOperations
 /// <summary>
 /// Current-administrator metadata lookup, including after admission revocation. No target read,
 /// execution grant or success assertion. NewlyRecorded is always false; absence of a prior HTTP
-/// response never implies rollback. No public route or worker delivery is provided.
+/// response never implies rollback. External adapters must preserve administrator authorization;
+/// no worker delivery or execution authorization is provided.
 /// </summary>
 public interface ITargetCreationOperationReads
 {
     Task<TargetCreationOperationReceipt> GetAsync(Actor actor, Guid operationId, CancellationToken ct);
+    Task<TargetCreationOperationAuditView> GetAuditAsync(Actor actor, Guid operationId, CancellationToken ct);
 }

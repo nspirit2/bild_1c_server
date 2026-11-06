@@ -91,6 +91,13 @@ public sealed class SqlTargetCreationOperationTests
         ITargetCreationOperationReads reads = new SqlTargetCreationOperations(db, options ?? seed.Options);
         return await reads.GetAsync(actor ?? seed.Admin, operation, Ct);
     }
+    private static async Task<TargetCreationOperationAuditView> AuditTimelineAsync(SqlServerTestDatabase sql, Seed seed,
+        Guid operation, Actor? actor = null, TargetCreationOperationOptions? options = null)
+    {
+        await using var db = sql.NewContext();
+        ITargetCreationOperationReads reads = new SqlTargetCreationOperations(db, options ?? seed.Options);
+        return await reads.GetAuditAsync(actor ?? seed.Admin, operation, Ct);
+    }
     private static async Task<TargetCreationOperationReceipt> BeginAsync(SqlServerTestDatabase sql, Seed seed,
         Guid operation, long revision, Guid attempt, Actor? actor = null)
     {
@@ -183,6 +190,109 @@ public sealed class SqlTargetCreationOperationTests
         Assert.Equal(1, fault.FaultCount);
         // Quarantine's retry rejects the stale revision before committing a second transaction.
         Assert.True(fault.PhysicalCommitReturnedCount >= 1);
+    }
+
+    [SqlServerFact]
+    public async Task Audit_returns_real_three_event_metadata_timeline_after_admission_revocation_without_mutation()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        var begun = await BeginAsync(sql, seed, registered.OperationId, registered.Revision, Guid.NewGuid());
+        await QuarantineAsync(sql, seed, begun.OperationId, begun.Revision);
+        await using (var db = sql.NewContext())
+            await db.EnvironmentPools.Where(p => p.Id == seed.Pool).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, false));
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        var view = await AuditTimelineAsync(sql, seed, registered.OperationId);
+        Assert.Equal(registered.OperationId, view.OperationId); Assert.False(view.Truncated);
+        Assert.False(view.Executable); Assert.True(view.ScheduledJobsMustRemainBlocked);
+        Assert.Equal(new[] { "TargetCreationQuarantined", "TargetCreationAttemptRecorded", "TargetCreationRegistered" },
+            view.Events.Select(e => e.Action));
+        await using (var db = sql.NewContext())
+        {
+            var expected = await db.AuditEvents.AsNoTracking().Where(e => e.TargetId == registered.OperationId)
+                .OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id)
+                .Select(e => new TargetCreationOperationAuditEntry(e.Id, e.ActorId, e.Action, e.CreatedAt)).ToListAsync();
+            Assert.Equal(expected, view.Events);
+        }
+        Assert.All(view.Events, e => { Assert.NotEqual(Guid.Empty, e.Id); Assert.Equal(seed.Admin.UserId, e.ActorId); });
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(view));
+        Assert.Equal(new[] { "Action", "ActorId", "CreatedAt", "Id" },
+            json.RootElement.GetProperty("Events")[0].EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray());
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Audit_excludes_unrelated_targets_actions_alternate_case_and_trailing_spaces()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        await using (var db = sql.NewContext())
+        {
+            foreach (var action in new[] { "OtherAction", "targetcreationregistered", "TARGETCREATIONATTEMPTRECORDED",
+                "TargetCreationQuarantined ", "TargetCreationRegistered ", "TargetCreationAttemptRecorded " })
+                db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Admin.UserId,
+                    TargetId = registered.OperationId, Action = action, CreatedAt = DateTimeOffset.UtcNow.AddDays(1) });
+            for (var i = 0; i < 60; i++) // Exclusions must happen before Take(51), not after materialization.
+                db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Admin.UserId,
+                    TargetId = registered.OperationId, Action = "TargetCreationRegistered ", CreatedAt = DateTimeOffset.UtcNow.AddDays(1) });
+            db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Admin.UserId,
+                TargetId = Guid.NewGuid(), Action = "TargetCreationRegistered", CreatedAt = DateTimeOffset.UtcNow.AddDays(1) });
+            await db.SaveChangesAsync();
+        }
+        var view = await AuditTimelineAsync(sql, seed, registered.OperationId);
+        Assert.Equal("TargetCreationRegistered", Assert.Single(view.Events).Action); Assert.False(view.Truncated);
+    }
+
+    [SqlServerFact]
+    public async Task Audit_limits_to_fifty_and_uses_sql_guid_order_for_timestamp_ties_stably()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        var timestamp = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        await using (var db = sql.NewContext())
+        {
+            for (var i = 0; i < 55; i++)
+                db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Admin.UserId,
+                    TargetId = registered.OperationId, Action = "TargetCreationRegistered", CreatedAt = timestamp });
+            await db.SaveChangesAsync();
+        }
+        List<TargetCreationOperationAuditEntry> expected;
+        await using (var db = sql.NewContext())
+            expected = await db.AuditEvents.AsNoTracking().Where(e => e.TargetId == registered.OperationId)
+                .OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id).Take(50)
+                .Select(e => new TargetCreationOperationAuditEntry(e.Id, e.ActorId, e.Action, e.CreatedAt)).ToListAsync();
+        var view = await AuditTimelineAsync(sql, seed, registered.OperationId);
+        Assert.True(view.Truncated); Assert.Equal(50, view.Events.Count); Assert.Equal(expected, view.Events);
+        Assert.Equal(view.Events, (await AuditTimelineAsync(sql, seed, registered.OperationId)).Events);
+        Assert.All(view.Events, e => Assert.Equal(timestamp, e.CreatedAt));
+    }
+
+    [SqlServerFact]
+    public async Task Audit_requires_enabled_valid_id_and_current_database_admin_before_lookup()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var registered = await RegisterAsync(sql, seed);
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        async Task RejectAuditAsync(Guid id, int status, string code, Actor? actor = null, TargetCreationOperationOptions? options = null)
+        {
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => AuditTimelineAsync(sql, seed, id, actor, options));
+            Assert.Equal(status, error.StatusCode); Assert.Equal(code, error.Code);
+        }
+        await RejectAuditAsync(registered.OperationId, 409, "TargetCreationDisabled", options: new());
+        await RejectAuditAsync(Guid.Empty, 400, "InvalidTargetCreation");
+        await RejectAuditAsync(Guid.NewGuid(), 404, "TargetCreationNotFound");
+        foreach (var actor in new[] { seed.Owner, new Actor(seed.Owner.UserId, true), new Actor(seed.Admin.UserId, false) })
+        {
+            await RejectAuditAsync(registered.OperationId, 403, "TargetCreationForbidden", actor);
+            await RejectAuditAsync(Guid.NewGuid(), 403, "TargetCreationForbidden", actor);
+        }
+        await using (var db = sql.NewContext())
+            await db.UserRoles.Where(r => r.UserId == seed.Admin.UserId).ExecuteDeleteAsync();
+        await RejectAuditAsync(registered.OperationId, 403, "TargetCreationForbidden");
+        await RejectAuditAsync(Guid.NewGuid(), 403, "TargetCreationForbidden");
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        Assert.Equal(before, await LifecycleAsync(sql));
     }
 
     [SqlServerFact]

@@ -35,5 +35,27 @@ internal static class TargetCreationDiagnostics
                 receipt.NewlyRecorded, receipt.Executable, receipt.ScheduledJobsMustRemainBlocked
             });
         }).RequireAuthorization(policy => policy.RequireRole("Administrator"));
+
+        app.MapGet("/api/admin/target-creation-operations/{operationId}/audit", async (string operationId,
+            ClaimsPrincipal principal, ITargetCreationOperationReads reads, CancellationToken ct) =>
+        {
+            if (!Guid.TryParseExact(operationId, "D", out var id) || id == Guid.Empty ||
+                !string.Equals(operationId, id.ToString("D"), StringComparison.Ordinal))
+                return Results.BadRequest(new { code = "InvalidTargetCreation" });
+            if (!Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) || userId == Guid.Empty)
+                return Results.Json(new { code = "Forbidden" }, statusCode: StatusCodes.Status403Forbidden);
+            var actor = new Actor(userId, principal.IsInRole("Administrator"));
+            // The read service rechecks the current database administrator role.
+            var audit = await reads.GetAuditAsync(actor, id, ct);
+            return Results.Ok(new
+            {
+                audit.OperationId,
+                Events = audit.Events.Select(entry => new
+                {
+                    entry.Id, entry.ActorId, entry.Action, entry.CreatedAt
+                }),
+                audit.Truncated, audit.Executable, audit.ScheduledJobsMustRemainBlocked
+            });
+        }).RequireAuthorization(policy => policy.RequireRole("Administrator"));
     }
 }

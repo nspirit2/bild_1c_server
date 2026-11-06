@@ -14,16 +14,20 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   set innerHTML(_) { throw new Error('Unsafe HTML rendering'); }
 }
-function harness(fetch) {
-  const nodes = new Map(), events = {}, documentEvents = {};
+function harness(metadataFetch, auditFetch = async url => ok(audit({ operationId: url.split('/').at(-2) }))) {
+  const nodes = new Map(), events = {}, documentEvents = {}, requests = [];
+  const fetch = (url, options) => { requests.push({ url, options }); return (url.endsWith('/audit') ? auditFetch : metadataFetch)(url, options); };
   const document = { hidden: false, getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: () => new Element(), createDocumentFragment: () => new Element(), addEventListener(name, handler) { documentEvents[name] = handler; } };
   vm.runInNewContext(source, { document, fetch, AbortController, addEventListener(name, handler) { events[name] = handler; } });
   const submit = id => { nodes.get('operation-id').value = id; return nodes.get('lookup-form').listeners.submit({ preventDefault() {} }); };
-  return { nodes, events, document, documentEvents, submit };
+  return { nodes, events, document, documentEvents, submit, requests };
 }
 const id = '11111111-1111-1111-1111-111111111111';
 const second = '22222222-2222-2222-2222-222222222222';
 const receipt = overrides => ({ operationId: id, restoreIntentId: id, environmentId: id, stageJobId: id, reservationId: id, artifactId: id, agentId: id, targetIncarnationId: id, canonicalClusterId: id, canonicalSqlServerId: id, infobaseName: '<img src=x onerror=bad>', sqlDbName: 'canonical-db', state: 'AttemptRecorded', revision: 2, attemptId: second, attemptExpectedRevision: 1, quarantineReason: null, newlyRecorded: false, executable: false, scheduledJobsMustRemainBlocked: true, ...overrides });
+const auditEvent = overrides => ({ id: second, actorId: id, action: 'TargetCreationRegistered', createdAt: '2026-11-06T08:00:00Z', ...overrides });
+const audit = overrides => ({ operationId: id, events: [], truncated: false, executable: false, scheduledJobsMustRemainBlocked: true, ...overrides });
+const auditRendered = nodes => nodes.get('audit-events').children.flatMap(fragment => fragment.children.map(child => child.textContent));
 const ok = value => ({ ok: true, status: 200, json: async () => value });
 const denied = status => ({ ok: false, status });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -80,6 +84,101 @@ test('editing input and leaving tab discard data and prevent in-flight resurrect
     const request = h.submit(id); trigger(h); assert.equal(signal.aborted, true);
     pending.resolve(ok(receipt())); await request;
     assert.equal(h.nodes.get('result').hidden, true); assert.equal(rendered(h.nodes), '');
+  }
+});
+
+test('audit follows validated metadata with safe text rendering and unchanged server order', async () => {
+  const entries = [auditEvent({ action: 'TargetCreationQuarantined', createdAt: '2026-11-05T08:00:00Z' }), auditEvent({ id, action: 'TargetCreationAttemptRecorded' })];
+  const h = harness(async () => ok(receipt()), async () => ok(audit({ events: entries })));
+  await h.submit(id);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].url, '/api/admin/target-creation-operations/' + id + '/audit');
+  const options = h.requests[1].options;
+  assert.equal(options.method, 'GET'); assert.equal(options.cache, 'no-store');
+  assert.equal(options.credentials, 'same-origin'); assert.equal(options.redirect, 'error');
+  assert.equal(options.signal, h.requests[0].options.signal);
+  const text = auditRendered(h.nodes);
+  assert.match(text[0], /TargetCreationQuarantined/); assert.match(text[1], /TargetCreationAttemptRecorded/);
+  assert.match(text[0], new RegExp('Actor UUID: ' + id));
+  assert.equal(h.nodes.get('audit').hidden, false);
+  assert.equal(h.nodes.get('audit-truncated').hidden, true);
+  const invalid = harness(async () => ok(receipt({ executable: true })));
+  await invalid.submit(id); assert.equal(invalid.requests.length, 1);
+});
+
+test('audit empty state is explicit and bounded truncated history displays its hint', async () => {
+  let response = audit();
+  const h = harness(async () => ok(receipt()), async () => ok(response));
+  await h.submit(id);
+  assert.deepEqual(auditRendered(h.nodes), []);
+  assert.match(h.nodes.get('audit-message').textContent, /отсутствуют/);
+  response = audit({ events: Array.from({ length: 50 }, () => auditEvent()), truncated: true });
+  await h.submit(id);
+  assert.equal(auditRendered(h.nodes).length, 50);
+  assert.equal(h.nodes.get('audit-truncated').hidden, false);
+});
+
+test('audit authentication failures discard all data and only 401 offers session link', async () => {
+  for (const status of [401, 403]) {
+    let response = ok(audit({ events: [auditEvent()] }));
+    const h = harness(async () => ok(receipt()), async () => response);
+    await h.submit(id); assert.equal(auditRendered(h.nodes).length, 1);
+    response = denied(status); await h.submit(id);
+    assert.equal(h.nodes.get('result').hidden, true); assert.equal(rendered(h.nodes), '');
+    assert.equal(h.nodes.get('audit').hidden, true); assert.deepEqual(auditRendered(h.nodes), []);
+    assert.equal(h.nodes.get('session-link').hidden, status !== 401);
+    assert.match(h.nodes.get('message').textContent, status === 401 ? /Сеанс завершён/ : /Доступ запрещён/);
+  }
+});
+
+test('audit failures and malformed DTOs clear history without mislabelling successful metadata', async () => {
+  const bad = [denied(404), denied(500), new Error('network'), { ok: true, status: 200, json: async () => { throw new Error('json'); } },
+    ...[{ operationId: second }, { executable: true }, { scheduledJobsMustRemainBlocked: false }, { truncated: 'true' },
+      { events: Array.from({ length: 51 }, () => auditEvent()) }, { events: [auditEvent({ id: 'bad' })] },
+      { events: [auditEvent({ actorId: '<img src=x onerror=bad>' })] }, { events: [auditEvent({ action: '<script>bad</script>' })] },
+      { events: [auditEvent({ action: 'targetcreationregistered' })] }, { events: [auditEvent({ createdAt: 'invalid-date' })] }].map(value => ok(audit(value)))];
+  for (const failure of bad) {
+    let response = ok(audit({ events: [auditEvent()], truncated: true }));
+    const h = harness(async () => ok(receipt()), async () => { if (response instanceof Error) throw response; return response; });
+    await h.submit(id); assert.equal(auditRendered(h.nodes).length, 1);
+    response = failure; await h.submit(id);
+    assert.equal(h.nodes.get('result').hidden, false); assert.match(rendered(h.nodes), /AttemptRecorded/);
+    assert.deepEqual(auditRendered(h.nodes), []); assert.equal(h.nodes.get('audit-truncated').hidden, true);
+    assert.match(h.nodes.get('audit-message').textContent, /История аудита недоступна/);
+    assert.match(h.nodes.get('message').textContent, /Показаны только метаданные/);
+    assert.equal(h.nodes.get('session-link').hidden, true);
+  }
+});
+
+test('late audit responses including authentication errors cannot replace a new lookup', async () => {
+  for (const response of [ok(audit({ events: [auditEvent()] })), denied(401)]) {
+    const pending = deferred(), started = deferred();
+    const h = harness(async url => ok(receipt({ operationId: url.split('/').at(-1) })), async url => {
+      if (url.includes(id)) { started.resolve(); return pending.promise; }
+      return ok(audit({ operationId: second, events: [auditEvent({ action: 'TargetCreationQuarantined' })] }));
+    });
+    const first = h.submit(id); await started.promise;
+    await h.submit(second); assert.equal(h.requests[1].options.signal.aborted, true);
+    pending.resolve(response); await first;
+    assert.match(rendered(h.nodes), new RegExp(second));
+    assert.match(auditRendered(h.nodes)[0], /TargetCreationQuarantined/);
+    assert.equal(h.nodes.get('session-link').hidden, true);
+  }
+});
+
+test('editing, hiding and BFCache transitions clear both sections and invalidate pending audit bodies', async () => {
+  for (const trigger of [h => h.nodes.get('operation-id').listeners.input(), h => h.events.pagehide(), h => h.events.pageshow(), h => { h.document.hidden = true; h.documentEvents.visibilitychange(); }]) {
+    const body = deferred(), started = deferred(); let pending = false;
+    const h = harness(async () => ok(receipt()), async () => {
+      if (!pending) return ok(audit({ events: [auditEvent()] }));
+      return { ok: true, status: 200, json: () => { started.resolve(); return body.promise; } };
+    });
+    await h.submit(id); assert.equal(auditRendered(h.nodes).length, 1);
+    pending = true; const request = h.submit(id); await started.promise;
+    trigger(h); assert.equal(h.requests.at(-1).options.signal.aborted, true);
+    body.resolve(audit({ events: [auditEvent()] })); await request;
+    assert.equal(h.nodes.get('result').hidden, true); assert.equal(rendered(h.nodes), '');
+    assert.equal(h.nodes.get('audit').hidden, true); assert.deepEqual(auditRendered(h.nodes), []);
   }
 });
 

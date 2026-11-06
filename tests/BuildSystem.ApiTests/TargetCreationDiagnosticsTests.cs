@@ -49,6 +49,11 @@ public sealed class TargetCreationDiagnosticsTests
         public Actor? Actor;
         public Guid Id;
         public RequestRejectedException? Rejection;
+        public int AuditCalls;
+        public Actor? AuditActor;
+        public Guid AuditId;
+        public RequestRejectedException? AuditRejection;
+        public TargetCreationOperationAuditView Audit = new(Guid.NewGuid(), [], false);
         public TargetCreationOperationReceipt Receipt = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), "bs_test_pin", "bs_test_pin", TargetCreationOperationState.ReconciliationRequired,
@@ -58,6 +63,12 @@ public sealed class TargetCreationDiagnosticsTests
             Calls++; Actor = actor; Id = operationId;
             if (Rejection is not null) throw Rejection;
             return Task.FromResult(Receipt with { OperationId = operationId });
+        }
+        public Task<TargetCreationOperationAuditView> GetAuditAsync(Actor actor, Guid operationId, CancellationToken ct)
+        {
+            AuditCalls++; AuditActor = actor; AuditId = operationId;
+            if (AuditRejection is not null) throw AuditRejection;
+            return Task.FromResult(Audit with { OperationId = operationId });
         }
     }
 
@@ -212,6 +223,128 @@ public sealed class TargetCreationDiagnosticsTests
         var response = await client.PostAsJsonAsync(Route(Guid.NewGuid()), new { });
         Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode); NoStore(response);
         Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Theory]
+    [InlineData(null, HttpStatusCode.Unauthorized)]
+    [InlineData("Developer", HttpStatusCode.Forbidden)]
+    public async Task AuditRequiresAuthenticationAndExactAdministratorRole(string? role, HttpStatusCode status)
+    {
+        using var factory = new Factory(); using var client = Client(factory, role);
+        var response = await client.GetAsync($"{Route(Guid.NewGuid())}/audit");
+        Assert.Equal(status, response.StatusCode); NoStore(response);
+        Assert.Empty(await response.Content.ReadAsStringAsync());
+        Assert.Equal(0, factory.Reads.AuditCalls); Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Fact]
+    public async Task AuditBearerCredentialDoesNotAuthenticateCookieOnlyDiagnostics()
+    {
+        using var factory = new Factory(realCookie: true); using var client = Client(factory, null);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "valid-test-token");
+        var response = await client.GetAsync($"{Route(Guid.NewGuid())}/audit");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode); NoStore(response);
+        Assert.Empty(await response.Content.ReadAsStringAsync());
+        Assert.Equal(0, factory.Reads.AuditCalls); Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Fact]
+    public async Task AuditAcceptsOnlyCanonicalLowercaseNonemptyGuid()
+    {
+        using var factory = new Factory(); using var client = Client(factory);
+        string[] invalidIds = ["not-a-guid", "00000000-0000-0000-0000-000000000000",
+            "11111111111111111111111111111111", "{11111111-1111-1111-1111-111111111111}",
+            "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "%2011111111-1111-1111-1111-111111111111%20"];
+        foreach (var id in invalidIds)
+        {
+            var response = await client.GetAsync($"{Prefix}/{id}/audit");
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode); NoStore(response);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(new[] { "code" }, json.EnumerateObject().Select(p => p.Name));
+            Assert.Equal("InvalidTargetCreation", json.GetProperty("code").GetString());
+        }
+        Assert.Equal(0, factory.Reads.AuditCalls); Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Theory]
+    [InlineData(403, "Forbidden")]
+    [InlineData(404, "TargetCreationNotFound")]
+    [InlineData(409, "TargetCreationDisabled")]
+    public async Task AuditReadPortRejectionsReturnOnlySafeCodeIncludingCurrentAdminDenial(int status, string code)
+    {
+        using var factory = new Factory(); using var client = Client(factory);
+        factory.Reads.AuditRejection = new RequestRejectedException(status, code);
+        var response = await client.GetAsync($"{Route(Guid.NewGuid())}/audit");
+        Assert.Equal((HttpStatusCode)status, response.StatusCode); NoStore(response);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(new[] { "code" }, json.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(code, json.GetProperty("code").GetString());
+        Assert.Equal(1, factory.Reads.AuditCalls); Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Fact]
+    public async Task AuditForwardsActorAndIdAndReturnsOnlyExplicitSafeNonexecutingFieldsWithoutCsrf()
+    {
+        using var factory = new Factory(); using var client = Client(factory);
+        var id = Guid.NewGuid();
+        var entries = new[]
+        {
+            new TargetCreationOperationAuditEntry(Guid.NewGuid(), Guid.NewGuid(), "TargetCreationRegistered",
+                DateTimeOffset.Parse("2026-01-02T03:04:05+00:00")),
+            new TargetCreationOperationAuditEntry(Guid.NewGuid(), Guid.NewGuid(), "TargetCreationAttemptRecorded",
+                DateTimeOffset.Parse("2026-01-02T03:05:05+00:00"))
+        };
+        foreach (var truncated in new[] { false, true })
+        {
+            factory.Reads.Audit = new(id, truncated ? entries : [], truncated);
+            var response = await client.GetAsync($"{Route(id)}/audit");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode); NoStore(response);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(new[] { "events", "executable", "operationId", "scheduledJobsMustRemainBlocked", "truncated" },
+                json.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
+            Assert.Equal(id, json.GetProperty("operationId").GetGuid());
+            Assert.Equal(truncated, json.GetProperty("truncated").GetBoolean());
+            Assert.False(json.GetProperty("executable").GetBoolean());
+            Assert.True(json.GetProperty("scheduledJobsMustRemainBlocked").GetBoolean());
+            var events = json.GetProperty("events").EnumerateArray().ToArray();
+            Assert.Equal(factory.Reads.Audit.Events.Count, events.Length);
+            for (var index = 0; index < events.Length; index++)
+            {
+                var entry = events[index]; var expected = entries[index];
+                Assert.Equal(new[] { "action", "actorId", "createdAt", "id" },
+                    entry.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
+                Assert.Equal(expected.Id, entry.GetProperty("id").GetGuid());
+                Assert.Equal(expected.ActorId, entry.GetProperty("actorId").GetGuid());
+                Assert.Equal(expected.Action, entry.GetProperty("action").GetString());
+                Assert.Equal(expected.CreatedAt, entry.GetProperty("createdAt").GetDateTimeOffset());
+            }
+        }
+        Assert.Equal(2, factory.Reads.AuditCalls); Assert.Equal(id, factory.Reads.AuditId);
+        Assert.Equal(Guid.Parse(UserId), factory.Reads.AuditActor!.UserId);
+        Assert.True(factory.Reads.AuditActor.IsAdministrator);
+        Assert.Equal(0, factory.Reads.Calls);
+    }
+
+    [Fact]
+    public async Task AuditHostReadDefaultsOffWithoutOpeningSqlConnection()
+    {
+        using var factory = new Factory(replaceReads: false); using var client = Client(factory);
+        var response = await client.GetAsync($"{Route(Guid.NewGuid())}/audit");
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode); NoStore(response);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(new[] { "code" }, json.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("TargetCreationDisabled", json.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task AuditPostHasNoEndpointEvenWithValidCsrf()
+    {
+        using var factory = new Factory(); using var client = Client(factory);
+        var csrf = await client.GetFromJsonAsync<JsonElement>("/api/auth/csrf");
+        client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrf.GetProperty("token").GetString());
+        var response = await client.PostAsJsonAsync($"{Route(Guid.NewGuid())}/audit", new { });
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode); NoStore(response);
+        Assert.Equal(0, factory.Reads.AuditCalls); Assert.Equal(0, factory.Reads.Calls);
     }
 
     [Theory]

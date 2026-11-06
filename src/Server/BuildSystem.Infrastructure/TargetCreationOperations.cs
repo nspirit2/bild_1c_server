@@ -32,6 +32,37 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
         });
     }
 
+    public Task<TargetCreationOperationAuditView> GetAuditAsync(Actor actor, Guid operationId, CancellationToken ct)
+    {
+        if (!options.Enabled) throw Reject(409, "TargetCreationDisabled");
+        if (operationId == Guid.Empty) throw Reject(400, "InvalidTargetCreation");
+        return db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            db.ChangeTracker.Clear();
+            await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            await Lock("BuildSystem:agent-control", ct);
+            await Admin(actor, ct); // Authorize before revealing even the existence of an operation.
+            var row = await db.TargetCreationOperations.AsNoTracking().SingleOrDefaultAsync(x => x.OperationId == operationId, ct)
+                ?? throw Reject(404, "TargetCreationNotFound");
+            var intent = await db.RestoreIntents.AsNoTracking().SingleOrDefaultAsync(x => x.RestoreIntentId == row.RestoreIntentId, ct)
+                ?? throw Reject(409, "TargetCreationMismatch");
+            _ = Receipt(row, intent, false); // Structural validation only, never current admission.
+            // Binary collation excludes alternate case; byte length excludes SQL's trailing-space padding.
+            // Bound the server-side query before materialization; never fetch audit payloads or profiles.
+            var events = await db.AuditEvents.AsNoTracking()
+                .Where(x => x.TargetId == operationId &&
+                    (EF.Functions.Collate(x.Action, "Latin1_General_100_BIN2") == "TargetCreationRegistered" && EF.Functions.DataLength(x.Action) == 48 ||
+                     EF.Functions.Collate(x.Action, "Latin1_General_100_BIN2") == "TargetCreationAttemptRecorded" && EF.Functions.DataLength(x.Action) == 58 ||
+                     EF.Functions.Collate(x.Action, "Latin1_General_100_BIN2") == "TargetCreationQuarantined" && EF.Functions.DataLength(x.Action) == 50))
+                .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+                .Select(x => new TargetCreationOperationAuditEntry(x.Id, x.ActorId, x.Action, x.CreatedAt))
+                .Take(51).ToListAsync(ct);
+            var result = new TargetCreationOperationAuditView(operationId, events.Take(50).ToArray(), events.Count > 50);
+            await tx.CommitAsync(ct);
+            return result;
+        });
+    }
+
     public Task<TargetCreationOperationReceipt> RegisterAsync(Actor actor, Guid environmentId, Guid expectedRestoreIntentId, CancellationToken ct)
     {
         if (!options.Enabled) throw Reject(409, "TargetCreationDisabled");

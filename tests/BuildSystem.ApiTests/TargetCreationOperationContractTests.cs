@@ -70,7 +70,8 @@ public sealed class TargetCreationOperationContractTests
         Assert.Same(scope.ServiceProvider.GetRequiredService<ITargetCreationOperations>(),
             scope.ServiceProvider.GetRequiredService<ITargetCreationOperationReads>());
         Assert.False(scope.ServiceProvider.GetRequiredService<TargetCreationOperationOptions>().Enabled);
-        Assert.Equal("GetAsync", Assert.Single(typeof(ITargetCreationOperationReads).GetMethods()).Name);
+        Assert.Equal(new[] { "GetAsync", "GetAuditAsync" },
+            typeof(ITargetCreationOperationReads).GetMethods().Select(m => m.Name).Order().ToArray());
         Assert.DoesNotContain(typeof(ITargetCreationOperationReads).GetMethods(), m =>
             m.Name.Contains("Reset") || m.Name.Contains("Release") || m.Name.Contains("Execute"));
     }

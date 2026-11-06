@@ -15,6 +15,10 @@ dl { display: grid; grid-template-columns: minmax(12rem, 1fr) 2fr; gap: .4rem 1r
 dt, dd { padding: .5rem; margin: 0; overflow-wrap: anywhere; }
 dt { color: #b7c7df; }
 dd { background: #202b3b; }
+#audit { border-top: 1px solid #9bb3d5; margin-top: 2rem; padding-top: .75rem; }
+#audit-events { padding-left: 1.5rem; }
+#audit-events li { background: #202b3b; margin: .5rem 0; padding: .75rem; overflow-wrap: anywhere; }
+#audit-truncated { color: #f5ce87; }
 [hidden] { display: none !important; }
 @media (max-width: 40rem) { dl { grid-template-columns: 1fr; } dd { margin-bottom: .7rem; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
