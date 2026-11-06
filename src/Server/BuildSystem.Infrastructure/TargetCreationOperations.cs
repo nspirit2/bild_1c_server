@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BuildSystem.Infrastructure;
 
 /// <summary>Admin-only SQL one-attempt ledger. Neither this service nor a receipt can execute creation.</summary>
-public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetCreationOperationOptions options) : ITargetCreationOperations, ITargetCreationOperationReads
+public sealed partial class SqlTargetCreationOperations(BuildSystemDbContext db, TargetCreationOperationOptions options) : ITargetCreationOperations, ITargetCreationOperationReads
 {
     private readonly Dictionary<Guid, RestoreIntentCanonicalMapping> mappings = options.CanonicalMappings is { Count: <= 1024 }
         ? new(options.CanonicalMappings) : [];
@@ -159,7 +159,7 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
         });
     }
 
-    private async Task Admin(Actor actor, CancellationToken ct)
+    internal async Task Admin(Actor actor, CancellationToken ct)
     {
         if (actor is null || actor.UserId == Guid.Empty || !actor.IsAdministrator ||
             !await (from role in db.Roles join userRole in db.UserRoles on role.Id equals userRole.RoleId
@@ -168,7 +168,7 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
             throw Reject(403, "TargetCreationForbidden");
     }
 
-    private async Task Admission(RestoreIntentRecord i, CancellationToken ct)
+    internal async Task Admission(RestoreIntentRecord i, CancellationToken ct)
     {
         RequestRejectedException Mismatch() => Reject(409, "TargetCreationMismatch");
         var environment = await db.TestEnvironments.AsNoTracking().SingleOrDefaultAsync(x => x.Id == i.EnvironmentId, ct);
@@ -229,7 +229,7 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
         if (!valid) throw Reject(409, "TargetCreationMismatch");
     }
 
-    private static TargetCreationOperationReceipt Receipt(CreationOperationRecord row, RestoreIntentRecord intent, bool newlyRecorded)
+    internal static TargetCreationOperationReceipt Receipt(CreationOperationRecord row, RestoreIntentRecord intent, bool newlyRecorded)
     {
         Validate(row);
         if (intent.RestoreIntentId != row.RestoreIntentId || intent.Executable || !intent.ScheduledJobsMustRemainBlocked ||
@@ -245,12 +245,12 @@ public sealed class SqlTargetCreationOperations(BuildSystemDbContext db, TargetC
             row.AttemptId, row.AttemptExpectedRevision, row.QuarantineReason, newlyRecorded);
     }
 
-    private async Task Audit(Actor actor, string action, Guid id, CancellationToken ct)
+    internal async Task Audit(Actor actor, string action, Guid id, CancellationToken ct)
     {
         var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
         db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = actor.UserId, Action = action, TargetId = id, CreatedAt = now });
     }
-    private Task Lock(string resource, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r = sys.sp_getapplock @Resource={resource}, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=15000; IF @r IN (-1, -3) THROW 51001, 'Transient creation ledger lock contention', 1; IF @r < 0 THROW 51000, 'Creation ledger lock cancelled or invalid', 1;", ct);
+    internal Task Lock(string resource, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r = sys.sp_getapplock @Resource={resource}, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=15000; IF @r IN (-1, -3) THROW 51001, 'Transient creation ledger lock contention', 1; IF @r < 0 THROW 51000, 'Creation ledger lock cancelled or invalid', 1;", ct);
     private static RequestRejectedException Reject(int status, string code) => new(status, code);
 }
 // end

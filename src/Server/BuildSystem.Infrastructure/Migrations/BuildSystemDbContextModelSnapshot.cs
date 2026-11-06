@@ -350,6 +350,73 @@ namespace BuildSystem.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.CreationPermitRecord", b =>
+                {
+                    b.Property<Guid>("PermitId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttemptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Executable")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("ExpectedOperationRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("ScheduledJobsMustRemainBlocked")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("StartBefore")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("StartExpectedRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("PermitId");
+
+                    b.HasIndex("AttemptId")
+                        .IsUnique();
+
+                    b.HasIndex("OperationId")
+                        .IsUnique();
+
+                    b.ToTable("TargetCreationPermits", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetCreationPermits_ExpectedOperationRevision", "[ExpectedOperationRevision] = 1");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_Ids", "[PermitId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_JobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_NonExecutable", "[Executable] = 0");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_RevisionState", "([State] = 'Prepared' AND [Revision] = 1 AND [StartedAt] IS NULL AND [StartExpectedRevision] IS NULL) OR ([State] = 'StartRecorded' AND [Revision] = 2 AND [StartedAt] IS NOT NULL AND [StartExpectedRevision] IS NOT NULL AND [StartExpectedRevision] = 1) OR ([State] = 'Revoked' AND (([Revision] = 2 AND [StartedAt] IS NULL AND [StartExpectedRevision] IS NULL) OR ([Revision] = 3 AND [StartedAt] IS NOT NULL AND [StartExpectedRevision] IS NOT NULL AND [StartExpectedRevision] = 1)))");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_StartedAt", "[StartedAt] IS NULL OR (DATEPART(TZOFFSET, [StartedAt]) = 0 AND [StartedAt] >= [IssuedAt] AND [StartedAt] < [StartBefore])");
+
+                            t.HasCheckConstraint("CK_TargetCreationPermits_Window", "DATEPART(TZOFFSET, [IssuedAt]) = 0 AND DATEPART(TZOFFSET, [StartBefore]) = 0 AND DATEADD(minute, 5, [IssuedAt]) = [StartBefore]");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.DiskArchive", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1437,6 +1504,15 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.RestoreIntentRecord", null)
                         .WithMany()
                         .HasForeignKey("RestoreIntentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.CreationPermitRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.CreationOperationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OperationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
