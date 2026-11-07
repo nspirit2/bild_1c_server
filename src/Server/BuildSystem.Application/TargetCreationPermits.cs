@@ -6,6 +6,8 @@ namespace BuildSystem.Application;
 public sealed class TargetCreationPermitOptions
 {
     public bool Enabled { get; init; }
+    /// <summary>Separate default-off opt-in for assigned-agent, nonexecuting start metadata.</summary>
+    public bool AgentStartEnabled { get; init; }
     public override string ToString() => "TargetCreationPermitOptions [redacted]";
 }
 
@@ -33,4 +35,15 @@ public interface ITargetCreationPermits
         Guid attemptId, CancellationToken ct);
     Task<TargetCreationPermitReceipt> RevokeAsync(Actor actor, Guid permitId, long expectedPermitRevision, CancellationToken ct);
     Task<TargetCreationPermitReceipt> GetAsync(Actor actor, Guid permitId, CancellationToken ct);
+}
+
+/// <summary>
+/// Assigned-agent credential barrier for recording historical, nonexecuting start metadata only.
+/// A receipt never grants target execution, cancellation, worker delivery or scheduled-job release.
+/// This is separate from the administrator permit API; no HTTP adapter is provided here.
+/// </summary>
+public interface ITargetCreationPermitAgentStarts
+{
+    Task<TargetCreationPermitReceipt> RecordAgentStartAsync(string token, Guid permitId,
+        long expectedPermitRevision, Guid attemptId, CancellationToken ct);
 }

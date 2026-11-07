@@ -21,6 +21,33 @@ public sealed class TargetCreationPermitContractTests
         Assert.IsType<SqlTargetCreationPermits>(scope.ServiceProvider.GetRequiredService<ITargetCreationPermits>());
         Assert.False(scope.ServiceProvider.GetRequiredService<TargetCreationPermitOptions>().Enabled);
         Assert.False(scope.ServiceProvider.GetRequiredService<TargetCreationOperationOptions>().Enabled);
+        Assert.False(scope.ServiceProvider.GetRequiredService<TargetCreationPermitOptions>().AgentStartEnabled);
+        Assert.Same(scope.ServiceProvider.GetRequiredService<ITargetCreationPermits>(),
+            scope.ServiceProvider.GetRequiredService<ITargetCreationPermitAgentStarts>());
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public async Task AgentStartRequiresAllThreeExplicitFlagsBeforeSql(bool permit, bool creation, bool agent)
+    {
+        await using var db = Context();
+        ITargetCreationPermitAgentStarts service = new SqlTargetCreationPermits(db,
+            new() { Enabled = permit, AgentStartEnabled = agent }, new() { Enabled = creation });
+        Assert.Equal(409, (await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            service.RecordAgentStartAsync("invalid", Guid.NewGuid(), 1, Guid.NewGuid(), CancellationToken.None))).StatusCode);
+        Assert.Empty(db.ChangeTracker.Entries());
+    }
+
+    [Fact]
+    public void AgentPortOnlyExposesNonexecutingStartMetadata()
+    {
+        Assert.Equal("RecordAgentStartAsync", Assert.Single(typeof(ITargetCreationPermitAgentStarts).GetMethods()).Name);
+        Assert.Null(typeof(TargetCreationPermitReceipt).GetProperty("Executable")!.SetMethod);
+        Assert.Null(typeof(TargetCreationPermitReceipt).GetProperty("ScheduledJobsMustRemainBlocked")!.SetMethod);
     }
 
     [Fact]

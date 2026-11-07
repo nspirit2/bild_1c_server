@@ -224,6 +224,9 @@ public sealed class SqlTargetCreationOperationTests
     private static SqlTargetCreationPermits Permits(BuildSystemDbContext db, Seed seed)
         => new(db, new TargetCreationPermitOptions { Enabled = true }, seed.Options);
 
+    private static SqlTargetCreationPermits AgentPermits(BuildSystemDbContext db, Seed seed)
+        => new(db, new TargetCreationPermitOptions { Enabled = true, AgentStartEnabled = true }, seed.Options);
+
     private static async Task PermitRejectedAsync(Func<Task> action, int status = 409)
         => Assert.Equal(status, (await Assert.ThrowsAsync<RequestRejectedException>(action)).StatusCode);
 
@@ -454,6 +457,175 @@ public sealed class SqlTargetCreationOperationTests
         Assert.Equal(result.StartedAt, row.StartedAt); Assert.Equal(attempt, row.AttemptId); Assert.Equal(2L, row.Revision);
         var begun = await GetAsync(sql, seed, operation.OperationId);
         Assert.Equal(2L, begun.Revision); Assert.Equal(attempt, begun.AttemptId); Assert.Equal(Pins(operation), Pins(begun));
+        Assert.Equal(audits + 2, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Assigned_agent_permit_start_atomically_records_both_ledgers_and_exact_replay_is_metadata_only()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+        await using var db = sql.NewContext(); var service = AgentPermits(db, seed);
+        await service.IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+        var before = await LifecycleAsync(sql); var audits = await AuditsAsync(sql);
+        ITargetCreationPermitAgentStarts starts = service;
+        var started = await starts.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+        Assert.True(started.NewlyRecorded); Assert.Equal(TargetCreationPermitState.StartRecorded, started.State);
+        Assert.Equal(2L, started.Revision); Assert.Equal(attempt, started.AttemptId);
+        Assert.Equal(1L, started.StartExpectedRevision); Assert.NotNull(started.StartedAt);
+        Assert.InRange(started.StartedAt!.Value, started.IssuedAt, started.StartBefore.AddTicks(-1));
+        Assert.False(started.Executable); Assert.True(started.ScheduledJobsMustRemainBlocked);
+        var begun = await GetAsync(sql, seed, operation.OperationId);
+        Assert.Equal(TargetCreationOperationState.AttemptRecorded, begun.State); Assert.Equal(2L, begun.Revision);
+        Assert.Equal(attempt, begun.AttemptId); Assert.Equal(1L, begun.AttemptExpectedRevision);
+        Assert.Equal(Pins(operation), Pins(begun)); Nonexecuting(begun);
+        var replay = await starts.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+        Assert.False(replay.NewlyRecorded); Assert.Equal(started.StartedAt, replay.StartedAt);
+        Assert.Equal(2L, replay.Revision); Nonexecuting(replay.Operation);
+        await PermitRejectedAsync(() => starts.RecordAgentStartAsync(seed.Credential.Token, permit, 1, Guid.NewGuid(), Ct));
+        await PermitRejectedAsync(() => starts.RecordAgentStartAsync(seed.Credential.Token, permit, 2, attempt, Ct));
+        var row = await db.TargetCreationPermits.AsNoTracking().SingleAsync();
+        Assert.Equal(started.StartedAt, row.StartedAt); Assert.Equal(2L, row.Revision);
+        Assert.Equal(1, await db.AuditEvents.CountAsync(e => e.TargetId == operation.OperationId && e.Action == "TargetCreationAttemptRecorded"));
+        Assert.Equal(1, await db.AuditEvents.CountAsync(e => e.TargetId == permit && e.Action == "TargetCreationPermitStartRecorded"));
+        var startAudits = await db.AuditEvents.AsNoTracking().Where(e =>
+            e.TargetId == operation.OperationId && e.Action == "TargetCreationAttemptRecorded" ||
+            e.TargetId == permit && e.Action == "TargetCreationPermitStartRecorded").ToListAsync();
+        Assert.Equal(2, startAudits.Count);
+        Assert.All(startAudits, e => Assert.Equal(seed.Credential.AgentId, e.ActorId));
+        Assert.Equal(audits + 2, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Agent_permit_start_authenticates_before_existence_and_rechecks_rotated_and_revoked_tokens()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+        await using var db = sql.NewContext(); var service = AgentPermits(db, seed);
+        await service.IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        foreach (var token in new[] { "", "invalid-token", new string('x', 257) })
+            foreach (var id in new[] { permit, Guid.NewGuid() })
+                await PermitRejectedAsync(() => service.RecordAgentStartAsync(token, id, 1, attempt, Ct), 401);
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        var rotated = await new SqlAgentControl(db).RotateAsync(seed.Admin, seed.Credential.AgentId, Ct);
+        foreach (var id in new[] { permit, Guid.NewGuid() })
+            await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, id, 1, attempt, Ct), 401);
+        var started = await service.RecordAgentStartAsync(rotated.Token, permit, 1, attempt, Ct);
+        Assert.True(started.NewlyRecorded); Assert.Equal(2L, started.Revision);
+        await new SqlAgentControl(db).RevokeAsync(seed.Admin, seed.Credential.AgentId, Ct);
+        ledger = await LedgerAsync(sql); audits = await AuditsAsync(sql);
+        foreach (var id in new[] { permit, Guid.NewGuid() })
+            await PermitRejectedAsync(() => service.RecordAgentStartAsync(rotated.Token, id, 1, attempt, Ct), 401);
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Other_approved_agent_cannot_start_a_real_permit_and_only_authenticated_calls_observe_missing_permits()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+        var other = await PrepareAsync(sql);
+        await using var db = sql.NewContext(); var service = AgentPermits(db, seed);
+        await service.IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        await PermitRejectedAsync(() => service.RecordAgentStartAsync(other.Credential.Token, permit, 1, attempt, Ct), 403);
+        foreach (var token in new[] { seed.Credential.Token, other.Credential.Token })
+            await PermitRejectedAsync(() => service.RecordAgentStartAsync(token, Guid.NewGuid(), 1, attempt, Ct), 404);
+        var row = await db.TargetCreationPermits.AsNoTracking().SingleAsync();
+        Assert.Equal(TargetCreationPermitState.Prepared, row.State); Assert.Equal(1L, row.Revision); Assert.Null(row.StartedAt);
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+        Assert.Equal(audits, await AuditsAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Agent_permit_start_rechecks_membership_and_pool_before_replay_and_quarantine_blocks_history()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+        await using var db = sql.NewContext(); var service = AgentPermits(db, seed);
+        await service.IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+        await service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+        var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+        await db.ProjectMemberships.Where(m => m.UserId == seed.Owner.UserId && m.ProjectId == seed.Project).ExecuteDeleteAsync();
+        await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct));
+        Assert.Equal(2L, (await service.GetAsync(seed.Admin, permit, Ct)).Revision);
+        db.ProjectMemberships.Add(new ProjectMembership { UserId = seed.Owner.UserId, ProjectId = seed.Project });
+        await db.SaveChangesAsync();
+        await db.EnvironmentPools.Where(p => p.Id == seed.Pool).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, false));
+        await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct));
+        Assert.Equal(2L, (await service.GetAsync(seed.Admin, permit, Ct)).Revision);
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        await db.EnvironmentPools.Where(p => p.Id == seed.Pool).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, true));
+        Assert.False((await service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct)).NewlyRecorded);
+        await QuarantineAsync(sql, seed, operation.OperationId, 2);
+        ledger = await LedgerAsync(sql); audits = await AuditsAsync(sql);
+        await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct));
+        Assert.Equal(2L, (await service.GetAsync(seed.Admin, permit, Ct)).Revision);
+        Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(audits, await AuditsAsync(sql));
+        Assert.Equal(before, await LifecycleAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Agent_permit_start_deadline_blocks_first_start_but_expired_revoked_exact_history_never_records_fresh_work()
+    {
+        foreach (var startFirst in new[] { false, true })
+        {
+            await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+            var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+            await using var db = sql.NewContext(); var service = AgentPermits(db, seed);
+            await service.IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+            if (startFirst) await service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [TargetCreationPermits] SET [IssuedAt] = DATEADD(day, -1, [IssuedAt]), [StartBefore] = DATEADD(day, -1, [StartBefore]), [StartedAt] = DATEADD(day, -1, [StartedAt]) WHERE [PermitId] = {permit}", Ct);
+            var before = await LifecycleAsync(sql); var ledger = await LedgerAsync(sql); var audits = await AuditsAsync(sql);
+            if (startFirst)
+            {
+                var expired = await service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+                Assert.False(expired.NewlyRecorded); Assert.Equal(2L, expired.Revision);
+            }
+            else
+                await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct));
+            var revoked = await service.RevokeAsync(seed.Admin, permit, startFirst ? 2 : 1, Ct);
+            if (startFirst)
+            {
+                var replay = await service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+                Assert.False(replay.NewlyRecorded); Assert.Equal(TargetCreationPermitState.Revoked, replay.State);
+                Assert.Equal(3L, replay.Revision); Assert.Equal(revoked.StartedAt, replay.StartedAt);
+                Assert.Equal(revoked.StartBefore, replay.StartBefore);
+                Assert.False(replay.Executable); Assert.True(replay.ScheduledJobsMustRemainBlocked);
+            }
+            else
+                await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct));
+            await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, 1, Guid.NewGuid(), Ct));
+            await PermitRejectedAsync(() => service.RecordAgentStartAsync(seed.Credential.Token, permit, revoked.Revision, attempt, Ct));
+            Assert.Equal(ledger, await LedgerAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
+            Assert.Equal(audits + 1, await AuditsAsync(sql));
+        }
+    }
+
+    [SqlServerFact]
+    public async Task Agent_permit_start_native_retry_after_actual_commit_returns_exact_history_with_two_audits_and_one_attempt()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var operation = await RegisterAsync(sql, seed); var permit = Guid.NewGuid(); var attempt = Guid.NewGuid();
+        await using (var db = sql.NewContext())
+            await Permits(db, seed).IssueAsync(seed.Admin, operation.OperationId, 1, permit, attempt, Ct);
+        var audits = await AuditsAsync(sql); var before = await LifecycleAsync(sql);
+        var fault = new PostCommitTimeout(); await using var retryDb = FaultContext(sql, fault);
+        fault.Arm(); var result = await AgentPermits(retryDb, seed)
+            .RecordAgentStartAsync(seed.Credential.Token, permit, 1, attempt, Ct);
+        Assert.False(result.NewlyRecorded); Assert.Equal(2L, result.Revision); Assert.Equal(attempt, result.AttemptId);
+        Assert.Equal(TargetCreationPermitState.StartRecorded, result.State); Assert.NotNull(result.StartedAt);
+        Assert.False(result.Executable); Assert.True(result.ScheduledJobsMustRemainBlocked); Nonexecuting(result.Operation);
+        Assert.Equal(1, fault.FaultCount); Assert.Equal(2, fault.PhysicalCommitReturnedCount);
+        await using var verify = sql.NewContext(); var row = await verify.TargetCreationPermits.SingleAsync();
+        Assert.Equal(result.StartedAt, row.StartedAt); Assert.Equal(attempt, row.AttemptId); Assert.Equal(2L, row.Revision);
+        Assert.Equal(1, await verify.TargetCreationOperations.CountAsync(o => o.AttemptId == attempt));
+        var begun = await GetAsync(sql, seed, operation.OperationId);
+        Assert.Equal(2L, begun.Revision); Assert.Equal(attempt, begun.AttemptId); Assert.Equal(Pins(operation), Pins(begun));
+        Assert.Equal(1, await verify.AuditEvents.CountAsync(e => e.TargetId == operation.OperationId && e.Action == "TargetCreationAttemptRecorded"));
+        Assert.Equal(1, await verify.AuditEvents.CountAsync(e => e.TargetId == permit && e.Action == "TargetCreationPermitStartRecorded"));
         Assert.Equal(audits + 2, await AuditsAsync(sql)); Assert.Equal(before, await LifecycleAsync(sql));
     }
 

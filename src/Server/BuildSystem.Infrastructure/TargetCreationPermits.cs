@@ -5,9 +5,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BuildSystem.Infrastructure;
 
-/// <summary>Admin-only SQL metadata barrier; no assigned-agent authentication or external execution.</summary>
+/// <summary>Administrator and assigned-agent SQL metadata barriers; never external execution authorization.</summary>
 public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCreationPermitOptions permitOptions,
-    TargetCreationOperationOptions creationOptions) : ITargetCreationPermits
+    TargetCreationOperationOptions creationOptions) : ITargetCreationPermits, ITargetCreationPermitAgentStarts
 {
     private readonly SqlTargetCreationOperations ledger = new(db, creationOptions);
 
@@ -66,36 +66,69 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
             var operation = await Operation(row.OperationId, ct);
             var intent = await Intent(operation, ct);
             await ledger.Admission(intent, ct);
-            _ = Receipt(row, operation, intent, false);
-            if (operation.State == TargetCreationOperationState.ReconciliationRequired)
-                throw Reject(409, "InvalidTransition");
-            if (row.AttemptId != attemptId) throw Reject(409, "PermitConflict");
-            var now = await Now(ct);
-            if (now < row.IssuedAt) throw Reject(409, "InvalidServerTime");
-            if (row.StartedAt is not null && row.StartExpectedRevision == expectedPermitRevision)
-                return Receipt(row, operation, intent, false); // Historical receipt, never a new authorization.
-            if (row.Revision != expectedPermitRevision) throw Reject(409, "RevisionConflict");
-            if (row.State != TargetCreationPermitState.Prepared) throw Reject(409, "InvalidTransition");
-            if (now >= row.StartBefore) throw Reject(409, "PermitExpired");
-            if (operation.Revision != row.ExpectedOperationRevision) throw Reject(409, "RevisionConflict");
-            if (operation.State != TargetCreationOperationState.Registered || operation.Revision != 1)
-                throw Reject(409, "InvalidTransition");
-            if (await db.TargetCreationOperations.AnyAsync(x => x.AttemptId == attemptId && x.OperationId != operation.OperationId, ct))
-                throw Reject(409, "PermitConflict");
-            operation.AttemptId = attemptId;
-            operation.AttemptExpectedRevision = row.ExpectedOperationRevision;
-            operation.State = TargetCreationOperationState.AttemptRecorded;
-            operation.Revision = 2;
-            row.State = TargetCreationPermitState.StartRecorded;
-            row.Revision = 2;
-            row.StartedAt = now;
-            row.StartExpectedRevision = expectedPermitRevision;
-            var result = Receipt(row, operation, intent, true);
-            await ledger.Audit(actor, "TargetCreationAttemptRecorded", operation.OperationId, ct);
-            await ledger.Audit(actor, "TargetCreationPermitStartRecorded", permitId, ct);
-            await db.SaveChangesAsync(ct);
-            return result;
+            return await RecordStartCore(actor, row, operation, intent, expectedPermitRevision, attemptId, await Now(ct), ct);
         }, ct);
+    }
+
+    /// <summary>Records nonexecuting start metadata for the currently authenticated, assigned agent only.</summary>
+    public Task<TargetCreationPermitReceipt> RecordAgentStartAsync(string token, Guid permitId,
+        long expectedPermitRevision, Guid attemptId, CancellationToken ct)
+    {
+        Enabled();
+        if (!permitOptions.AgentStartEnabled) throw Reject(409, "TargetCreationPermitDisabled");
+        if (permitId == Guid.Empty || attemptId == Guid.Empty || expectedPermitRevision <= 0)
+            throw Reject(400, "InvalidTargetCreationPermit");
+        return Transaction(async () =>
+        {
+            // Recheck current credentials on every strategy retry under the global agent-control lock.
+            // Even malformed credentials are rejected before any permit-existence lookup.
+            if (string.IsNullOrEmpty(token) || token.Length > 256) throw Reject(401, "AgentUnauthorized");
+            var hash = TokenProtector.Hash(token);
+            var agent = await db.Agents.SingleOrDefaultAsync(x => x.TokenHash == hash && x.State == "Approved", ct);
+            if (agent is null || !TokenProtector.Verify(token, agent.TokenHash!)) throw Reject(401, "AgentUnauthorized");
+            var row = await Permit(permitId, ct);
+            var operation = await Operation(row.OperationId, ct);
+            var intent = await Intent(operation, ct);
+            if (agent.Id != intent.AgentId) throw Reject(403, "TargetCreationPermitForbidden");
+            await ledger.Admission(intent, ct); // Current admission is required even for an exact replay.
+            return await RecordStartCore(new Actor(agent.Id, false), row, operation, intent,
+                expectedPermitRevision, attemptId, await Now(ct), ct);
+        }, ct);
+    }
+
+    // Shared metadata transition only: callers own authentication, admission and the single transaction.
+    private async Task<TargetCreationPermitReceipt> RecordStartCore(Actor actor, CreationPermitRecord row,
+        CreationOperationRecord operation, RestoreIntentRecord intent, long expectedPermitRevision,
+        Guid attemptId, DateTimeOffset now, CancellationToken ct)
+    {
+        _ = Receipt(row, operation, intent, false);
+        if (operation.State == TargetCreationOperationState.ReconciliationRequired)
+            throw Reject(409, "InvalidTransition");
+        if (row.AttemptId != attemptId) throw Reject(409, "PermitConflict");
+        if (now < row.IssuedAt) throw Reject(409, "InvalidServerTime");
+        if (row.StartedAt is not null && row.StartExpectedRevision == expectedPermitRevision)
+            return Receipt(row, operation, intent, false); // Historical receipt, never a new authorization.
+        if (row.Revision != expectedPermitRevision) throw Reject(409, "RevisionConflict");
+        if (row.State != TargetCreationPermitState.Prepared) throw Reject(409, "InvalidTransition");
+        if (now >= row.StartBefore) throw Reject(409, "PermitExpired");
+        if (operation.Revision != row.ExpectedOperationRevision) throw Reject(409, "RevisionConflict");
+        if (operation.State != TargetCreationOperationState.Registered || operation.Revision != 1)
+            throw Reject(409, "InvalidTransition");
+        if (await db.TargetCreationOperations.AnyAsync(x => x.AttemptId == attemptId && x.OperationId != operation.OperationId, ct))
+            throw Reject(409, "PermitConflict");
+        operation.AttemptId = attemptId;
+        operation.AttemptExpectedRevision = row.ExpectedOperationRevision;
+        operation.State = TargetCreationOperationState.AttemptRecorded;
+        operation.Revision = 2;
+        row.State = TargetCreationPermitState.StartRecorded;
+        row.Revision = 2;
+        row.StartedAt = now;
+        row.StartExpectedRevision = expectedPermitRevision;
+        var result = Receipt(row, operation, intent, true);
+        await ledger.Audit(actor, "TargetCreationAttemptRecorded", operation.OperationId, ct);
+        await ledger.Audit(actor, "TargetCreationPermitStartRecorded", row.PermitId, ct);
+        await db.SaveChangesAsync(ct);
+        return result;
     }
 
     public Task<TargetCreationPermitReceipt> RevokeAsync(Actor actor, Guid permitId, long expectedPermitRevision, CancellationToken ct)
