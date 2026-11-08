@@ -141,6 +141,23 @@ public sealed class SqlTargetNamespaceGuardTests
     }
 
     [Fact]
+    public async Task SqlClientCanonicalSpacedRetryKeywordIsAcceptedWithoutAllowingAmbiguousAliases()
+    {
+        var connection = Successful(); connection.ConnectionString = "Pooling=False;Connect Retry Count=0";
+        await using var held = await Guard(connection).AcquireAsync(Scope());
+        await held.CheckHeldAsync();
+        foreach (var settings in new[] {
+            "Pooling=false;ConnectRetryCount=0;Connect Retry Count=1",
+            "Pooling=false;ConnectRetryCount=1;Connect Retry Count=0",
+            "Pooling=false;Connect_Retry_Count=0" })
+        {
+            var invalid = Successful(); invalid.ConnectionString = settings;
+            await Unavailable(async () => await Guard(invalid).AcquireAsync(Scope()));
+            Assert.Equal(0, invalid.OpenCount);
+        }
+    }
+
+    [Fact]
     public async Task PreviouslyOpenedConnectionRejectedBeforeOpeningOrQuerying()
     {
         var connection = Successful(); connection.IsOpen = true;

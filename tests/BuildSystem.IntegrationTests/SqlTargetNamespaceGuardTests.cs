@@ -28,6 +28,15 @@ public sealed class SqlTargetNamespaceGuardTests
     private static SqlTargetNamespaceScope Scope(Guid server, Guid mapping, Guid reservation) =>
         new(Guid.NewGuid(), Guid.NewGuid(), reservation, server, mapping);
 
+    [Fact]
+    public void SqlClientCanonicalRetryKeywordContainsSpaces()
+    {
+        var sql = new SqlConnectionStringBuilder { DataSource = "unused", InitialCatalog = "master", Pooling = false, ConnectRetryCount = 0 };
+        var generic = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = sql.ConnectionString };
+        Assert.True(generic.ContainsKey("Connect Retry Count"));
+        Assert.Equal("0", generic["Connect Retry Count"].ToString());
+    }
+
     [SqlServerFact]
     public async Task Same_physical_target_excludes_alias_mappings_and_releases_on_dispose()
     {

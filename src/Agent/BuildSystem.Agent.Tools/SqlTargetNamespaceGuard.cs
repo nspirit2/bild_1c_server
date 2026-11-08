@@ -196,13 +196,15 @@ public sealed class SqlTargetNamespaceGuard
             if ((string.Equals(normalized, "Pooling", StringComparison.OrdinalIgnoreCase) &&
                  !string.Equals(key, "Pooling", StringComparison.OrdinalIgnoreCase)) ||
                 (string.Equals(normalized, "ConnectRetryCount", StringComparison.OrdinalIgnoreCase) &&
-                 !string.Equals(key, "ConnectRetryCount", StringComparison.OrdinalIgnoreCase))) return false;
+                 !string.Equals(key, "ConnectRetryCount", StringComparison.OrdinalIgnoreCase) &&
+                  !string.Equals(key, "Connect Retry Count", StringComparison.OrdinalIgnoreCase))) return false;
             if (string.Equals(key, "Pooling", StringComparison.OrdinalIgnoreCase))
             {
                 if (pooling.HasValue || !bool.TryParse(Convert.ToString(builder[key], CultureInfo.InvariantCulture), out var value)) return false;
                 pooling = value;
             }
-            else if (string.Equals(key, "ConnectRetryCount", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "ConnectRetryCount", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(key, "Connect Retry Count", StringComparison.OrdinalIgnoreCase))
             {
                 if (retry.HasValue || !int.TryParse(Convert.ToString(builder[key], CultureInfo.InvariantCulture),
                         NumberStyles.None, CultureInfo.InvariantCulture, out var value)) return false;
