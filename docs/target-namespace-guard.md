@@ -1,0 +1,21 @@
+# Cooperative SQL target namespace session guard
+
+## Owner policy
+
+Владелец явно подтвердил exclusive `bs_test_*` namespace на выбранных SQL Server и 1С-кластере: ручное/внешнее создание или изменение таких целей не допускается. Любая уже существующая SQL DB/1С registration — конфликт, не adoption/ownership и не основание DROP/recreate. Namespace policy является operator obligation, не выводится из GUID или server receipt.
+
+## Этот increment
+
+Read/lock-only `SqlTargetNamespaceGuard` удерживает SQL session application lock в `master`, principal `public`, owner `Session`, mode `Exclusive`, NOWAIT. Lockresource `BuildSystem:target-creation:bs_test_{reservation:N}` НЕ включает operation/attempt/endpointMapping/canonicalGUID: два alias mapping одной физической SQLinstance должны конкурировать за тот же resource. SQL applocks различают database/principal/resource; все cooperating service agents обязаны использовать одинаковый протокол. Разные reservations не блокируют друг друга.
+
+Operator-owned connectionfactory и expectedMachine/Instance mapping, canonicalSQLid/endpointMapping сверяются до захвата. Требуется initiallyClosed, fresh/exclusivelyowned connection с explicitly `Pooling=false;ConnectRetryCount=0`. GenericADO parsingне доказываетproviderbehavior: trustedfactory обязана возвращать настоящий SQLprovider, соблюдатьunpooled/noautoreconnect и не передаватьconnectionдругимcallers. Identityread подтверждает expectedMachine/Instance иsysadmincompletevisibility; captureoriginalsessionдоacquire. Factory/credentials никогда не берутся изpipeline/request.
+
+Lease не выдаётconnection/callback/SQLmutationAPI. `CheckHeldAsync` заново проверяет master, originalsession и exact Exclusive mode на томжеprivateconnection; сохранённогоboolHeldнет. Потеряsession/lock, malformedread, timeout/cancellation/providerfailure sticky-invalidateslease. Check и первый Dispose serialized; повторный concurrentDispose можетвернутьсяраньшезавершенияпервогоphysicalcleanup и не обещаетобщегоcompletionbarrier. Disposebest-effortreleaseтолькоoriginalsession, затемdisposeunpooledconnection; cleanupнеразрешаетпродолжение. Pendingprovideroperation mayignorecancellation: monotonicdeadlineпроверяетсяпослеawait, это не hardpreemption и не detached task. Ни acquire, ни CheckHeld не являются atomic physical-command fence.
+
+Metadata остаётся `Executable=false`, `ScheduledJobsMustRemainBlocked=true`. НетtargetSQLCREATE/DROP/restore, RACcommand, ownedemptytargetproof, grantissuance, HTTP/workerwireup, featureenablement илиstanddeployment. Acquireнепроверяетabsence: передfutureCREATE нужны свежие SQL+RACabsencechecksподэтимexclusion иcurrentonlineauthority. Тотжеguardвfutureexecutorдолжениспользоватьсядокаждогоsideeffect, а physicalcommandconnection/sessionprotocol ещёне реализован. Существующий target послеfailure не удаляется и не присваивается.
+
+Это advisory/cooperative lock, не физический ACL и незащитаотsysadmin/другогоuncooperativewriter. Подтверждённаяoperatorpolicyне заменяетпроверкуidentity/absence/currentauthority. Припотерелокаилиunknownoutcome — reconciliationбезauto-repeat; servermetadataфиксируетединственнуюattempt, localjournalудерживаетpins/slots.
+
+## Tests
+
+Fake-provider cases проверяют scope/options beforeIO, serveridentity/connectionpolicy, lockreturncodes/strictresults, stickyfailure, cancellation/disposal иredaction. Четыре opt-in SQLtests используют только `master`sessionapplocks наrandomresources: aliasexclusion/release, differentreservationindependence, closed-sessionloss/reacquire, wrongidentitynolock. Нетtargetdatabasecreation/RAC/restore; opt-inиспользуетсуществующий disposableCI SQL endpoint. Fakeprovider35expandedcasespassed, включаядетерминированнуюqueuedcancellationвовремяactivecheck и cancellationвcommand.DisposeAsync. ПолныйlocalRelease1442passed/0failed;212SQLexplicitlyskippedбезopt-in, integration214. Source review выявил3sticky/cancellation/cleanup гонки: исправленыдоcommit, finalreviewбезblockingfindings. Исправленытакжеtestharnesscompiledefects (trailingartifact/optionalobjectdefault) доsuccessfultargeted/fullruns. РеальныеSQLassertionsподтверждаютсяотдельнымCIпослеpush, localcompileнезаменяетSQLlockvalidation.
