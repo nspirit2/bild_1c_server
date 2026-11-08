@@ -52,11 +52,7 @@ public sealed partial class AgentJournal
     /// Does not validate fresh authority, create resources, or establish cross-agent exclusion.</summary>
     public TargetCreationRecord SaveTargetCreationIntent(TargetCreationIntent intent)
     {
-        if (intent is null || new[] { intent.OperationId, intent.EnvironmentId, intent.JobId, intent.ReservationId,
-                intent.TargetIncarnationId, intent.CanonicalClusterId, intent.CanonicalSqlServerId }.Any(id => id == Guid.Empty) ||
-            intent.FencingToken <= 0 || !ValidTargetCreationName(intent.InfobaseName, intent.ReservationId) ||
-            !ValidTargetCreationName(intent.SqlDatabaseName, intent.ReservationId))
-            throw new ArgumentException("Invalid target creation intent.", nameof(intent));
+        ValidateTargetCreationIntent(intent);
         using var transaction = _db.BeginTransaction();
         var existing = GetTargetCreationIntent(intent.OperationId);
         if (existing is not null)
@@ -107,6 +103,10 @@ public sealed partial class AgentJournal
         if (expectedRevision <= 0 || attemptId == Guid.Empty) throw new ArgumentException("Invalid target creation attempt.");
         using var transaction = _db.BeginTransaction();
         var existing = GetTargetCreationIntent(operationId) ?? throw new InvalidOperationException("Unknown target creation intent.");
+        // A binding is still not execution authority, but its immutable attempt must not drift.
+        var binding = GetTargetCreationPermitBinding(operationId);
+        if (binding is not null && binding.AttemptId != attemptId)
+            throw new InvalidOperationException("Target creation attempt conflicts with permit binding.");
         if (existing.AttemptId == attemptId && existing.AttemptExpectedRevision == expectedRevision)
         {
             transaction.Commit(); return new(existing, false);
@@ -145,10 +145,58 @@ public sealed partial class AgentJournal
         if (operationId == Guid.Empty) throw new ArgumentException("Invalid target creation operation.", nameof(operationId));
     }
 
-    private static TargetCreationRecord ReadTargetCreationRecord(SqliteDataReader reader) => new(
-        new(Guid.Parse(reader.GetString(0)), Guid.Parse(reader.GetString(1)), Guid.Parse(reader.GetString(2)), reader.GetInt64(3),
-            Guid.Parse(reader.GetString(4)), Guid.Parse(reader.GetString(5)), Guid.Parse(reader.GetString(6)), Guid.Parse(reader.GetString(7)),
-            reader.GetString(8), reader.GetString(9)), Enum.Parse<TargetCreationState>(reader.GetString(10)), reader.GetInt64(11),
-        reader.IsDBNull(12) ? null : Guid.Parse(reader.GetString(12)), reader.IsDBNull(13) ? null : reader.GetInt64(13),
-        reader.IsDBNull(14) ? null : reader.GetString(14));
+    private static void ValidateTargetCreationIntent(TargetCreationIntent intent)
+    {
+        if (intent is null || new[] { intent.OperationId, intent.EnvironmentId, intent.JobId, intent.ReservationId,
+                intent.TargetIncarnationId, intent.CanonicalClusterId, intent.CanonicalSqlServerId }.Any(id => id == Guid.Empty) ||
+            intent.FencingToken <= 0 || !ValidTargetCreationName(intent.InfobaseName, intent.ReservationId) ||
+            !ValidTargetCreationName(intent.SqlDatabaseName, intent.ReservationId))
+            throw new ArgumentException("Invalid target creation intent.", nameof(intent));
+    }
+
+    private static TargetCreationRecord ReadTargetCreationRecord(SqliteDataReader reader)
+    {
+        try
+        {
+            var ids = new Guid[8];
+            foreach (var index in new[] { 0, 1, 2, 4, 5, 6, 7 })
+            {
+                var text = reader.GetString(index);
+                if (!Guid.TryParseExact(text, "D", out ids[index]) || text != ids[index].ToString())
+                    throw new InvalidOperationException("Invalid persisted target creation intent.");
+            }
+            var intent = new TargetCreationIntent(ids[0], ids[1], ids[2], reader.GetInt64(3), ids[4], ids[5], ids[6], ids[7],
+                reader.GetString(8), reader.GetString(9));
+            ValidateTargetCreationIntent(intent);
+            var stateText = reader.GetString(10);
+            if (!Enum.TryParse<TargetCreationState>(stateText, out var state) || !Enum.IsDefined(state) || stateText != state.ToString())
+                throw new InvalidOperationException("Invalid persisted target creation state.");
+            Guid? attempt = null;
+            if (!reader.IsDBNull(12))
+            {
+                var text = reader.GetString(12);
+                if (!Guid.TryParseExact(text, "D", out var parsed) || parsed == Guid.Empty || text != parsed.ToString())
+                    throw new InvalidOperationException("Invalid persisted target creation attempt.");
+                attempt = parsed;
+            }
+            var record = new TargetCreationRecord(intent, state, reader.GetInt64(11), attempt,
+                reader.IsDBNull(13) ? null : reader.GetInt64(13), reader.IsDBNull(14) ? null : reader.GetString(14));
+            var valid = state switch
+            {
+                TargetCreationState.IntentRecorded => record.Revision == 1 && attempt is null && record.AttemptExpectedRevision is null && record.QuarantineReason is null,
+                TargetCreationState.CreationInFlight => record.Revision == 2 && attempt is not null && record.AttemptExpectedRevision == 1 && record.QuarantineReason is null,
+                TargetCreationState.ReconciliationRequired =>
+                    (record.Revision == 2 && attempt is null && record.AttemptExpectedRevision is null ||
+                     record.Revision == 3 && attempt is not null && record.AttemptExpectedRevision == 1) &&
+                    record.QuarantineReason is "OutcomeUnknown" or "TargetCreationFailed" or "TargetConflict" or "ObservationMismatch" or "LeaseRejected" or "LeaseExpired" or "Cancelled",
+                _ => false
+            };
+            if (!valid) throw new InvalidOperationException("Invalid persisted target creation record.");
+            return record;
+        }
+        catch (Exception error) when (error is FormatException or InvalidCastException or ArgumentException or OverflowException)
+        {
+            throw new InvalidOperationException("Invalid persisted target creation record.", error);
+        }
+    }
 }
