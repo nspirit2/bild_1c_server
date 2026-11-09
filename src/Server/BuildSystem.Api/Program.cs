@@ -41,6 +41,10 @@ builder.Services.AddSingleton(services => new TargetCreationPermitOptions
     AgentStartEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:AgentStartEnabled"),
     CredentialBindingEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:CredentialBindingEnabled")
 });
+builder.Services.AddSingleton(services => new TargetCreationPermitHttpOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermitHttp:Enabled")
+});
 builder.Services.AddSingleton(services => new TargetCreationCredentialResolutionOptions
 {
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationCredentialResolution:Enabled")
@@ -159,6 +163,36 @@ if (args.Length == 1 && args[0] == "migrate")
     await scope.ServiceProvider.GetRequiredService<BuildSystemDbContext>().Database.MigrateAsync();
     return;
 }
+// Permit metadata has a prefix-wide boundary before redirect/authentication/CSRF/routing.
+// Even unmatched methods and framework failures are noncacheable and never expose exception text.
+app.Use(async (context, next) =>
+{
+    if (!TargetCreationPermitEndpoints.IsPermitPath(context.Request.Path))
+    {
+        await next(context);
+        return;
+    }
+    TargetCreationPermitEndpoints.SetHeaders(context.Response);
+    context.Response.OnStarting(() =>
+    {
+        TargetCreationPermitEndpoints.SetHeaders(context.Response);
+        return Task.CompletedTask;
+    });
+    if (!context.Request.IsHttps)
+    {
+        await TargetCreationPermitEndpoints.ErrorAsync(context, 400, "TargetCreationPermitHttpsRequired");
+        return;
+    }
+    if (context.Request.ContentLength > 4096)
+    {
+        await TargetCreationPermitEndpoints.ErrorAsync(context, 413, "TargetCreationPermitBodyTooLarge");
+        return;
+    }
+    try { await next(context); }
+    catch (RequestRejectedException ex) { await TargetCreationPermitEndpoints.RejectedAsync(context, ex); }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { context.Abort(); }
+    catch (Exception) { await TargetCreationPermitEndpoints.ErrorAsync(context, 503, "TargetCreationPermitUnavailable"); }
+});
 // Never redirect an HTTP machine credential request: redirects can forward Bearer credentials.
 // Apply even to unmatched methods under this narrow prefix, before body reads, authorization and HSTS.
 app.Use(async (context, next) =>
@@ -226,7 +260,9 @@ app.Use(async (context, next) =>
     try { await next(context); }
     catch (RequestRejectedException ex)
     {
-        if (context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
+        if (TargetCreationPermitEndpoints.IsPermitPath(context.Request.Path))
+            await TargetCreationPermitEndpoints.RejectedAsync(context, ex);
+        else if (context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
             await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 503, "TargetCreationCredentialDeliveryUnavailable");
         else
         {
@@ -273,6 +309,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
 app.MapAdministration();
 app.MapAgentEndpoints();
 app.MapTargetCreationCredentialDelivery();
+app.MapTargetCreationPermits();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();

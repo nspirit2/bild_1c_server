@@ -31,7 +31,8 @@ public sealed record TargetCreationPermitReceipt(Guid PermitId, Guid OperationId
 /// <summary>
 /// Internal current-administrator metadata barrier only. RecordStart is NOT assigned-agent
 /// authentication, worker delivery, execution authorization or evidence of physical execution.
-/// Trusted callers supply server-generated permit and attempt IDs. No HTTP adapter is provided.
+/// Trusted callers supply server-generated permit and attempt IDs. Any HTTP adapter must generate
+/// those IDs server-side and must not turn metadata receipts into execution authority.
 /// </summary>
 public interface ITargetCreationPermits
 {
@@ -54,7 +55,8 @@ public interface ITargetCreationPermits
 /// <summary>
 /// Assigned-agent credential barrier for recording historical, nonexecuting start metadata only.
 /// A receipt never grants target execution, cancellation, worker delivery or scheduled-job release.
-/// This is separate from the administrator permit API; no HTTP adapter is provided here.
+/// This is separate from administrator permit issue/revoke: a dedicated machine HTTP adapter may
+/// record assigned-agent start metadata, never a grant to invoke a physical creation command.
 /// </summary>
 public interface ITargetCreationPermitAgentStarts
 {
