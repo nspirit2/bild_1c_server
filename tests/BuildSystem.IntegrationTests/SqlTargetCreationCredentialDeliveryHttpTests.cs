@@ -168,7 +168,12 @@ public sealed class SqlTargetCreationCredentialDeliveryHttpTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var users = scope.ServiceProvider.GetRequiredService<UserManager<BuildSystemUser>>(); var user = await users.FindByIdAsync(f.Seed.Admin.UserId.ToString());
-            Assert.NotNull(user); userName = user.UserName!; Assert.True((await users.AddPasswordAsync(user, password)).Succeeded);
+            Assert.NotNull(user); userName = user.UserName!;
+            // The metadata seed intentionally has no email. Identity's unique-email validator runs
+            // when adding a password, so complete this real-login fixture before that update.
+            Assert.True((await users.SetEmailAsync(user, "delivery-http-" + user.Id.ToString("N") + "@fixture.example.invalid")).Succeeded);
+            user.EmailConfirmed = true;
+            Assert.True((await users.AddPasswordAsync(user, password)).Succeeded);
         }
         var csrf = await browser.GetFromJsonAsync<JsonElement>("/api/auth/csrf"); browser.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrf.GetProperty("token").GetString());
         using (var login = await browser.PostAsJsonAsync("/api/auth/login", new { userName, password })) Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);

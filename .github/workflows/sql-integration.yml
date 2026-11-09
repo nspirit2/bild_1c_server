@@ -71,6 +71,20 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore BuildSystem.slnx --locked-mode
       - run: dotnet test tests/BuildSystem.IntegrationTests/BuildSystem.IntegrationTests.csproj --configuration Release --no-restore --logger trx --results-directory TestResults
+      - name: Report failed SQL test locations without input values
+        if: failure()
+        shell: python
+        run: |
+          import glob, re, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          for path in glob.glob('TestResults/*.trx'):
+              for result in ET.parse(path).getroot().findall('t:Results/t:UnitTestResult', ns):
+                  if result.get('outcome') != 'Failed':
+                      continue
+                  name = result.get('testName', '').split('(')[0]
+                  stack = result.findtext('t:Output/t:ErrorInfo/t:StackTrace', '', ns)
+                  locations = re.findall(r' in ([^\r\n]+\.cs):line (\d+)', stack)
+                  print(f'::error::Failed SQL case: {name}; locations: {locations}')
       - name: Verify SQL tests executed without skips
         shell: python
         run: |
