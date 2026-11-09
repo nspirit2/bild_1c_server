@@ -22,6 +22,56 @@ namespace BuildSystem.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("BuildSystem.Domain.TargetCreationExecutionClaim", b =>
+                {
+                    b.Property<Guid>("ClaimId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttemptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CredentialId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PermitId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ClaimId");
+
+                    b.HasIndex("AttemptId")
+                        .IsUnique();
+
+                    b.HasIndex("CredentialId");
+
+                    b.HasIndex("OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("PermitId")
+                        .IsUnique();
+
+                    b.ToTable("TargetCreationExecutionClaims", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetCreationExecutionClaims_Ids", "[ClaimId] <> '00000000-0000-0000-0000-000000000000' AND [PermitId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000' AND [AgentId] <> '00000000-0000-0000-0000-000000000000' AND [CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [EndpointMappingId] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_TargetCreationExecutionClaims_Window", "DATEPART(TZOFFSET, [IssuedAt]) = 0 AND DATEPART(TZOFFSET, [ExpiresAt]) = 0 AND [IssuedAt] < [ExpiresAt] AND [IssuedAt] >= DATEADD(minute, -5, [ExpiresAt])");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.AgentEnrollment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1491,6 +1541,27 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
+                });
+
+            modelBuilder.Entity("BuildSystem.Domain.TargetCreationExecutionClaim", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.TargetCredentialRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CredentialId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.CreationOperationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OperationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.CreationPermitRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PermitId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("BuildSystem.Infrastructure.AgentEnrollment", b =>

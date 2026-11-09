@@ -43,6 +43,14 @@ builder.Services.AddSingleton(services => new TargetCreationPermitOptions
     AgentReadEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:AgentReadEnabled"),
     CredentialBindingEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:CredentialBindingEnabled")
 });
+builder.Services.AddSingleton(services => new TargetCreationExecutionClaimOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationExecutionClaim:Enabled")
+});
+builder.Services.AddSingleton(services => new TargetCreationExecutionClaimHttpOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationExecutionClaimHttp:Enabled")
+});
 builder.Services.AddSingleton(services => new TargetCreationPermitHttpOptions
 {
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermitHttp:Enabled")
@@ -165,6 +173,23 @@ if (args.Length == 1 && args[0] == "migrate")
     await scope.ServiceProvider.GetRequiredService<BuildSystemDbContext>().Database.MigrateAsync();
     return;
 }
+// Distinct one-shot authority has its own boundary; never redirect Bearer requests.
+app.Use(async (context, next) =>
+{
+    if (!TargetCreationExecutionClaimEndpoints.IsClaimPath(context.Request.Path))
+    { await next(context); return; }
+    TargetCreationExecutionClaimEndpoints.SetHeaders(context.Response);
+    context.Response.OnStarting(() =>
+    { TargetCreationExecutionClaimEndpoints.SetHeaders(context.Response); return Task.CompletedTask; });
+    if (!context.Request.IsHttps)
+    { await TargetCreationExecutionClaimEndpoints.ErrorAsync(context, 400, "TargetCreationExecutionClaimHttpsRequired"); return; }
+    if (context.Request.ContentLength > 4096)
+    { await TargetCreationExecutionClaimEndpoints.ErrorAsync(context, 413, "TargetCreationExecutionClaimBodyTooLarge"); return; }
+    try { await next(context); }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { context.Abort(); }
+    catch (Exception)
+    { await TargetCreationExecutionClaimEndpoints.ErrorAsync(context, 503, "TargetCreationExecutionClaimUnavailable"); }
+});
 // Permit metadata has a prefix-wide boundary before redirect/authentication/CSRF/routing.
 // Even unmatched methods and framework failures are noncacheable and never expose exception text.
 app.Use(async (context, next) =>
@@ -269,7 +294,9 @@ app.Use(async (context, next) =>
     try { await next(context); }
     catch (RequestRejectedException ex)
     {
-        if (TargetCreationPermitEndpoints.IsPermitPath(context.Request.Path))
+        if (TargetCreationExecutionClaimEndpoints.IsClaimPath(context.Request.Path))
+            await TargetCreationExecutionClaimEndpoints.ErrorAsync(context, 503, "TargetCreationExecutionClaimUnavailable");
+        else if (TargetCreationPermitEndpoints.IsPermitPath(context.Request.Path))
             await TargetCreationPermitEndpoints.RejectedAsync(context, ex);
         else if (context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
             await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 503, "TargetCreationCredentialDeliveryUnavailable");
@@ -319,6 +346,7 @@ app.MapAdministration();
 app.MapAgentEndpoints();
 app.MapTargetCreationCredentialDelivery();
 app.MapTargetCreationPermits();
+app.MapTargetCreationExecutionClaimEndpoints();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();
