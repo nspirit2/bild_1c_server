@@ -56,9 +56,13 @@ public sealed class TargetCreationPermitContractTests
         using var db = Context();
         var entity = db.Model.FindEntityType(typeof(CreationPermitRecord))!;
         Assert.True(entity.FindProperty(nameof(CreationPermitRecord.Revision))!.IsConcurrencyToken);
-        var fk = Assert.Single(entity.GetForeignKeys());
-        Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior);
-        Assert.Equal(typeof(CreationOperationRecord), fk.PrincipalEntityType.ClrType);
+        var keys = entity.GetForeignKeys().ToArray();
+        Assert.Equal(2, keys.Length);
+        foreach (var principal in new[] { typeof(CreationOperationRecord), typeof(TargetCredentialRecord) })
+        {
+            var fk = Assert.Single(keys, key => key.PrincipalEntityType.ClrType == principal);
+            Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior);
+        }
         foreach (var key in new[] { nameof(CreationPermitRecord.OperationId), nameof(CreationPermitRecord.AttemptId) })
             Assert.Contains(entity.GetIndexes(), i => i.IsUnique && i.Properties.Select(p => p.Name).SequenceEqual(new[] { key }));
     }

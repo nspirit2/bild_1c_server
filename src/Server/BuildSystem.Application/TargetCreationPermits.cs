@@ -8,6 +8,8 @@ public sealed class TargetCreationPermitOptions
     public bool Enabled { get; init; }
     /// <summary>Separate default-off opt-in for assigned-agent, nonexecuting start metadata.</summary>
     public bool AgentStartEnabled { get; init; }
+    /// <summary>Default-off opt-in for explicit credential binding and bound start metadata; never enables execution.</summary>
+    public bool CredentialBindingEnabled { get; init; }
     public override string ToString() => "TargetCreationPermitOptions [redacted]";
 }
 
@@ -17,6 +19,10 @@ public sealed record TargetCreationPermitReceipt(Guid PermitId, Guid OperationId
     TargetCreationPermitState State, long Revision, DateTimeOffset? StartedAt,
     long? StartExpectedRevision, bool NewlyRecorded, TargetCreationOperationReceipt Operation)
 {
+    /// <summary>Null for legacy unbound, permanently nonexecuting metadata. A bound pair is historical, not an active grant.</summary>
+    public Guid? CredentialId { get; init; }
+    /// <summary>Immutable selected mapping identity, never an endpoint alias or secret.</summary>
+    public Guid? EndpointMappingId { get; init; }
     public bool Executable => false;
     public bool ScheduledJobsMustRemainBlocked => true;
     public override string ToString() => "TargetCreationPermitReceipt [NONEXECUTABLE]";
@@ -29,8 +35,16 @@ public sealed record TargetCreationPermitReceipt(Guid PermitId, Guid OperationId
 /// </summary>
 public interface ITargetCreationPermits
 {
+    /// <summary>Legacy unbound metadata only; never eligible for future execution.</summary>
     Task<TargetCreationPermitReceipt> IssueAsync(Actor actor, Guid operationId, long expectedOperationRevision,
         Guid permitId, Guid attemptId, CancellationToken ct);
+    /// <summary>
+    /// Pins an explicit stored credential and mapping for this creation attempt. Still metadata only.
+    /// Any future executor must require both pins, recheck current credentials and validate actual trusted endpoints.
+    /// Revocation after a recorded start cannot undo any physical phase; this ledger makes no such claim.
+    /// </summary>
+    Task<TargetCreationPermitReceipt> IssueWithCredentialAsync(Actor actor, Guid operationId, long expectedOperationRevision,
+        Guid permitId, Guid attemptId, Guid credentialId, Guid endpointMappingId, CancellationToken ct);
     Task<TargetCreationPermitReceipt> RecordStartAsync(Actor actor, Guid permitId, long expectedPermitRevision,
         Guid attemptId, CancellationToken ct);
     Task<TargetCreationPermitReceipt> RevokeAsync(Actor actor, Guid permitId, long expectedPermitRevision, CancellationToken ct);

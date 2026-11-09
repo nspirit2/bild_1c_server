@@ -13,9 +13,25 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
 
     public Task<TargetCreationPermitReceipt> IssueAsync(Actor actor, Guid operationId, long expectedOperationRevision,
         Guid permitId, Guid attemptId, CancellationToken ct)
+        => IssueCore(actor, operationId, expectedOperationRevision, permitId, attemptId, null, null, ct);
+
+    public Task<TargetCreationPermitReceipt> IssueWithCredentialAsync(Actor actor, Guid operationId,
+        long expectedOperationRevision, Guid permitId, Guid attemptId, Guid credentialId, Guid endpointMappingId,
+        CancellationToken ct)
     {
         Enabled();
-        if (operationId == Guid.Empty || permitId == Guid.Empty || attemptId == Guid.Empty || expectedOperationRevision <= 0)
+        CredentialBindingEnabled();
+        if (credentialId == Guid.Empty || endpointMappingId == Guid.Empty)
+            throw Reject(400, "InvalidTargetCreationPermit");
+        return IssueCore(actor, operationId, expectedOperationRevision, permitId, attemptId, credentialId, endpointMappingId, ct);
+    }
+
+    private Task<TargetCreationPermitReceipt> IssueCore(Actor actor, Guid operationId, long expectedOperationRevision,
+        Guid permitId, Guid attemptId, Guid? credentialId, Guid? endpointMappingId, CancellationToken ct)
+    {
+        Enabled();
+        if (operationId == Guid.Empty || permitId == Guid.Empty || attemptId == Guid.Empty || expectedOperationRevision <= 0 ||
+            !BuildSystemDbContext.ValidCredentialPins(credentialId, endpointMappingId))
             throw Reject(400, "InvalidTargetCreationPermit");
         return Transaction(async () =>
         {
@@ -24,13 +40,16 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
             var intent = await Intent(operation, ct);
             await ledger.Admission(intent, ct); // Current admission precedes even an exact replay lookup.
             _ = SqlTargetCreationOperations.Receipt(operation, intent, false);
+            if (credentialId is { } credential)
+                await RequireCurrentCredential(credential, endpointMappingId!.Value, intent, await Now(ct), ct);
             if (operation.State == TargetCreationOperationState.ReconciliationRequired)
                 throw Reject(409, "InvalidTransition");
             var prior = await db.TargetCreationPermits.SingleOrDefaultAsync(x => x.OperationId == operationId, ct);
             if (prior is not null)
             {
                 if (prior.OperationId != operationId || prior.PermitId != permitId || prior.AttemptId != attemptId ||
-                    prior.ExpectedOperationRevision != expectedOperationRevision)
+                    prior.ExpectedOperationRevision != expectedOperationRevision ||
+                    prior.CredentialId != credentialId || prior.EndpointMappingId != endpointMappingId)
                     throw Reject(409, "PermitConflict");
                 return Receipt(prior, operation, intent, false); // No deadline renewal, even after revocation/expiry.
             }
@@ -43,6 +62,7 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
                 throw Reject(409, "PermitConflict");
             var now = await Now(ct);
             var row = new CreationPermitRecord { PermitId = permitId, OperationId = operationId, AttemptId = attemptId,
+                CredentialId = credentialId, EndpointMappingId = endpointMappingId,
                 ExpectedOperationRevision = expectedOperationRevision, IssuedAt = now, StartBefore = now.AddMinutes(5),
                 State = TargetCreationPermitState.Prepared, Revision = 1, Executable = false, ScheduledJobsMustRemainBlocked = true };
             var result = Receipt(row, operation, intent, true);
@@ -102,6 +122,11 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
         Guid attemptId, DateTimeOffset now, CancellationToken ct)
     {
         _ = Receipt(row, operation, intent, false);
+        if (row.CredentialId is { } credentialId)
+        {
+            CredentialBindingEnabled();
+            await RequireCurrentCredential(credentialId, row.EndpointMappingId!.Value, intent, now, ct);
+        }
         if (operation.State == TargetCreationOperationState.ReconciliationRequired)
             throw Reject(409, "InvalidTransition");
         if (row.AttemptId != attemptId) throw Reject(409, "PermitConflict");
@@ -173,6 +198,29 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
         if (!permitOptions.Enabled || !creationOptions.Enabled) throw Reject(409, "TargetCreationPermitDisabled");
     }
 
+    private void CredentialBindingEnabled()
+    {
+        if (!permitOptions.CredentialBindingEnabled) throw Reject(409, "TargetCreationPermitDisabled");
+    }
+
+    // Metadata projection only: never select, decrypt or transport a protected credential envelope.
+    // Storage CHECKs and its immutable write guard validate ciphertext; no secret is needed for this barrier.
+    private async Task RequireCurrentCredential(Guid credentialId, Guid endpointMappingId, RestoreIntentRecord intent,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        var credential = await db.TargetCredentials.AsNoTracking().Where(x => x.CredentialId == credentialId)
+            .Select(x => new { x.CredentialId, x.CanonicalClusterId, x.CanonicalSqlServerId, x.EndpointMappingId,
+                x.State, x.Revision, x.CreatedAt, x.RevokedAt }).SingleOrDefaultAsync(ct);
+        if (credential is null || credential.CredentialId == Guid.Empty ||
+            credential.CanonicalClusterId == Guid.Empty || credential.CanonicalSqlServerId == Guid.Empty ||
+            credential.EndpointMappingId == Guid.Empty || credential.EndpointMappingId != endpointMappingId ||
+            credential.CanonicalClusterId != intent.CanonicalClusterId ||
+            credential.CanonicalSqlServerId != intent.CanonicalSqlServerId ||
+            credential.State != TargetCredentialState.Stored || credential.Revision != 1 || credential.RevokedAt is not null ||
+            credential.CreatedAt.Offset != TimeSpan.Zero || now.Offset != TimeSpan.Zero || credential.CreatedAt > now)
+            throw Reject(409, "TargetCreationCredentialUnavailable");
+    }
+
     private Task<TargetCreationPermitReceipt> Transaction(Func<Task<TargetCreationPermitReceipt>> action, CancellationToken ct) =>
         db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
@@ -202,6 +250,7 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
         var operationReceipt = SqlTargetCreationOperations.Receipt(operation, intent, false);
         var valid = row.PermitId != Guid.Empty && row.OperationId == operation.OperationId && row.AttemptId != Guid.Empty &&
             row.ExpectedOperationRevision == 1 && !row.Executable && row.ScheduledJobsMustRemainBlocked &&
+            BuildSystemDbContext.ValidCredentialPins(row.CredentialId, row.EndpointMappingId) &&
             row.IssuedAt.Offset == TimeSpan.Zero && row.StartBefore.Offset == TimeSpan.Zero &&
             row.IssuedAt <= DateTimeOffset.MaxValue.AddMinutes(-5) && row.StartBefore == row.IssuedAt.AddMinutes(5) &&
             (row.StartedAt is null || row.StartedAt.Value.Offset == TimeSpan.Zero && row.StartedAt >= row.IssuedAt && row.StartedAt < row.StartBefore) &&
@@ -214,7 +263,8 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
             row.StartedAt is not null && operation.AttemptId is null)
             throw Reject(409, "TargetCreationPermitMismatch");
         return new(row.PermitId, row.OperationId, row.AttemptId, row.ExpectedOperationRevision, row.IssuedAt,
-            row.StartBefore, row.State, row.Revision, row.StartedAt, row.StartExpectedRevision, newlyRecorded, operationReceipt);
+            row.StartBefore, row.State, row.Revision, row.StartedAt, row.StartExpectedRevision, newlyRecorded, operationReceipt)
+            { CredentialId = row.CredentialId, EndpointMappingId = row.EndpointMappingId };
     }
 
     private static RequestRejectedException Reject(int status, string code) => new(status, code);

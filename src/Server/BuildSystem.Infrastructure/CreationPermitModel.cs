@@ -1,5 +1,6 @@
 using BuildSystem.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace BuildSystem.Infrastructure;
 
@@ -9,6 +10,9 @@ public sealed class CreationPermitRecord
     public Guid PermitId { get; set; }
     public Guid OperationId { get; set; }
     public Guid AttemptId { get; set; }
+    /// <summary>Null together with mapping only for legacy nonexecuting metadata; immutable after insertion.</summary>
+    public Guid? CredentialId { get; set; }
+    public Guid? EndpointMappingId { get; set; }
     public long ExpectedOperationRevision { get; set; } = 1;
     public DateTimeOffset IssuedAt { get; set; }
     public DateTimeOffset StartBefore { get; set; }
@@ -33,11 +37,15 @@ public sealed partial class BuildSystemDbContext
         row.HasIndex(x => x.OperationId).IsUnique();
         row.HasIndex(x => x.AttemptId).IsUnique();
         row.HasOne<CreationOperationRecord>().WithMany().HasForeignKey(x => x.OperationId).OnDelete(DeleteBehavior.Restrict);
+        row.HasOne<TargetCredentialRecord>().WithMany().HasForeignKey(x => x.CredentialId).OnDelete(DeleteBehavior.Restrict);
+        row.Property(x => x.CredentialId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        row.Property(x => x.EndpointMappingId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
         row.Property(x => x.Revision).IsConcurrencyToken();
         row.Property(x => x.State).HasConversion<string>().HasMaxLength(32).IsRequired();
         row.ToTable(t =>
         {
             t.HasCheckConstraint("CK_TargetCreationPermits_Ids", "[PermitId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000'");
+            t.HasCheckConstraint("CK_TargetCreationPermits_CredentialPins", "([CredentialId] IS NULL AND [EndpointMappingId] IS NULL) OR ([CredentialId] IS NOT NULL AND [EndpointMappingId] IS NOT NULL AND [CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [EndpointMappingId] <> '00000000-0000-0000-0000-000000000000')");
             t.HasCheckConstraint("CK_TargetCreationPermits_ExpectedOperationRevision", "[ExpectedOperationRevision] = 1");
             t.HasCheckConstraint("CK_TargetCreationPermits_NonExecutable", "[Executable] = 0");
             t.HasCheckConstraint("CK_TargetCreationPermits_JobsBlocked", "[ScheduledJobsMustRemainBlocked] = 1");
@@ -47,6 +55,11 @@ public sealed partial class BuildSystemDbContext
             t.HasCheckConstraint("CK_TargetCreationPermits_RevisionState", "([State] = 'Prepared' AND [Revision] = 1 AND [StartedAt] IS NULL AND [StartExpectedRevision] IS NULL) OR ([State] = 'StartRecorded' AND [Revision] = 2 AND [StartedAt] IS NOT NULL AND [StartExpectedRevision] IS NOT NULL AND [StartExpectedRevision] = 1) OR ([State] = 'Revoked' AND (([Revision] = 2 AND [StartedAt] IS NULL AND [StartExpectedRevision] IS NULL) OR ([Revision] = 3 AND [StartedAt] IS NOT NULL AND [StartExpectedRevision] IS NOT NULL AND [StartExpectedRevision] = 1)))");
         });
     }
+
+    internal static bool ValidCredentialPins(Guid? credentialId, Guid? endpointMappingId) =>
+        credentialId is null && endpointMappingId is null ||
+        credentialId is { } credential && credential != Guid.Empty &&
+        endpointMappingId is { } mapping && mapping != Guid.Empty;
 
     private void GuardCreationPermits()
     {
@@ -60,6 +73,7 @@ public sealed partial class BuildSystemDbContext
             var current = entry.Entity;
             if (current.PermitId == Guid.Empty || current.OperationId == Guid.Empty || current.AttemptId == Guid.Empty ||
                 current.ExpectedOperationRevision != 1 || current.Executable || !current.ScheduledJobsMustRemainBlocked ||
+                !ValidCredentialPins(current.CredentialId, current.EndpointMappingId) ||
                 current.IssuedAt.Offset != TimeSpan.Zero || current.StartBefore.Offset != TimeSpan.Zero ||
                 current.IssuedAt > DateTimeOffset.MaxValue.AddMinutes(-5) || current.StartBefore != current.IssuedAt.AddMinutes(5) ||
                 current.StartedAt is { } started && (started.Offset != TimeSpan.Zero || started < current.IssuedAt || started >= current.StartBefore))

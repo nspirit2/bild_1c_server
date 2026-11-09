@@ -358,6 +358,12 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.Property<Guid>("AttemptId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("CredentialId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("EndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<bool>("Executable")
                         .HasColumnType("bit");
 
@@ -396,11 +402,15 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasIndex("AttemptId")
                         .IsUnique();
 
+                    b.HasIndex("CredentialId");
+
                     b.HasIndex("OperationId")
                         .IsUnique();
 
                     b.ToTable("TargetCreationPermits", t =>
                         {
+                            t.HasCheckConstraint("CK_TargetCreationPermits_CredentialPins", "([CredentialId] IS NULL AND [EndpointMappingId] IS NULL) OR ([CredentialId] IS NOT NULL AND [EndpointMappingId] IS NOT NULL AND [CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [EndpointMappingId] <> '00000000-0000-0000-0000-000000000000')");
+
                             t.HasCheckConstraint("CK_TargetCreationPermits_ExpectedOperationRevision", "[ExpectedOperationRevision] = 1");
 
                             t.HasCheckConstraint("CK_TargetCreationPermits_Ids", "[PermitId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000'");
@@ -1557,6 +1567,11 @@ namespace BuildSystem.Infrastructure.Migrations
 
             modelBuilder.Entity("BuildSystem.Infrastructure.CreationPermitRecord", b =>
                 {
+                    b.HasOne("BuildSystem.Infrastructure.TargetCredentialRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CredentialId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("BuildSystem.Infrastructure.CreationOperationRecord", null)
                         .WithMany()
                         .HasForeignKey("OperationId")

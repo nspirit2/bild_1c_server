@@ -17,13 +17,13 @@ public sealed class SqlTargetCreationOperationTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
     private static readonly string Hash = new('A', 64);
-    private sealed record Seed(Actor Admin, Actor Owner, Guid Project, Guid Pool, OrderReceipt Order,
+    internal sealed record Seed(Actor Admin, Actor Owner, Guid Project, Guid Pool, OrderReceipt Order,
         AgentCredential Credential, StageLeaseGrant Grant, ReportStagedArtifact Report,
         RestoreIntentReceipt Restore, TargetCreationOperationOptions Options);
 
     // Local fixture: the restore-intent and observation preparation helpers are intentionally private.
     // All stage and restore pins originate from the standard control services, not fabricated ledger rows.
-    private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql, bool stageOnly = false)
+    internal static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql, bool stageOnly = false)
     {
         await sql.ApplyMigrationsAsync();
         var admin = new Actor(Guid.NewGuid(), true); var owner = new Actor(Guid.NewGuid(), false);
