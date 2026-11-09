@@ -142,7 +142,8 @@ app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/api/admin/target-credentials") ||
         context.Request.Path.StartsWithSegments("/api/admin/target-creation-operations") ||
-        context.Request.Path.StartsWithSegments("/admin/creation-diagnostics"))
+        context.Request.Path.StartsWithSegments("/admin/creation-diagnostics") ||
+        context.Request.Path.StartsWithSegments("/admin/target-credentials"))
     {
         context.Response.Headers.CacheControl = "no-store";
         context.Response.OnStarting(() =>
@@ -215,6 +216,7 @@ app.MapAgentEndpoints();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();
+app.MapTargetCredentialsUi();
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => Results.Ok(new
 {
     id = user.FindFirstValue(ClaimTypes.NameIdentifier), name = user.Identity!.Name,

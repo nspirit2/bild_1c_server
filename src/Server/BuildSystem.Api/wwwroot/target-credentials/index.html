@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Учётные данные целевого контура — администратор</title>
+  <link rel="stylesheet" href="/admin/target-credentials/styles.css">
+  <script src="/admin/target-credentials/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Учётные данные целевого контура</h1>
+    <p class="notice">Хранилище по умолчанию отключено. Импорт не создаёт цель, не назначает активные учётные данные и не разрешает выполнение операций. При отключённом API запросы вернут 503.</p>
+    <p>Для кластера, SQL-сервера и mapping используйте доверенные идентификаторы; для новой записи создайте новый credential ID. Поля секретов очищаются сразу после подготовки запроса; браузер и JavaScript не гарантируют стирание копий из памяти или запрет автозаполнения вопреки настройкам.</p>
+    <section aria-labelledby="import-heading">
+      <h2 id="import-heading">Импорт в хранилище</h2>
+      <form id="importForm" method="post" action="/api/admin/target-credentials" autocomplete="off" novalidate>
+        <label>Идентификатор учётных данных <input id="credentialId" name="credentialId" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <button type="button" id="generateId">Создать новый ID</button>
+        <label>ID кластера <input id="canonicalClusterId" name="canonicalClusterId" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>ID SQL-сервера <input id="canonicalSqlServerId" name="canonicalSqlServerId" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>ID соответствия конечной точки <input id="endpointMappingId" name="endpointMappingId" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>Пользователь кластера <input id="clusterUser" type="password" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>Пароль кластера <input id="clusterPassword" type="password" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>Пользователь SQL <input id="sqlUser" type="password" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <label>Пароль SQL <input id="sqlPassword" type="password" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <button type="submit" id="importSubmit" disabled>Импортировать</button>
+      </form>
+    </section>
+    <section aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">Метаданные по ID</h2>
+      <form id="lookupForm" autocomplete="off" novalidate>
+        <label>ID учётных данных <input id="lookupId" name="lookupId" required autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+        <button type="submit">Получить метаданные</button>
+      </form>
+      <dl id="metadata" aria-live="polite"></dl>
+      <button type="button" id="revoke" disabled>Отозвать выбранную запись</button>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

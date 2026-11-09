@@ -1,0 +1,13 @@
+# Administrative credential UI
+
+Protected embedded page `/admin/target-credentials` использует существующий admin HTTP API, не новый secret-reader. Она позволяет импортировать новую запись, загрузить metadata по известному credential ID и подтвердить terminal revoke с exact revision. Нет общего списка/поиска секретов, выдачи агенту, автоматического выбора active credential, CREATE/restore/drop или изменений стенда. `TargetCredentials:Enabled=false` по умолчанию; page сама не включает feature flag.
+
+Все три embedded routes (HTML/JS/CSS) требуют Administrator cookie role. Server API дополнительно проверяет текущую DB role, поэтому stale cookie не разрешает import/get/revoke. CSP без inline scripts/styles, self-only connect, no framing, no referrer и no-store включая ранние auth failures. Page не должна работать через публичный CDN/proxy с body capture или caching.
+
+Четыре credential поля — password inputs, пустые при загрузке, autocomplete/spellcheck отключены. Это пожелание браузеру, а не абсолютный запрет password-manager autofill; доверенный browser/device и его extensions остаются operator boundary. Credentials не помещаются в URL/query/history/localStorage/sessionStorage, не сохраняются на странице после отправки, не выводятся в ошибки/metadata. Inputs очищаются до первого async token/network await после создания локального payload; сохранённые managed JS strings нельзя гарантированно обнулить. HTTP payload остаётся в памяти browser/network stack до завершения запроса. Не использовать shared browser profile.
+
+JS использует same-origin/no-store fetch, CSRF header на POST, client UTF8 byte bound 16384; server limits и validation остаются authoritative. Отображение metadata — только allowlisted binding/state/revision/timestamps через textContent, никогда raw response или innerHTML. Busy guard предотвращает параллельные действия. Нет automatic retries; при network/unknown status предлагается вручную проверить metadata по ID, а не повторять import автоматически. Generate ID использует browser crypto.randomUUID, но ID не capability и не execution grant. Revoke не отзывает уже доставленные внешние пароли.
+
+## Verification
+
+HTTP authorization/security-header/embedded-resource и source-contract tests добавляются без browser automation dependency. Source inspections не доказывают фактический browser memory cleanup или real password-manager behavior. 11offlineHTTP/source-contractcasesпрошли, node--checkJSsyntaxpassed. Source review выявил nativeformGETfallback, stale selection, неполныйresponse binding и nativeerror display: исправленыдоcommit, frozenreviewбезblockers. ПолныйlocalRelease1557passed/0failed,223SQLexplicitlyskipped; integration256. CIafterpushотдельно; никакого запуска стенда.
