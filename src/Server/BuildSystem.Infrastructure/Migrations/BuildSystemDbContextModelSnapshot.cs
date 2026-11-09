@@ -1174,6 +1174,53 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("StagingAllocationReleases");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.TargetCredentialRecord", b =>
+                {
+                    b.Property<Guid>("CredentialId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalClusterId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalSqlServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Ciphertext")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("EndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.HasKey("CredentialId");
+
+                    b.ToTable("TargetCredentials", t =>
+                        {
+                            t.HasCheckConstraint("CK_TargetCredentials_Ciphertext", "[Ciphertext] IS NOT NULL AND LEN([Ciphertext]) > 0 AND LEN([Ciphertext]) <= 262144 AND DATALENGTH([Ciphertext]) > 0 AND DATALENGTH([Ciphertext]) <= 524288");
+
+                            t.HasCheckConstraint("CK_TargetCredentials_Ids", "[CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalClusterId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalSqlServerId] <> '00000000-0000-0000-0000-000000000000' AND [EndpointMappingId] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_TargetCredentials_State", "([State] = 'Stored' AND [Revision] = 1 AND [RevokedAt] IS NULL) OR ([State] = 'Revoked' AND [Revision] = 2 AND [RevokedAt] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_TargetCredentials_Time", "DATEPART(TZOFFSET, [CreatedAt]) = 0 AND ([RevokedAt] IS NULL OR (DATEPART(TZOFFSET, [RevokedAt]) = 0 AND [RevokedAt] >= [CreatedAt]))");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.TargetObservationReceiptRecord", b =>
                 {
                     b.Property<Guid>("ReceiptId")

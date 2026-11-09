@@ -55,6 +55,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
     {
         ChangeTracker.DetectChanges();
         GuardCreationPermits();
+        GuardTargetCredentials();
         if (ChangeTracker.Entries<TargetObservationReceiptRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Target observation receipts are immutable.");
         if (ChangeTracker.Entries<TargetObservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
@@ -112,6 +113,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureRestoreIntentModel(b);
         ConfigureCreationOperationModel(b);
         ConfigureCreationPermitModel(b);
+        ConfigureTargetCredentials(b);
         ConfigureTargetObservationModel(b);
         ConfigureTargetObservationReceiptModel(b);
         ConfigureStageCleanupModel(b);
