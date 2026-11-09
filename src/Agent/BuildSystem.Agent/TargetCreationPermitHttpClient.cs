@@ -31,6 +31,23 @@ public sealed record TargetCreationPermitStartReceipt(TargetCreationIntent Targe
     public override string ToString() => "TargetCreationPermitStartReceipt [NONEXECUTABLE]";
 }
 
+/// <summary>Correlated prepared metadata only, never fresh authority or proof of local persistence.</summary>
+public sealed record TargetCreationPreparedPermitReceipt(TargetCreationIntent TargetIntent,
+    TargetCreationPermitBinding ScopeBinding)
+{
+    public bool Executable => false;
+    public bool FreshAuthority => false;
+    public bool ScheduledJobsMustRemainBlocked => true;
+    public bool RetryAllowed => false;
+    public override string ToString() => "TargetCreationPreparedPermitReceipt [NONEXECUTABLE]";
+}
+
+public interface ITargetCreationPreparedPermitTransport
+{
+    Task<TargetCreationPreparedPermitReceipt> GetPreparedAsync(TargetCreationIntent expectedIntent,
+        TargetCreationPermitBinding expectedBinding, CancellationToken cancellationToken = default);
+}
+
 public interface ITargetCreationPermitStartTransport
 {
     Task<TargetCreationPermitStartReceipt> RecordStartAsync(TargetCreationIntent expectedIntent,
@@ -45,7 +62,7 @@ public sealed class TargetCreationPermitTransportException : Exception
 }
 
 /// <summary>Isolated one-exchange metadata transport. No retries, journal writes, worker or execution.</summary>
-public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartTransport, IDisposable
+public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartTransport, ITargetCreationPreparedPermitTransport, IDisposable
 {
     private const int MaximumResponseBytes = 32 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -90,12 +107,20 @@ public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartT
         }
     }
 
-    public async Task<TargetCreationPermitStartReceipt> RecordStartAsync(TargetCreationIntent expectedIntent, TargetCreationPermitBinding expectedBinding,
-        CancellationToken cancellationToken = default)
+    public Task<TargetCreationPermitStartReceipt> RecordStartAsync(TargetCreationIntent expectedIntent, TargetCreationPermitBinding expectedBinding,
+        CancellationToken cancellationToken = default) =>
+        ExchangeAsync(expectedIntent, expectedBinding, false, root => Parse(root, expectedIntent, expectedBinding), cancellationToken);
+
+    public Task<TargetCreationPreparedPermitReceipt> GetPreparedAsync(TargetCreationIntent expectedIntent, TargetCreationPermitBinding expectedBinding,
+        CancellationToken cancellationToken = default) =>
+        ExchangeAsync(expectedIntent, expectedBinding, true, root => ParsePrepared(root, expectedIntent, expectedBinding), cancellationToken);
+
+    private async Task<T> ExchangeAsync<T>(TargetCreationIntent expectedIntent, TargetCreationPermitBinding expectedBinding,
+        bool prepared, Func<JsonElement, T> parse, CancellationToken cancellationToken) where T : class
     {
         // Disabled is the first gate, even for a canceled or malformed call.
         if (!_enabled) throw new TargetCreationPermitTransportException();
-        TargetCreationPermitStartReceipt? result = null;
+        T? result = null;
         byte[]? bytes = null;
         try
         {
@@ -118,16 +143,22 @@ public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartT
             if (string.IsNullOrEmpty(credential) || credential.Length > 256 ||
                 credential.StartsWith("Bearer", StringComparison.OrdinalIgnoreCase) ||
                 credential.Any(c => c < '!' || c > '~' || c is ',' or ';')) Fail();
-            using (var message = new HttpRequestMessage(HttpMethod.Post, _destination))
+            var destination = prepared
+                ? new Uri(_destination, "/api/agents/target-creation-permits/" + expectedBinding.PermitId.ToString("D"))
+                : _destination;
+            using (var message = new HttpRequestMessage(prepared ? HttpMethod.Get : HttpMethod.Post, destination))
             {
                 message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential);
-                message.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new
+                if (!prepared)
                 {
-                    permitId = expectedBinding.PermitId,
-                    expectedPermitRevision = 1,
-                    attemptId = expectedBinding.AttemptId
-                }));
-                message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                    message.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new
+                    {
+                        permitId = expectedBinding.PermitId,
+                        expectedPermitRevision = 1,
+                        attemptId = expectedBinding.AttemptId
+                    }));
+                    message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                }
                 var sending = _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, token);
                 HttpResponseMessage response;
                 try { response = await sending.WaitAsync(token).ConfigureAwait(false); }
@@ -141,7 +172,7 @@ public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartT
                     Check();
                     // Error and redirect bodies are never opened or read.
                     if (response.StatusCode != HttpStatusCode.OK ||
-                        response.RequestMessage?.RequestUri != _destination || response.Content is null ||
+                        response.RequestMessage?.RequestUri != destination || response.Content is null ||
                         response.Headers.CacheControl?.NoStore != true ||
                         response.Content.Headers.ContentLength is > MaximumResponseBytes ||
                         response.Content.Headers.ContentEncoding.Count != 0) Fail();
@@ -178,7 +209,7 @@ public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartT
                     Check();
                     _ = StrictUtf8.GetCharCount(bytes, 0, count);
                     using var document = JsonDocument.Parse(bytes.AsMemory(0, count), new JsonDocumentOptions { MaxDepth = 6 });
-                    result = Parse(document.RootElement, expectedIntent, expectedBinding);
+                    result = parse(document.RootElement);
                     Check();
                 }
             }
@@ -221,6 +252,30 @@ public sealed class TargetCreationPermitHttpClient : ITargetCreationPermitStartT
             o["infobaseName"].ValueKind != JsonValueKind.String || o["infobaseName"].GetString() != i.InfobaseName ||
             o["sqlDbName"].ValueKind != JsonValueKind.String || o["sqlDbName"].GetString() != i.SqlDatabaseName) Fail();
         return new(i, b, p["newlyRecorded"].GetBoolean(), started);
+    }
+
+    private static TargetCreationPreparedPermitReceipt ParsePrepared(JsonElement root, TargetCreationIntent i, TargetCreationPermitBinding b)
+    {
+        var p = Fields(root, ["permitId", "operationId", "attemptId", "expectedOperationRevision", "issuedAt", "startBefore", "state", "revision", "startedAt", "startExpectedRevision", "newlyRecorded", "operation", "credentialId", "endpointMappingId", "executable", "scheduledJobsMustRemainBlocked"]);
+        RequireGuid(p["permitId"], b.PermitId); RequireGuid(p["operationId"], i.OperationId);
+        RequireGuid(p["attemptId"], b.AttemptId); RequireGuid(p["credentialId"], b.CredentialId!.Value);
+        RequireGuid(p["endpointMappingId"], b.EndpointMappingId!.Value);
+        Number(p["expectedOperationRevision"], "1"); Number(p["state"], "0"); Number(p["revision"], "1"); Safety(p);
+        if (Timestamp(p["issuedAt"]) != b.IssuedAt || Timestamp(p["startBefore"]) != b.StartBefore ||
+            p["startedAt"].ValueKind != JsonValueKind.Null || p["startExpectedRevision"].ValueKind != JsonValueKind.Null ||
+            p["newlyRecorded"].ValueKind != JsonValueKind.False) Fail();
+        var o = Fields(p["operation"], ["operationId", "restoreIntentId", "environmentId", "stageJobId", "reservationId", "artifactId", "agentId", "targetIncarnationId", "canonicalClusterId", "canonicalSqlServerId", "infobaseName", "sqlDbName", "state", "revision", "attemptId", "attemptExpectedRevision", "quarantineReason", "newlyRecorded", "executable", "scheduledJobsMustRemainBlocked"]);
+        foreach (var pair in new (string Name, Guid Id)[] {
+            ("operationId", i.OperationId), ("restoreIntentId", b.RestoreIntentId), ("environmentId", i.EnvironmentId),
+            ("stageJobId", i.JobId), ("reservationId", i.ReservationId), ("artifactId", b.ArtifactId), ("agentId", b.AgentId),
+            ("targetIncarnationId", i.TargetIncarnationId), ("canonicalClusterId", i.CanonicalClusterId),
+            ("canonicalSqlServerId", i.CanonicalSqlServerId) }) RequireGuid(o[pair.Name], pair.Id);
+        Number(o["state"], "0"); Number(o["revision"], "1"); Safety(o);
+        if (o["attemptId"].ValueKind != JsonValueKind.Null || o["attemptExpectedRevision"].ValueKind != JsonValueKind.Null ||
+            o["quarantineReason"].ValueKind != JsonValueKind.Null || o["newlyRecorded"].ValueKind != JsonValueKind.False ||
+            o["infobaseName"].ValueKind != JsonValueKind.String || o["infobaseName"].GetString() != i.InfobaseName ||
+            o["sqlDbName"].ValueKind != JsonValueKind.String || o["sqlDbName"].GetString() != i.SqlDatabaseName) Fail();
+        return new(i, b);
     }
 
     private static Dictionary<string, JsonElement> Fields(JsonElement root, string[] names)

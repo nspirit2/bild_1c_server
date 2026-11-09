@@ -5,7 +5,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 // Reject misspelled commands/extra flags before configuration, token IO or worker startup.
-if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args))
+if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args) &&
+    !TargetCreationStartCommand.IsStartCommand(args))
 {
     Console.Error.WriteLine("UnsupportedAgentCommand");
     Environment.ExitCode = 64;
@@ -14,11 +15,26 @@ if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationComman
 // Positional explicit command arguments are not configuration key/value overrides.
 HostApplicationBuilder builder;
 try { builder = Host.CreateApplicationBuilder(Array.Empty<string>()); }
+catch (Exception) when (TargetCreationStartCommand.IsStartCommand(args))
+{
+    Console.Out.WriteLine("{\"status\":\"TargetCreationStartUnavailable\",\"executable\":false,\"scheduledJobsMustRemainBlocked\":true,\"retryAllowed\":false}");
+    Environment.ExitCode = 5;
+    return;
+}
 catch (Exception) when (TargetObservationCommand.IsObservationCommand(args))
 {
     Console.Error.WriteLine("TargetObservationConfigurationOrStorageFailure");
     Environment.ExitCode = 5;
     return;
+}
+if (TargetCreationStartCommand.TryParse(args, out var creationPermitId))
+{
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += cancel;
+    try { Environment.ExitCode = await TargetCreationStartHostCommand.RunAsync(creationPermitId, builder.Configuration, Console.Out, cancellation.Token); }
+    finally { Console.CancelKeyPress -= cancel; }
+    return; // Metadata only: never register a hosted worker or execute CREATE.
 }
 if (TargetObservationCommand.TryParse(args, out var observationRequestId))
 {
