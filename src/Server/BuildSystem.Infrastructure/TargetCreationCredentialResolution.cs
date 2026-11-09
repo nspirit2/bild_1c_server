@@ -52,14 +52,20 @@ public sealed class TargetCreationResolvedCredentialsJsonConverter : JsonConvert
 }
 
 /// <summary>
-/// Unwired SQL-only credential resolution foundation. Nothing executes, consumes a permit or delivers
+/// Scoped SQL-only credential resolution foundation. Nothing executes, consumes a permit or delivers
 /// secrets to an external callback. Repeated internal resolution requires every current check again;
 /// no exactly-once delivery policy is implied. Plaintext never enters entities, audit or diagnostics.
 /// </summary>
+public interface ITargetCreationCredentialResolver
+{
+    Task<TargetCreationResolvedCredentials> ResolveAsync(string token, Guid permitId,
+        long expectedPermitRevision, Guid attemptId, Guid credentialId, Guid endpointMappingId, CancellationToken ct);
+}
+
 public sealed class SqlTargetCreationCredentialResolver(BuildSystemDbContext db,
     TargetCreationPermitOptions permits, TargetCreationOperationOptions creation,
     ITargetCredentialProtector protector, TargetCredentialOptions credentialOptions,
-    TargetCreationCredentialResolutionOptions options)
+    TargetCreationCredentialResolutionOptions options) : ITargetCreationCredentialResolver
 {
     private readonly SqlTargetCreationOperations ledger = new(db, creation);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);

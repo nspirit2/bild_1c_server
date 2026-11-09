@@ -28,6 +28,28 @@ builder.Services.AddSingleton(services => new TargetCredentialOptions
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCredentials:Enabled")
 });
 builder.Services.AddScoped<ITargetCredentials, SqlTargetCredentials>();
+// Independent, default-off metadata, resolution and machine-delivery gates. Resolve configuration
+// through the final host provider; diagnostics opt-in never enables credential delivery.
+builder.Services.AddSingleton(services => new TargetCreationOperationOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationOperation:Enabled"),
+    CanonicalMappings = services.GetRequiredService<RestoreIntentOptions>().CanonicalMappings
+});
+builder.Services.AddSingleton(services => new TargetCreationPermitOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:Enabled"),
+    AgentStartEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:AgentStartEnabled"),
+    CredentialBindingEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:CredentialBindingEnabled")
+});
+builder.Services.AddSingleton(services => new TargetCreationCredentialResolutionOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationCredentialResolution:Enabled")
+});
+builder.Services.AddSingleton(services => new TargetCreationCredentialDeliveryOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationCredentialDelivery:Enabled")
+});
+builder.Services.AddScoped<ITargetCreationCredentialResolver, SqlTargetCreationCredentialResolver>();
 builder.Services.AddSingleton<ITargetCredentialProtector, DataProtectionTargetCredentialProtector>();
 builder.Services.AddSingleton(new TargetCreationDiagnosticsOptions
 {
@@ -137,6 +159,36 @@ if (args.Length == 1 && args[0] == "migrate")
     await scope.ServiceProvider.GetRequiredService<BuildSystemDbContext>().Database.MigrateAsync();
     return;
 }
+// Never redirect an HTTP machine credential request: redirects can forward Bearer credentials.
+// Apply even to unmatched methods under this narrow prefix, before body reads, authorization and HSTS.
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
+    {
+        await next(context);
+        return;
+    }
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Pragma = "no-cache";
+    context.Response.Headers.XContentTypeOptions = "nosniff";
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.Pragma = "no-cache";
+        context.Response.Headers.XContentTypeOptions = "nosniff";
+        return Task.CompletedTask;
+    });
+    if (!context.Request.IsHttps)
+    {
+        await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 400, "TargetCreationCredentialHttpsRequired");
+        return;
+    }
+    try { await next(context); }
+    catch (Exception)
+    {
+        await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 503, "TargetCreationCredentialDeliveryUnavailable");
+    }
+});
 // Run before redirects, body limits and authorization so failures cannot cache sensitive diagnostics.
 app.Use(async (context, next) =>
 {
@@ -160,7 +212,9 @@ app.Use(async (context, next) =>
 {
     if (context.Request.ContentLength > 16 * 1024)
     {
-        context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+        if (context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
+            await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 413, "TargetCreationCredentialDeliveryBodyTooLarge");
+        else context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
         return;
     }
     await next(context);
@@ -172,8 +226,13 @@ app.Use(async (context, next) =>
     try { await next(context); }
     catch (RequestRejectedException ex)
     {
-        context.Response.StatusCode = ex.StatusCode;
-        await context.Response.WriteAsJsonAsync(new { code = ex.Code });
+        if (context.Request.Path.StartsWithSegments("/api/agents/target-creation-credentials"))
+            await TargetCreationCredentialDeliveryEndpoints.ErrorAsync(context, 503, "TargetCreationCredentialDeliveryUnavailable");
+        else
+        {
+            context.Response.StatusCode = ex.StatusCode;
+            await context.Response.WriteAsJsonAsync(new { code = ex.Code });
+        }
     }
     catch (AntiforgeryValidationException)
     {
@@ -213,6 +272,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
 }).RequireAuthorization();
 app.MapAdministration();
 app.MapAgentEndpoints();
+app.MapTargetCreationCredentialDelivery();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();
