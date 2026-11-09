@@ -21,7 +21,7 @@ public sealed class RacInfobaseCreationInvocationTests
         TrustedRacToolId = "trusted-rac-invocation", Endpoint = "private-ras.example:1545",
         EndpointMappingId = Mapping, CanonicalClusterId = Cluster, RacClusterId = RacCluster,
         CanonicalSqlServerId = Server, SqlServer = "private-sql.example\\TEST",
-        WorkingDirectory = Workspace, Timeout = TimeSpan.FromSeconds(30), Locale = "en_US",
+        WorkingDirectory = Workspace, Timeout = TimeSpan.FromSeconds(30), Locale = "ru_RU",
         Enabled = true, ExclusiveNamespaceConfirmed = true
     }).Prepare(new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
         Cluster, Server, Mapping), new(Secrets[0], Secrets[1], Secrets[2], Secrets[3]));

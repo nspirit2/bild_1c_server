@@ -2,9 +2,9 @@ namespace BuildSystem.Agent.Tools;
 
 /// <summary>
 /// Operator-owned RAC creation policy. The endpoint, both cluster identities, SQL server mapping,
-/// locale, tool ID, workspace, and timeout must come from trusted configuration, not pipeline input.
-/// Enabled and ExclusiveNamespaceConfirmed default to false. The operator must select the locale;
-/// this recipe deliberately does not silently choose a regional default.
+/// tool ID, workspace, and timeout must come from trusted configuration, not pipeline input.
+/// Enabled and ExclusiveNamespaceConfirmed default to false. Owner-approved creation locale is
+/// always ru_RU; an explicit conflicting locale is rejected rather than silently overwritten.
 /// </summary>
 public sealed class RacInfobaseCreationRecipeOptions
 {
@@ -15,7 +15,7 @@ public sealed class RacInfobaseCreationRecipeOptions
     public required Guid EndpointMappingId { get; init; }
     public required string Endpoint { get; init; }
     public required string SqlServer { get; init; }
-    public required string Locale { get; init; }
+    public string Locale { get; init; } = "ru_RU";
     public required string WorkingDirectory { get; init; }
     public required TimeSpan Timeout { get; init; }
     public bool Enabled { get; init; }
@@ -191,9 +191,7 @@ public sealed class RacInfobaseCreationRecipe
                        (c is >= '0' and <= '9') || c is '.' or '_' or '-' or '\\' or ',' or ':');
 
     private static bool ValidLocale(string? value) =>
-        value is { Length: 5 } && value[0] is >= 'a' and <= 'z' &&
-        value[1] is >= 'a' and <= 'z' && value[2] == '_' &&
-        value[3] is >= 'A' and <= 'Z' && value[4] is >= 'A' and <= 'Z';
+        string.Equals(value, "ru_RU", StringComparison.Ordinal);
 
     private static bool ValidCredential(string? value) =>
         !string.IsNullOrEmpty(value) && value.Length <= 4096 && !value.Any(char.IsControl);

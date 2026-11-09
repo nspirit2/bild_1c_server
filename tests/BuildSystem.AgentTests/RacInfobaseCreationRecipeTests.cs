@@ -22,7 +22,6 @@ public sealed class RacInfobaseCreationRecipeTests
         SqlServer = "trusted-sql.example\\TEST",
         WorkingDirectory = Workspace,
         Timeout = TimeSpan.FromSeconds(30),
-        Locale = "en_US",
         Enabled = true,
         ExclusiveNamespaceConfirmed = true
     };
@@ -162,9 +161,9 @@ public sealed class RacInfobaseCreationRecipeTests
     }
 
     [Fact]
-    public void LocaleMustBeAnExplicitOperatorLocaleInTheRequiredPattern()
+    public void EveryLocaleExceptOwnerApprovedRussianIsRejected()
     {
-        foreach (var locale in new[] { "", "en-US", "en_us", "EN_US", "en_US ", " en_US", "en_US\n", "en_US --scheduled-jobs-deny=off" })
+        foreach (var locale in new[] { null, "", "en_US", "uk_UA", "ru-RU", "ru_ru", "RU_RU", "ru_RU ", " ru_RU", "ru_RU\n", "ru_RU --scheduled-jobs-deny=off" })
         {
             var options = Options();
             SetOption(options, nameof(options.Locale), locale);
@@ -173,13 +172,15 @@ public sealed class RacInfobaseCreationRecipeTests
     }
 
     [Theory]
-    [InlineData("en_US")] [InlineData("ru_RU")]
-    public void OperatorLocaleIsPassedExactlyWithoutInference(string locale)
+    [InlineData(false)] [InlineData(true)]
+    public void DefaultAndExplicitLocaleAreAlwaysOwnerApprovedRussian(bool explicitLocale)
     {
         var options = Options();
-        SetOption(options, nameof(options.Locale), locale);
+        if (explicitLocale) SetOption(options, nameof(options.Locale), "ru_RU");
+        Assert.Equal("ru_RU", options.Locale);
         var command = new RacInfobaseCreationRecipe(options).Prepare(Scope(), Credentials()).Command;
-        Assert.Contains(command.Arguments, a => a.Value == "--locale=" + locale);
+        var locale = Assert.Single(command.Arguments, a => a.Value.StartsWith("--locale=", StringComparison.Ordinal));
+        Assert.Equal("--locale=ru_RU", locale.Value);
     }
 
     [Fact]
@@ -229,7 +230,7 @@ public sealed class RacInfobaseCreationRecipeTests
             "--create-database", "--name=" + recipe.GeneratedName, "--dbms=MSSQLServer",
             "--db-server=" + options.SqlServer, "--db-name=" + recipe.GeneratedName,
             "--db-user=" + credentials.SqlUser, "--db-pwd=" + credentials.SqlPassword,
-            "--locale=en_US", "--scheduled-jobs-deny=on", options.Endpoint
+            "--locale=ru_RU", "--scheduled-jobs-deny=on", options.Endpoint
         }, command.Arguments.Select(a => a.Value));
         Assert.DoesNotContain(command.Arguments, a => a.Value == "--cluster=" + Cluster.ToString("D"));
     }
@@ -277,7 +278,7 @@ public sealed class RacInfobaseCreationRecipeTests
         var builder = new RacInfobaseCreationRecipe(options);
         var before = builder.Prepare(scope, Credentials());
         foreach (var invalid in InvalidOptions()) SetOption(options, (string)invalid[0], invalid[1]);
-        SetOption(options, nameof(options.Locale), "ru_RU");
+        SetOption(options, nameof(options.Locale), "en_US");
         SetOption(options, nameof(options.Enabled), false);
         SetOption(options, nameof(options.ExclusiveNamespaceConfirmed), false);
         var after = builder.Prepare(scope, Credentials());
