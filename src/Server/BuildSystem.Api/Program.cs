@@ -23,6 +23,12 @@ else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironm
 
 builder.Services.AddBuildSystemInfrastructure(connection);
 // A dedicated read instance leaves the concrete ledger and mutation port disabled by default.
+builder.Services.AddSingleton(services => new TargetCredentialOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCredentials:Enabled")
+});
+builder.Services.AddScoped<ITargetCredentials, SqlTargetCredentials>();
+builder.Services.AddSingleton<ITargetCredentialProtector, DataProtectionTargetCredentialProtector>();
 builder.Services.AddSingleton(new TargetCreationDiagnosticsOptions
 {
     Enabled = builder.Configuration.GetValue<bool>("TargetCreationDiagnostics:Enabled")
@@ -134,7 +140,8 @@ if (args.Length == 1 && args[0] == "migrate")
 // Run before redirects, body limits and authorization so failures cannot cache sensitive diagnostics.
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api/admin/target-creation-operations") ||
+    if (context.Request.Path.StartsWithSegments("/api/admin/target-credentials") ||
+        context.Request.Path.StartsWithSegments("/api/admin/target-creation-operations") ||
         context.Request.Path.StartsWithSegments("/admin/creation-diagnostics"))
     {
         context.Response.Headers.CacheControl = "no-store";
@@ -205,6 +212,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
 }).RequireAuthorization();
 app.MapAdministration();
 app.MapAgentEndpoints();
+app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => Results.Ok(new
