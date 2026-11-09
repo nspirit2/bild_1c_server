@@ -8,6 +8,8 @@ public sealed class TargetCreationPermitOptions
     public bool Enabled { get; init; }
     /// <summary>Separate default-off opt-in for assigned-agent, nonexecuting start metadata.</summary>
     public bool AgentStartEnabled { get; init; }
+    /// <summary>Separate default-off opt-in for assigned-agent delivery of Prepared metadata, never execution authority.</summary>
+    public bool AgentReadEnabled { get; init; }
     /// <summary>Default-off opt-in for explicit credential binding and bound start metadata; never enables execution.</summary>
     public bool CredentialBindingEnabled { get; init; }
     public override string ToString() => "TargetCreationPermitOptions [redacted]";
@@ -62,4 +64,16 @@ public interface ITargetCreationPermitAgentStarts
 {
     Task<TargetCreationPermitReceipt> RecordAgentStartAsync(string token, Guid permitId,
         long expectedPermitRevision, Guid attemptId, CancellationToken ct);
+}
+
+/// <summary>
+/// Assigned-agent delivery of exact credential-bound Prepared metadata only, never execution authority.
+/// Repeated reads recheck current authentication, assignment, admission, credential pins and the fixed
+/// server deadline without consuming, starting or renewing the permit. Historical receipts are not delivered.
+/// Any future client must strictly validate every identity, revision, trusted endpoint mapping and deadline
+/// against its current trusted configuration; receipt delivery alone never authorizes physical creation.
+/// </summary>
+public interface ITargetCreationPermitAgentReads
+{
+    Task<TargetCreationPermitReceipt> GetForAgentAsync(string token, Guid permitId, CancellationToken ct);
 }

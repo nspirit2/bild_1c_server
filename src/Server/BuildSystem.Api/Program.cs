@@ -28,6 +28,7 @@ builder.Services.AddSingleton(services => new TargetCredentialOptions
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCredentials:Enabled")
 });
 builder.Services.AddScoped<ITargetCredentials, SqlTargetCredentials>();
+builder.Services.AddScoped<ITargetCreationPermitAgentReads, SqlTargetCreationPermits>();
 // Independent, default-off metadata, resolution and machine-delivery gates. Resolve configuration
 // through the final host provider; diagnostics opt-in never enables credential delivery.
 builder.Services.AddSingleton(services => new TargetCreationOperationOptions
@@ -39,6 +40,7 @@ builder.Services.AddSingleton(services => new TargetCreationPermitOptions
 {
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:Enabled"),
     AgentStartEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:AgentStartEnabled"),
+    AgentReadEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:AgentReadEnabled"),
     CredentialBindingEnabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationPermit:CredentialBindingEnabled")
 });
 builder.Services.AddSingleton(services => new TargetCreationPermitHttpOptions
@@ -181,6 +183,13 @@ app.Use(async (context, next) =>
     if (!context.Request.IsHttps)
     {
         await TargetCreationPermitEndpoints.ErrorAsync(context, 400, "TargetCreationPermitHttpsRequired");
+        return;
+    }
+    if (HttpMethods.IsGet(context.Request.Method) &&
+        context.Request.Path.StartsWithSegments(TargetCreationPermitEndpoints.AgentReadPrefix) &&
+        (context.Request.ContentLength > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding")))
+    {
+        await TargetCreationPermitEndpoints.ErrorAsync(context, 400, "InvalidTargetCreationPermit");
         return;
     }
     if (context.Request.ContentLength > 4096)

@@ -7,7 +7,7 @@ namespace BuildSystem.Infrastructure;
 
 /// <summary>Administrator and assigned-agent SQL metadata barriers; never external execution authorization.</summary>
 public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCreationPermitOptions permitOptions,
-    TargetCreationOperationOptions creationOptions) : ITargetCreationPermits, ITargetCreationPermitAgentStarts
+    TargetCreationOperationOptions creationOptions) : ITargetCreationPermits, ITargetCreationPermitAgentStarts, ITargetCreationPermitAgentReads
 {
     private readonly SqlTargetCreationOperations ledger = new(db, creationOptions);
 
@@ -113,6 +113,43 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
             await ledger.Admission(intent, ct); // Current admission is required even for an exact replay.
             return await RecordStartCore(new Actor(agent.Id, false), row, operation, intent,
                 expectedPermitRevision, attemptId, await Now(ct), ct);
+        }, ct);
+    }
+
+    /// <summary>Read-only delivery of bound Prepared metadata to the current assigned agent; never a grant.</summary>
+    public Task<TargetCreationPermitReceipt> GetForAgentAsync(string token, Guid permitId, CancellationToken ct)
+    {
+        if (!permitOptions.Enabled || !creationOptions.Enabled || !permitOptions.AgentReadEnabled ||
+            !permitOptions.CredentialBindingEnabled)
+            throw Reject(503, "TargetCreationPermitAgentReadDisabled");
+        if (permitId == Guid.Empty) throw Reject(400, "InvalidTargetCreationPermit");
+        return Transaction(async () =>
+        {
+            // The strategy retry reacquires the global lock and reauthenticates before permit lookup.
+            if (string.IsNullOrEmpty(token) || token.Length > 256) throw Reject(401, "AgentUnauthorized");
+            var hash = TokenProtector.Hash(token);
+            var agent = await db.Agents.AsNoTracking().SingleOrDefaultAsync(
+                x => x.TokenHash == hash && x.State == "Approved", ct);
+            if (agent is null || !TokenProtector.Verify(token, agent.TokenHash!))
+                throw Reject(401, "AgentUnauthorized");
+            var row = await db.TargetCreationPermits.AsNoTracking().SingleOrDefaultAsync(
+                x => x.PermitId == permitId, ct) ?? throw Reject(404, "TargetCreationPermitNotFound");
+            var operation = await db.TargetCreationOperations.AsNoTracking().SingleOrDefaultAsync(
+                x => x.OperationId == row.OperationId, ct) ?? throw Reject(404, "TargetCreationNotFound");
+            var intent = await Intent(operation, ct);
+            if (agent.Id != intent.AgentId) throw Reject(403, "TargetCreationPermitForbidden");
+            await ledger.Admission(intent, ct); // Recheck current global, root and pool admission in lock order.
+            var now = await Now(ct); // SQL UTC time, never the agent's clock or a renewed deadline.
+            if (row.CredentialId is not { } credentialId || row.EndpointMappingId is not { } mappingId ||
+                row.State != TargetCreationPermitState.Prepared || row.Revision != 1 ||
+                row.StartedAt is not null || row.StartExpectedRevision is not null ||
+                operation.State != TargetCreationOperationState.Registered || operation.Revision != 1 ||
+                operation.AttemptId is not null || operation.AttemptExpectedRevision is not null ||
+                row.ExpectedOperationRevision != 1 || now < row.IssuedAt || now >= row.StartBefore)
+                throw Reject(409, "TargetCreationPermitNotReady");
+            var receipt = Receipt(row, operation, intent, false);
+            await RequireCurrentCredential(credentialId, mappingId, intent, now, ct);
+            return receipt;
         }, ct);
     }
 

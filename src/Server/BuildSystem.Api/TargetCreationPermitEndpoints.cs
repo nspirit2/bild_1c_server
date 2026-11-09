@@ -16,12 +16,14 @@ internal static class TargetCreationPermitEndpoints
 {
     internal const string AdminPrefix = "/api/admin/target-creation-permits";
     internal const string AgentPrefix = "/api/agents/target-creation-permit-starts";
+    internal const string AgentReadPrefix = "/api/agents/target-creation-permits";
     private const int MaxBodyBytes = 4096;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     internal static bool IsPermitPath(PathString path) =>
-        path.StartsWithSegments(AdminPrefix) || path.StartsWithSegments(AgentPrefix);
+        path.StartsWithSegments(AdminPrefix) || path.StartsWithSegments(AgentPrefix) ||
+        path.StartsWithSegments(AgentReadPrefix);
 
     public static void MapTargetCreationPermits(this WebApplication app)
     {
@@ -31,8 +33,10 @@ internal static class TargetCreationPermitEndpoints
             .RequireAuthorization(policy => policy.RequireRole("Administrator"));
         app.MapPost(AdminPrefix + "/{permitId:guid}/revoke", RevokeAsync)
             .RequireAuthorization(policy => policy.RequireRole("Administrator"));
-        // Only this precise machine route bypasses cookie CSRF. Authentication is rechecked by SQL.
+        // Only precise machine endpoints carry this marker. Authentication is rechecked by SQL.
         app.MapPost(AgentPrefix, StartAsync).AllowAnonymous().WithMetadata(new AgentMachineEndpoint());
+        app.MapGet(AgentReadPrefix + "/{permitId:guid}", GetForAgentAsync)
+            .AllowAnonymous().WithMetadata(new AgentMachineEndpoint());
     }
 
     private static Task IssueAsync(HttpContext context) => BoundaryAsync(context, async () =>
@@ -84,28 +88,61 @@ internal static class TargetCreationPermitEndpoints
         if (context.Request.Headers.Origin.Count != 0)
             throw new RequestRejectedException(403, "TargetCreationPermitForbidden");
         RequireEnabled(context, binding: true, agentStart: true);
-        var authorization = context.Request.Headers.Authorization;
-        if (authorization.Count != 1 || authorization[0] is not { } value ||
-            !value.StartsWith("Bearer ", StringComparison.Ordinal) || value.Length is < 8 or > 263 ||
-            value[7..].Any(c => c < 0x21 || c > 0x7e || c == ','))
-            throw new RequestRejectedException(401, "AgentUnauthorized");
+        var token = ReadBearer(context);
         var input = await ReadAsync(context.Request, "start", context.RequestAborted);
         var receipt = await context.RequestServices.GetRequiredService<ITargetCreationPermitAgentStarts>()
-            .RecordAgentStartAsync(value[7..], input.PermitId, input.Revision, input.AttemptId, context.RequestAborted);
+            .RecordAgentStartAsync(token, input.PermitId, input.Revision, input.AttemptId, context.RequestAborted);
         ValidateReceipt(receipt, input.PermitId);
         if (receipt.AttemptId != input.AttemptId || receipt.StartExpectedRevision != input.Revision ||
             receipt.StartedAt is null) throw new InvalidOperationException();
         await WriteReceiptAsync(context, receipt, 200);
     });
 
-    private static void RequireEnabled(HttpContext context, bool binding = false, bool agentStart = false)
+    private static Task GetForAgentAsync(HttpContext context) => BoundaryAsync(context, async () =>
+    {
+        if (context.Request.Headers.Origin.Count != 0)
+            throw new RequestRejectedException(403, "TargetCreationPermitForbidden");
+        RequireEnabled(context, binding: true, agentRead: true);
+        var token = ReadBearer(context);
+        if (context.Request.QueryString.HasValue || context.Request.ContentLength > 0 ||
+            context.Request.Headers.ContainsKey("Transfer-Encoding")) throw Invalid();
+        var permitId = RoutePermitId(context);
+        var receipt = await context.RequestServices.GetRequiredService<ITargetCreationPermitAgentReads>()
+            .GetForAgentAsync(token, permitId, context.RequestAborted);
+        ValidateReceipt(receipt, permitId);
+        var operation = receipt.Operation;
+        if (receipt.State != TargetCreationPermitState.Prepared || receipt.Revision != 1 || receipt.NewlyRecorded ||
+            receipt.StartedAt is not null || receipt.StartExpectedRevision is not null ||
+            receipt.CredentialId is null || receipt.EndpointMappingId is null ||
+            operation.State != TargetCreationOperationState.Registered || operation.Revision != 1 || operation.NewlyRecorded ||
+            operation.AttemptId is not null || operation.AttemptExpectedRevision is not null || operation.QuarantineReason is not null ||
+            operation.RestoreIntentId == Guid.Empty || operation.EnvironmentId == Guid.Empty || operation.StageJobId == Guid.Empty ||
+            operation.ArtifactId == Guid.Empty || operation.AgentId == Guid.Empty || operation.TargetIncarnationId == Guid.Empty ||
+            operation.CanonicalClusterId == Guid.Empty || operation.CanonicalSqlServerId == Guid.Empty)
+            throw new InvalidOperationException();
+        await WriteReceiptAsync(context, receipt, 200);
+    });
+
+    private static string ReadBearer(HttpContext context)
+    {
+        var authorization = context.Request.Headers.Authorization;
+        if (authorization.Count != 1 || authorization[0] is not { } value ||
+            !value.StartsWith("Bearer ", StringComparison.Ordinal) || value.Length is < 8 or > 263 ||
+            value[7..].Any(c => c < 0x21 || c > 0x7e || c == ','))
+            throw new RequestRejectedException(401, "AgentUnauthorized");
+        return value[7..];
+    }
+
+    private static void RequireEnabled(HttpContext context, bool binding = false, bool agentStart = false,
+        bool agentRead = false)
     {
         if (!context.Request.IsHttps) throw new RequestRejectedException(400, "TargetCreationPermitHttpsRequired");
         var services = context.RequestServices;
         var options = services.GetRequiredService<TargetCreationPermitOptions>();
         if (!services.GetRequiredService<TargetCreationPermitHttpOptions>().Enabled || !options.Enabled ||
             !services.GetRequiredService<TargetCreationOperationOptions>().Enabled ||
-            binding && !options.CredentialBindingEnabled || agentStart && !options.AgentStartEnabled)
+            binding && !options.CredentialBindingEnabled || agentStart && !options.AgentStartEnabled ||
+            agentRead && !options.AgentReadEnabled)
             throw new RequestRejectedException(503, "TargetCreationPermitUnavailable");
     }
 
@@ -142,6 +179,8 @@ internal static class TargetCreationPermitEndpoints
             (409, "TargetCreationCredentialUnavailable") => (409, "TargetCreationCredentialUnavailable"),
             (409, "TargetCreationMismatch") => (409, "TargetCreationMismatch"),
             (409, "TargetCreationPermitMismatch") => (409, "TargetCreationPermitMismatch"),
+            (409, "TargetCreationPermitNotReady") => (409, "TargetCreationPermitNotReady"),
+            (503, "TargetCreationPermitAgentReadDisabled") => (503, "TargetCreationPermitAgentReadDisabled"),
             (409, "TargetCreationPermitDisabled") => (503, "TargetCreationPermitUnavailable"),
             _ => (503, "TargetCreationPermitUnavailable")
         };
