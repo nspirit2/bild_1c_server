@@ -244,7 +244,7 @@ public sealed class SqlTargetCreationPermits(BuildSystemDbContext db, TargetCrea
     private Task<DateTimeOffset> Now(CancellationToken ct) => db.Database.SqlQuery<DateTimeOffset>(
         $"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
 
-    private static TargetCreationPermitReceipt Receipt(CreationPermitRecord row, CreationOperationRecord operation,
+    internal static TargetCreationPermitReceipt Receipt(CreationPermitRecord row, CreationOperationRecord operation,
         RestoreIntentRecord intent, bool newlyRecorded)
     {
         var operationReceipt = SqlTargetCreationOperations.Receipt(operation, intent, false);
