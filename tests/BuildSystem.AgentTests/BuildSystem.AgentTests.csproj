@@ -7,4 +7,13 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1"><PrivateAssets>all</PrivateAssets><IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets></PackageReference>
     <ProjectReference Include="../../src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" />
   </ItemGroup>
+  <Target Name="CopyAgentFixture" AfterTargets="Build">
+    <MSBuild Projects="../../src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_AgentFixtureTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <_AgentFixtureOutput Include="%(_AgentFixtureTarget.RootDir)%(_AgentFixtureTarget.Directory)**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_AgentFixtureOutput)" DestinationFiles="@(_AgentFixtureOutput->'$(OutDir)AgentFixture/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 // Reject misspelled commands/extra flags before configuration, token IO or worker startup.
 if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args) &&
-    !TargetCreationStartCommand.IsStartCommand(args))
+    !TargetCreationStartCommand.IsStartCommand(args) && !TargetCreationOneShotCommand.IsOneShotCommand(args))
 {
     Console.Error.WriteLine("UnsupportedAgentCommand");
     Environment.ExitCode = 64;
@@ -15,6 +15,13 @@ if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationComman
 // Positional explicit command arguments are not configuration key/value overrides.
 HostApplicationBuilder builder;
 try { builder = Host.CreateApplicationBuilder(Array.Empty<string>()); }
+catch (Exception) when (TargetCreationOneShotCommand.IsOneShotCommand(args))
+{
+    try { Console.Out.WriteLine("{\"status\":\"TargetCreationOneShotUnavailable\",\"executable\":false,\"freshAuthority\":false,\"scheduledJobsMustRemainBlocked\":true,\"retryAllowed\":false,\"physicalInvocationAttempted\":false,\"creationAcknowledged\":false}"); }
+    catch (Exception) { } // A failed output attempt must not expose raw diagnostics or retry output.
+    Environment.ExitCode = 5;
+    return;
+}
 catch (Exception) when (TargetCreationStartCommand.IsStartCommand(args))
 {
     Console.Out.WriteLine("{\"status\":\"TargetCreationStartUnavailable\",\"executable\":false,\"scheduledJobsMustRemainBlocked\":true,\"retryAllowed\":false}");
@@ -26,6 +33,15 @@ catch (Exception) when (TargetObservationCommand.IsObservationCommand(args))
     Console.Error.WriteLine("TargetObservationConfigurationOrStorageFailure");
     Environment.ExitCode = 5;
     return;
+}
+if (TargetCreationOneShotCommand.TryParse(args, out var oneShotPermitId))
+{
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += cancel;
+    try { Environment.ExitCode = await TargetCreationOneShotHostCommand.RunAsync(oneShotPermitId, builder.Configuration, Console.Out, cancellation.Token); }
+    finally { Console.CancelKeyPress -= cancel; }
+    return; // Explicit invocation only: no hosted worker or automatic pickup.
 }
 if (TargetCreationStartCommand.TryParse(args, out var creationPermitId))
 {
