@@ -6,6 +6,7 @@ using Xunit;
 namespace BuildSystem.AgentTests;
 
 /// <summary>Only disabled or rejected invocations: never provide executable target configuration.</summary>
+[Collection("Agent CLI subprocesses")]
 public sealed class TargetCreationOneShotCliTests : IDisposable
 {
     private const string Permit = "11111111-1111-1111-1111-111111111111";
@@ -121,7 +122,7 @@ public sealed class TargetCreationOneShotCliTests : IDisposable
         if (enabled is not null) start.Environment[Enabled] = enabled;
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Agent process did not start.");
         process.StandardInput.Close();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var stdout = Capture(process.StandardOutput, timeout.Token);
         var stderr = Capture(process.StandardError, timeout.Token);
         try

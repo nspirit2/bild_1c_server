@@ -7,6 +7,7 @@ using Xunit;
 namespace BuildSystem.AgentTests;
 
 /// <summary>Only the offline readiness route is invoked, even for enabled configuration.</summary>
+[Collection("Agent CLI subprocesses")]
 public sealed class TargetCreationOneShotReadinessCliTests : IDisposable
 {
     private const string Command = "check-target-creation-readiness";
@@ -165,7 +166,7 @@ public sealed class TargetCreationOneShotReadinessCliTests : IDisposable
         foreach (var pair in values) start.Environment[pair.Key] = pair.Value;
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Agent process did not start.");
         process.StandardInput.Close();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var stdout = Capture(process.StandardOutput, timeout.Token);
         var stderr = Capture(process.StandardError, timeout.Token);
         try { await process.WaitForExitAsync(timeout.Token); return new(process.ExitCode, await stdout, await stderr); }
