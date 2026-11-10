@@ -1,0 +1,15 @@
+# Explicit physical RAC cluster for canonical observations
+
+Observation scopes/results identify the canonical cluster. RAC argv must instead address the operator-pinned physical RAC cluster UUID, which may differ. Equal metadata IDs do not prove physical endpoint identity.
+
+InfobaseInventoryObserverOptions now accepts a paired optional CanonicalClusterId and RacClusterId. Both must be absent (legacy low-level behavior) or both nonempty. With a pair, scope.ClusterId must match configured canonical ID before any runner call; --cluster uses only configured physical UUID. Original scope and output correlation remain canonical, never rewritten to impersonate another canonical scope. Existing EndpointMappingId pin remains mandatory and unchanged. Low-level compatibility fallback is not sufficient for a future creation host.
+
+TargetObservationHostOptions requires RacClusterId whenever Enabled, including direct public init-only construction and bound configuration. The host supplies both IDs explicitly, refusing old enabled configs that omit the physical mapping instead of silently assuming equality. Disabled configuration remains nonexecuting. Read-only host composition does not load credentials or connect to targets. No CREATE/worker wiring is added.
+
+The SQL observation connection string now explicitly includes ConnectRetryCount=0 as well as Pooling=false, integrated security, master, mandatory encryption and certificate validation. This prevents implicit connection retries; it does not turn a read-only observer into a retained namespace hold. A future namespace adapter must still acquire/monitor the dedicated SPID session applock and retain it across creation.
+
+Trusted operator config remains the binding between canonical endpoint IDs, observation mapping IDs, creation-pair mapping and real servers/RAC UUID. Matching configured metadata is not a physical fence against outside administrators, DNS changes or misconfiguration. Before live use, the creation host must validate that both read-only observation and create recipe address the same approved physical RAC/SQL pair. This increment neither contacts a stand nor applies migrations or runs target commands.
+
+## Verification
+
+Fake runner tests use distinct canonical and physical UUIDs, verify argv physical + scope canonical, reject canonical mismatch before runner, and preserve legacy low-level behavior. Host tests verify enabled missing/empty mapping fails, disabled behavior and explicit nonreconnecting SQL policy. Post-freeze focused85process cases and79host cases passed. Independent final source/tests review found no blockers. Full local Release2154passed/0failed,264SQLexplicitlyskipped; integration320total. CIafterpush separately. Initial premature host run compiled before valid fixture mapping landed (5fails) and was rerun successfully after freeze. Optional future coverage: injectable factory end-to-end argv assertion. No target IO/stand/migration.

@@ -20,7 +20,7 @@ Import API создаёт защищённый файл без overwrite; оно
 
 ## Concrete factory и concurrency
 
-Один trusted RAC executable/internal tool ID/allowed workdir, fixed read-only inventory; SQL connection создаётся через SqlClient6.1.7, structured builder с IntegratedSecurity=true, InitialCatalog=master, Encrypt=Mandatory, TrustServerCertificate=false, bounded timeout, Pooling=false, fixed ApplicationName. Обнаруженный уязвимый transitive PKCS9.0.11 заменён прямым10.0.13 pin; audit warnings не подавлены, locked restore проходит.
+Один trusted RAC executable/internal tool ID/allowed workdir, fixed read-only inventory; SQL connection создаётся через SqlClient6.1.7, structured builder с IntegratedSecurity=true, InitialCatalog=master, Encrypt=Mandatory, TrustServerCertificate=false, bounded timeout, Pooling=false, explicit ConnectRetryCount=0, fixed ApplicationName. Enabled host requires separate physical RacClusterId and keeps observation scope canonical; missing physical mapping is rejected rather than assuming equality. Обнаруженный уязвимый transitive PKCS9.0.11 заменён прямым10.0.13 pin; audit warnings не подавлены, locked restore проходит.
 
 Explicit invocation удерживает observation-command.lock через FileShare.None до завершения journal/transport работы. Это сериализует только explicit observation commands для одного DataDirectory. **Оператор должен остановить service/другие процессы, работающие с этим journal**: они не участвуют в lock protocol, lock не является межагентным target lease и не решает physical exclusion. Crash до enqueue может повторить read-only observation; после enqueue отправляется та же immutable история.
 
@@ -34,6 +34,7 @@ Agent:ApiOrigin                       verified HTTPS origin, no path/query/useri
 Agent:TargetObservation:Enabled       false (default); true only for explicit approved invocation
 Agent:TargetObservation:AgentId       enrolled agent GUID
 Agent:TargetObservation:CanonicalClusterId
+Agent:TargetObservation:RacClusterId            required physical RAC cluster UUID when enabled; not canonical ID
 Agent:TargetObservation:CanonicalSqlServerId
 Agent:TargetObservation:RacEndpointMappingId
 Agent:TargetObservation:SqlEndpointMappingId

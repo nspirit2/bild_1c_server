@@ -19,7 +19,7 @@ public sealed class TargetObservationHostOptionsTests
     {
         var options = TargetObservationHostOptions.Bind(Config(new()
         {
-            ["Enabled"] = enabled, ["AgentId"] = "not-a-guid", ["Unknown"] = "ignored",
+            ["Enabled"] = enabled, ["AgentId"] = "not-a-guid", ["RacClusterId"] = "not-a-guid", ["Unknown"] = "ignored",
             ["RacExecutable"] = "\0not-a-path", ["TimeoutSeconds"] = "not-an-int"
         }));
         Assert.False(options.Enabled);
@@ -50,6 +50,8 @@ public sealed class TargetObservationHostOptionsTests
         config[Prefix + "AgentId"] = Guid.NewGuid().ToString();
         Assert.True(options.Enabled);
         Assert.Equal(fixture.Assignment.AgentId, options.AgentId);
+        Assert.Equal(fixture.RacClusterId, options.RacClusterId);
+        Assert.NotEqual(options.CanonicalClusterId, options.RacClusterId);
         Assert.Equal(fixture.Executable, options.RacExecutable);
         Assert.Equal("MSSQLSERVER", options.ExpectedSqlInstanceName);
         Assert.Equal(30, options.TimeoutSeconds);
@@ -59,6 +61,7 @@ public sealed class TargetObservationHostOptionsTests
     [Theory]
     [InlineData("Unknown", "private-unknown")]
     [InlineData("AgentId", "private-invalid-guid")]
+    [InlineData("RacClusterId", "private-invalid-guid")]
     [InlineData("TimeoutSeconds", "private-invalid-integer")]
     [InlineData("ExpectedSqlInstanceName:Unexpected", "private-nested")]
     public void EnabledRejectsUnknownOrMalformedMembers(string key, string value)
@@ -71,6 +74,7 @@ public sealed class TargetObservationHostOptionsTests
     [Theory]
     [InlineData("AgentId")]
     [InlineData("CanonicalClusterId")]
+    [InlineData("RacClusterId")]
     [InlineData("CanonicalSqlServerId")]
     [InlineData("RacEndpointMappingId")]
     [InlineData("SqlEndpointMappingId")]
@@ -79,6 +83,22 @@ public sealed class TargetObservationHostOptionsTests
         using var fixture = new Fixture();
         fixture.Values[key] = Guid.Empty.ToString();
         Invalid(Config(fixture.Values));
+    }
+
+    [Fact]
+    public void EnabledRequiresPhysicalRacClusterId()
+    {
+        using var fixture = new Fixture();
+        fixture.Values.Remove("RacClusterId");
+        Invalid(Config(fixture.Values));
+    }
+
+    [Fact]
+    public void DisabledAcceptsMissingPhysicalRacClusterId()
+    {
+        var options = TargetObservationHostOptions.Bind(Config(new() { ["Enabled"] = "false" }));
+        Assert.False(options.Enabled);
+        Assert.Equal(Guid.Empty, options.RacClusterId);
     }
 
     [Theory]
@@ -252,6 +272,7 @@ public sealed class TargetObservationHostOptionsTests
         public TargetObservationAssignment Assignment { get; } = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 1, Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        public Guid RacClusterId { get; } = Guid.NewGuid();
         public Dictionary<string, string?> Values { get; }
         public Fixture()
         {
@@ -261,6 +282,7 @@ public sealed class TargetObservationHostOptionsTests
             {
                 ["Enabled"] = "true", ["AgentId"] = Assignment.AgentId.ToString(),
                 ["CanonicalClusterId"] = Assignment.CanonicalClusterId.ToString(),
+                ["RacClusterId"] = RacClusterId.ToString(),
                 ["CanonicalSqlServerId"] = Assignment.CanonicalSqlServerId.ToString(),
                 ["RacEndpointMappingId"] = Assignment.RacEndpointMappingId.ToString(),
                 ["SqlEndpointMappingId"] = Assignment.SqlEndpointMappingId.ToString(),

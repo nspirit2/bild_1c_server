@@ -14,6 +14,7 @@ public sealed class TargetObservationHostOptions
     public bool Enabled { get; init; }
     public Guid AgentId { get; init; }
     public Guid CanonicalClusterId { get; init; }
+    public Guid RacClusterId { get; init; }
     public Guid CanonicalSqlServerId { get; init; }
     public Guid RacEndpointMappingId { get; init; }
     public Guid SqlEndpointMappingId { get; init; }
@@ -55,7 +56,7 @@ public sealed class TargetObservationHostOptions
         }
     }
 
-    private bool Valid() => Enabled && AgentId != Guid.Empty && CanonicalClusterId != Guid.Empty &&
+    private bool Valid() => Enabled && AgentId != Guid.Empty && CanonicalClusterId != Guid.Empty && RacClusterId != Guid.Empty &&
         CanonicalSqlServerId != Guid.Empty && RacEndpointMappingId != Guid.Empty && SqlEndpointMappingId != Guid.Empty &&
         SafePath(RacExecutable) && File.Exists(RacExecutable) &&
         string.Equals(Path.GetFileName(RacExecutable), "rac.exe", StringComparison.OrdinalIgnoreCase) &&

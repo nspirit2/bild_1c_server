@@ -26,6 +26,9 @@ public sealed class TargetObservationHostFactoryTests
         Assert.False(builder.TrustServerCertificate);
         Assert.Equal(timeout, builder.ConnectTimeout);
         Assert.False(builder.Pooling);
+        Assert.Equal(0, builder.ConnectRetryCount);
+        Assert.True(builder.ContainsKey("Connect Retry Count"));
+        Assert.True(builder.ShouldSerialize("Connect Retry Count"));
         Assert.Equal("BuildSystem.TargetObservation", builder.ApplicationName);
         Assert.Empty(builder.UserID);
         Assert.Empty(builder.Password);
@@ -33,7 +36,7 @@ public sealed class TargetObservationHostFactoryTests
         Assert.False(builder.MultipleActiveResultSets);
         Assert.Empty(builder.AttachDBFilename);
         var explicitlySet = builder.Keys.Cast<string>().Where(builder.ShouldSerialize).OrderBy(x => x).ToArray();
-        Assert.Equal(new[] { "Application Name", "Connect Timeout", "Data Source", "Encrypt", "Initial Catalog",
+        Assert.Equal(new[] { "Application Name", "Connect Retry Count", "Connect Timeout", "Data Source", "Encrypt", "Initial Catalog",
             "Integrated Security", "Pooling", "Trust Server Certificate" }.OrderBy(x => x), explicitlySet);
     }
 
@@ -70,6 +73,16 @@ public sealed class TargetObservationHostFactoryTests
         using var fixture = new Fixture();
         Redacted(() => TargetObservationHostFactory.CreateExecutor(fixture.Options("relative-private-path"), fixture.Directory));
         Redacted(() => TargetObservationHostFactory.CreateExecutor(null!, fixture.Directory));
+    }
+
+    [Fact]
+    public void MissingPhysicalRacClusterIdRejectsBeforeCredentialOrProcessIo()
+    {
+        using var fixture = new Fixture();
+        Redacted(() => TargetObservationHostFactory.CreateExecutor(
+            fixture.Options(racClusterId: Guid.Empty), "\0private-data-directory"));
+        Assert.Empty(File.ReadAllBytes(fixture.Executable));
+        Assert.Single(System.IO.Directory.GetFiles(fixture.Directory));
     }
 
     [Theory]
@@ -128,11 +141,12 @@ public sealed class TargetObservationHostFactoryTests
             File.WriteAllText(Executable, "");
         }
 
-        public TargetObservationHostOptions Options(string? workingDirectory = null) => new()
+        public TargetObservationHostOptions Options(string? workingDirectory = null, Guid? racClusterId = null) => new()
         {
             Enabled = true,
             AgentId = Assignment.AgentId,
             CanonicalClusterId = Assignment.CanonicalClusterId,
+            RacClusterId = racClusterId ?? Guid.NewGuid(),
             CanonicalSqlServerId = Assignment.CanonicalSqlServerId,
             RacEndpointMappingId = Assignment.RacEndpointMappingId,
             SqlEndpointMappingId = Assignment.SqlEndpointMappingId,

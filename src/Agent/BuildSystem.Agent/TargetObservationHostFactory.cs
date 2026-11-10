@@ -13,7 +13,7 @@ public static class TargetObservationHostFactory
         try
         {
             if (options is null || !options.Enabled || options.AgentId == Guid.Empty ||
-                options.CanonicalClusterId == Guid.Empty || options.CanonicalSqlServerId == Guid.Empty ||
+                options.CanonicalClusterId == Guid.Empty || options.RacClusterId == Guid.Empty || options.CanonicalSqlServerId == Guid.Empty ||
                 options.RacEndpointMappingId == Guid.Empty || options.SqlEndpointMappingId == Guid.Empty ||
                 string.IsNullOrWhiteSpace(options.RacExecutable) ||
                 !Path.IsPathFullyQualified(options.RacExecutable) || options.RacExecutable.Any(char.IsControl) ||
@@ -34,6 +34,8 @@ public static class TargetObservationHostFactory
                 TrustedRacToolId = "observation-rac",
                 Endpoint = options.RacEndpoint,
                 EndpointMappingId = options.RacEndpointMappingId,
+                CanonicalClusterId = options.CanonicalClusterId,
+                RacClusterId = options.RacClusterId,
                 WorkingDirectory = options.RacWorkingDirectory,
                 Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds)
             });
@@ -81,6 +83,7 @@ public static class TargetObservationHostFactory
                 TrustServerCertificate = false,
                 ConnectTimeout = options.TimeoutSeconds,
                 Pooling = false,
+                ConnectRetryCount = 0,
                 ApplicationName = "BuildSystem.TargetObservation"
             }.ConnectionString;
         }
