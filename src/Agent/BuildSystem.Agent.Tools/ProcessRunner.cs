@@ -71,6 +71,9 @@ public sealed class ProcessRunner : IProcessRunner
         foreach (var name in environment)
             if (Environment.GetEnvironmentVariable(name) is { } value) start.Environment[name] = value;
         using var process = new Process { StartInfo = start };
+        if (cancellationToken.IsCancellationRequested)
+            return new(null, null, ProcessCompletion.Cancelled, false);
+        command.LaunchDeadline?.DemandNotExpired();
         try { if (!process.Start()) throw new InvalidOperationException(); }
         catch { throw new ProcessRunnerException("start_failed"); }
         var pid = process.Id;

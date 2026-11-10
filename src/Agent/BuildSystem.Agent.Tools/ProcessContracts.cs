@@ -8,6 +8,9 @@ public sealed record ProcessArgument(string Value, bool Sensitive = false)
 public sealed record ProcessCommand(string TrustedToolId, string WorkingDirectory,
     IReadOnlyList<ProcessArgument> Arguments, TimeSpan Timeout, IReadOnlyList<string>? KnownSecrets = null)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ProcessLaunchDeadline? LaunchDeadline { get; init; }
+
     public override string ToString() => "ProcessCommand [details omitted]";
 }
 public enum ProcessCompletion { Exited, TimedOut, Cancelled }
