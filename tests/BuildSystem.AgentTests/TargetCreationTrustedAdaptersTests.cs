@@ -2,6 +2,10 @@ using System.Collections;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using BuildSystem.Agent;
 using BuildSystem.Agent.Execution;
 using BuildSystem.Agent.Tools;
@@ -130,6 +134,88 @@ public sealed class TargetCreationTrustedAdaptersTests
         Assert.Empty(runner.Commands); Assert.Empty(provider.Connections);
     }
 
+    [Fact]
+    public async Task Real_one_shot_composition_holds_guard_through_creation_and_quarantines_without_replay()
+    {
+        using var local = new LocalTransports(); var runner = new Runner(); var provider = new Provider();
+        var bundle = TargetCreationTrustedAdapters.Create(Options(), runner, provider.Create);
+        var coordinator = new TargetCreationOneShotCoordinator(local.Journal,
+            new TargetCreationCredentialPreparation(local.Journal, local, local.Credentials, new() { Enabled = true }),
+            bundle.NamespacePort, bundle.AbsencePort, local.Claims, bundle.InvocationPort, bundle.OneShotOptions, new Clock());
+        runner.OnCreate = () =>
+        {
+            Assert.Equal(ConnectionState.Open, provider.Connections[0].State);
+            Assert.True(provider.Connections[0].Held >= 3); Assert.Equal(0, provider.Connections[0].Releases);
+            Assert.Equal(2, local.Journal.GetTargetCreationIntent(local.Intent.OperationId)!.Revision);
+        };
+        var result = await coordinator.RunAsync(local.Intent, local.Binding);
+        Assert.True(result.CreationAcknowledged); Assert.True(result.PhysicalInvocationAttempted);
+        Assert.Equal(TargetCreationState.ReconciliationRequired, result.Record.State); Assert.Equal(3, result.Record.Revision);
+        Assert.False(result.Executable); Assert.False(result.FreshAuthority); Assert.False(result.RetryAllowed);
+        Assert.True(result.ScheduledJobsMustRemainBlocked); Assert.DoesNotContain(Canary, result.ToString());
+        Assert.Equal(2, runner.Commands.Count); Assert.Contains(runner.Commands[0].Arguments, a => a.Value == "summary");
+        Assert.Contains(runner.Commands[1].Arguments, a => a.Value == "create"); Assert.Equal(2, provider.Connections.Count);
+        Assert.Equal(1, provider.Connections[0].Releases); Assert.Equal(ConnectionState.Closed, provider.Connections[0].State);
+        Assert.All(provider.Connections, c => Assert.Equal(1, c.Disposals));
+        Assert.Throws<InvalidOperationException>(() => local.Journal.SaveTargetCreationIntent(local.Intent with { OperationId = Guid.NewGuid(), CanonicalClusterId = Guid.NewGuid() }));
+        Assert.Throws<InvalidOperationException>(() => local.Journal.SaveTargetCreationIntent(local.Intent with { OperationId = Guid.NewGuid(), CanonicalSqlServerId = Guid.NewGuid() }));
+        var replay = await coordinator.RunAsync(local.Intent, local.Binding);
+        Assert.Equal("AlreadyAttempted", replay.Outcome.ToString()); Assert.Equal(2, runner.Commands.Count);
+        Assert.Equal(2, provider.Connections.Count); Assert.Equal(1, local.Starts); Assert.Equal(1, local.CredentialRequests); Assert.Equal(1, local.ClaimRequests);
+    }
+    private sealed class Clock : TimeProvider
+    { public override long TimestampFrequency => TimeSpan.TicksPerSecond; public override long GetTimestamp() => 0; }
+    private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => send(request, ct); }
+    private sealed class LocalTransports : IDisposable, ITargetCreationPermitStartTransport
+    {
+        private readonly string directory = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "trusted-adapter-tests", Guid.NewGuid().ToString("N")));
+        public readonly AgentJournal Journal;
+        public readonly TargetCreationIntent Intent;
+        public readonly TargetCreationPermitBinding Binding;
+        public readonly TargetCreationCredentialHttpClient Credentials;
+        public readonly TargetCreationExecutionClaimHttpClient Claims;
+        public int Starts, CredentialRequests, ClaimRequests;
+        public LocalTransports()
+        {
+            var issued = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero); var reservation = Guid.NewGuid(); var name = "bs_test_" + reservation.ToString("N");
+            Intent = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 17, reservation, Guid.NewGuid(), Cluster, Server, name, name);
+            Binding = new(Guid.NewGuid(), Intent.OperationId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Agent, issued, issued.AddMinutes(5))
+                { CredentialId = Guid.NewGuid(), EndpointMappingId = Mapping };
+            Journal = new(directory); Journal.SaveTargetCreationIntent(Intent); Journal.SaveTargetCreationPermitBinding(Intent, Binding);
+            Credentials = new(new Handler(async (request, ct) =>
+            {
+                CredentialRequests++; var p = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct));
+                return Reply(request, new { permitId = p.GetProperty("permitId").GetGuid(), expectedPermitRevision = 2,
+                    attemptId = p.GetProperty("attemptId").GetGuid(), credentialId = p.GetProperty("credentialId").GetGuid(), endpointMappingId = p.GetProperty("endpointMappingId").GetGuid(),
+                    clusterUser = Canary, clusterPassword = Canary, sqlUser = Canary, sqlPassword = Canary,
+                    executable = false, scheduledJobsMustRemainBlocked = true, retryAllowed = false });
+            }), new() { Enabled = true, BaseUri = new("https://credentials.example/") }, () => "token");
+            Claims = new(new Handler((request, _) =>
+            {
+                ClaimRequests++; return Task.FromResult(Reply(request, new { claimId = Guid.NewGuid(), permitId = Binding.PermitId, operationId = Intent.OperationId,
+                    attemptId = Binding.AttemptId, agentId = Binding.AgentId, credentialId = Binding.CredentialId, endpointMappingId = Binding.EndpointMappingId,
+                    issuedAt = Binding.StartBefore.AddSeconds(-10), expiresAt = Binding.StartBefore,
+                    newlyIssued = true, executable = true, scheduledJobsMustRemainBlocked = true, retryAllowed = false }));
+            }), new() { Enabled = true, BaseUri = new("https://claims.example/") }, () => "token");
+        }
+        public Task<TargetCreationPermitStartReceipt> RecordStartAsync(TargetCreationIntent intent, TargetCreationPermitBinding binding, CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(Intent, intent); Assert.Equal(Binding, binding); Starts++;
+            Assert.Equal(2, Journal.GetTargetCreationIntent(intent.OperationId)!.Revision);
+            return Task.FromResult(new TargetCreationPermitStartReceipt(intent, binding, true, Binding.IssuedAt.AddSeconds(1)));
+        }
+        private static HttpResponseMessage Reply(HttpRequestMessage request, object body) => new(HttpStatusCode.OK)
+        { RequestMessage = request, Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"), Headers = { CacheControl = new CacheControlHeaderValue { NoStore = true } } };
+        public void Dispose()
+        {
+            Credentials.Dispose(); Claims.Dispose(); Journal.Dispose();
+            Assert.True(Path.IsPathFullyQualified(directory));
+            Assert.Equal(Path.Combine(Path.GetFullPath(Path.GetTempPath()), "trusted-adapter-tests"), Path.GetDirectoryName(directory));
+            Assert.True(Guid.TryParseExact(Path.GetFileName(directory), "N", out _)); Directory.Delete(directory, true);
+        }
+    }
+
     private static void Settings(string value)
     {
         var b = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(value);
@@ -142,12 +228,15 @@ public sealed class TargetCreationTrustedAdaptersTests
     {
         public List<ProcessCommand> Commands { get; } = [];
         public ProcessLaunchDeadline? ExpectedDeadline;
+        public Action? OnCreate;
         public async Task<ProcessResult> RunAsync(ProcessCommand command, Func<ProcessOutput, Task>? onOutput = null, CancellationToken cancellationToken = default)
         {
             Commands.Add(command);
             if (command.Arguments.Any(a => a.Value == "create"))
             {
-                Assert.Same(ExpectedDeadline, command.LaunchDeadline); command.LaunchDeadline!.DemandNotExpired();
+                Assert.NotNull(command.LaunchDeadline);
+                if (ExpectedDeadline is not null) Assert.Same(ExpectedDeadline, command.LaunchDeadline);
+                command.LaunchDeadline.DemandNotExpired(); OnCreate?.Invoke();
                 await onOutput!(new(ProcessOutputStream.StandardOutput, $"infobase: {Guid.NewGuid():D}\n"));
             }
             else Assert.Contains(command.Arguments, a => a.Value == "summary");
