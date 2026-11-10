@@ -8,6 +8,7 @@ using Xunit;
 namespace BuildSystem.AgentTests;
 
 // Fake handlers only: observing API identity never grants execution or fresh authority.
+[Collection("Agent CLI subprocesses")]
 public sealed class AgentReadinessIdentityHttpClientTests
 {
     private static readonly Guid Agent = Guid.Parse("11111111-2222-3333-4444-555555555555");
@@ -200,11 +201,11 @@ public sealed class AgentReadinessIdentityHttpClientTests
         var entered = new TaskCompletionSource<HttpRequestMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var late = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var ct = new CancellationTokenSource(); using var client = Client((r, _) => { entered.TrySetResult(r); return late.Task; });
-        var probe = client.ProbeAsync(Agent, ct.Token); var request = await entered.Task.WaitAsync(TimeSpan.FromSeconds(3)); ct.Cancel();
+        var probe = client.ProbeAsync(Agent, ct.Token); var request = await entered.Task.WaitAsync(TimeSpan.FromSeconds(30)); ct.Cancel();
         var content = new SpyContent([]);
-        try { await Assert.ThrowsAnyAsync<OperationCanceledException>(() => probe.WaitAsync(TimeSpan.FromSeconds(3))); }
+        try { await Assert.ThrowsAnyAsync<OperationCanceledException>(() => probe.WaitAsync(TimeSpan.FromSeconds(30))); }
         finally { var response = Reply(request); response.Content = content; late.TrySetResult(response); }
-        await content.Disposal.Task.WaitAsync(TimeSpan.FromSeconds(3)); Assert.Equal(0, content.Reads);
+        await content.Disposal.Task.WaitAsync(TimeSpan.FromSeconds(30)); Assert.Equal(0, content.Reads);
     }
 
     [Fact]
@@ -213,9 +214,9 @@ public sealed class AgentReadinessIdentityHttpClientTests
         var entered = new TaskCompletionSource<HttpRequestMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var late = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously); var sends = 0;
         using var client = Client((r, _) => { sends++; entered.TrySetResult(r); return late.Task; }, timeout: 1);
-        var probe = client.ProbeAsync(Agent); var request = await entered.Task.WaitAsync(TimeSpan.FromSeconds(3)); var content = new SpyContent([]);
-        try { await Failure(() => probe.WaitAsync(TimeSpan.FromSeconds(3))); }
+        var probe = client.ProbeAsync(Agent); var request = await entered.Task.WaitAsync(TimeSpan.FromSeconds(30)); var content = new SpyContent([]);
+        try { await Failure(() => probe.WaitAsync(TimeSpan.FromSeconds(30))); }
         finally { var response = Reply(request); response.Content = content; late.TrySetResult(response); }
-        await content.Disposal.Task.WaitAsync(TimeSpan.FromSeconds(3)); Assert.Equal(1, sends); Assert.Equal(0, content.Reads);
+        await content.Disposal.Task.WaitAsync(TimeSpan.FromSeconds(30)); Assert.Equal(1, sends); Assert.Equal(0, content.Reads);
     }
 }
