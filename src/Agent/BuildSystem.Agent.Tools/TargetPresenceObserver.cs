@@ -59,6 +59,35 @@ public sealed class TargetPresenceObserver
             request.RacEndpointMappingId == Guid.Empty || request.SqlEndpointMappingId == Guid.Empty)
             throw new TargetPresenceObservationException("InvalidTargetPresenceRequest");
 
+        var racObservationId = Guid.NewGuid();
+        var sqlObservationId = Guid.NewGuid();
+        while (sqlObservationId == racObservationId)
+            sqlObservationId = Guid.NewGuid();
+        var expected = new TargetPresenceAssessmentScope(request.OperationId, request.FencingToken,
+            request.TargetIncarnationId, request.ReservationId, request.CanonicalClusterId,
+            request.CanonicalSqlServerId, request.RacEndpointMappingId, request.SqlEndpointMappingId,
+            racObservationId, sqlObservationId);
+        return await ObserveCoreAsync(expected, credentials, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Observe the caller's correlation scope with fresh reads; supplied IDs confer no authority.</summary>
+    public Task<TargetPresenceAssessmentResult> ObserveExpectedScopeAsync(TargetPresenceAssessmentScope expected,
+        InfobaseInventoryObserverCredentials credentials, CancellationToken cancellationToken = default)
+        => ObserveCoreAsync(expected, credentials, cancellationToken);
+
+    private async Task<TargetPresenceAssessmentResult> ObserveCoreAsync(TargetPresenceAssessmentScope expected,
+        InfobaseInventoryObserverCredentials credentials, CancellationToken cancellationToken)
+    {
+        // Fail invalid pins before either trusted adapter can perform IO; assessment also validates,
+        // but that validation occurs only after both reads and cannot replace this guard.
+        if (expected is null || expected.FencingToken <= 0 ||
+            expected.OperationId == Guid.Empty || expected.TargetIncarnationId == Guid.Empty ||
+            expected.ReservationId == Guid.Empty || expected.CanonicalClusterId == Guid.Empty ||
+            expected.CanonicalSqlServerId == Guid.Empty || expected.RacEndpointMappingId == Guid.Empty ||
+            expected.SqlEndpointMappingId == Guid.Empty || expected.RacObservationId == Guid.Empty ||
+            expected.SqlObservationId == Guid.Empty || expected.RacObservationId == expected.SqlObservationId)
+            throw new TargetPresenceObservationException("InvalidTargetPresenceRequest");
+
         var startedAt = Stopwatch.GetTimestamp();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         linked.CancelAfter(totalTimeout);
@@ -71,20 +100,13 @@ public sealed class TargetPresenceObserver
         try
         {
             CheckDeadline();
-            var racObservationId = Guid.NewGuid();
-            var sqlObservationId = Guid.NewGuid();
-            // The expected name and observation IDs originate exclusively here, anew for each call.
-            var name = $"bs_test_{request.ReservationId:N}";
-            var expected = new TargetPresenceAssessmentScope(request.OperationId, request.FencingToken,
-                request.TargetIncarnationId, request.ReservationId, request.CanonicalClusterId,
-                request.CanonicalSqlServerId, request.RacEndpointMappingId, request.SqlEndpointMappingId,
-                racObservationId, sqlObservationId);
-            var racScope = new InfobaseInventoryReadbackScope(request.OperationId, request.FencingToken,
-                request.TargetIncarnationId, request.CanonicalClusterId, request.RacEndpointMappingId,
-                request.ReservationId, racObservationId, name);
-            var sqlScope = new SqlDatabaseObservationScope(request.OperationId, request.FencingToken,
-                request.TargetIncarnationId, request.CanonicalSqlServerId, request.SqlEndpointMappingId,
-                request.ReservationId, sqlObservationId, name);
+            var name = $"bs_test_{expected.ReservationId:N}";
+            var racScope = new InfobaseInventoryReadbackScope(expected.OperationId, expected.FencingToken,
+                expected.TargetIncarnationId, expected.CanonicalClusterId, expected.RacEndpointMappingId,
+                expected.ReservationId, expected.RacObservationId, name);
+            var sqlScope = new SqlDatabaseObservationScope(expected.OperationId, expected.FencingToken,
+                expected.TargetIncarnationId, expected.CanonicalSqlServerId, expected.SqlEndpointMappingId,
+                expected.ReservationId, expected.SqlObservationId, name);
 
             var racResult = await rac.ObserveAsync(racScope, credentials, linked.Token).ConfigureAwait(false);
             CheckDeadline();
