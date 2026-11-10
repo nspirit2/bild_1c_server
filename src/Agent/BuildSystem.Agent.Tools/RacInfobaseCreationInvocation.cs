@@ -45,12 +45,28 @@ public sealed class RacInfobaseCreationInvocation
         enabled = options.Enabled;
     }
 
-    public async Task<RacInfobaseCreationOutcome> RunAsync(RacInfobaseCreationCommandRecipe recipe,
-        CancellationToken cancellationToken = default)
+    public Task<RacInfobaseCreationOutcome> RunAsync(RacInfobaseCreationCommandRecipe recipe,
+        CancellationToken cancellationToken = default) => RunCoreAsync(recipe, null, cancellationToken);
+
+    /// <summary>Propagates the caller's existing launch budget without renewing it. The deadline
+    /// is not authority; all fresh-permit and held-namespace prerequisites still apply.</summary>
+    public Task<RacInfobaseCreationOutcome> RunWithLaunchDeadlineAsync(RacInfobaseCreationCommandRecipe recipe,
+        ProcessLaunchDeadline launchDeadline, CancellationToken cancellationToken = default)
+    {
+        if (!enabled)
+            throw new RacInfobaseCreationInvocationException("RacInfobaseCreationInvocationDisabled");
+        if (launchDeadline is null)
+            throw new RacInfobaseCreationInvocationException("InvalidRacInfobaseCreationLaunchDeadline");
+        return RunCoreAsync(recipe, launchDeadline, cancellationToken);
+    }
+
+    private async Task<RacInfobaseCreationOutcome> RunCoreAsync(RacInfobaseCreationCommandRecipe recipe,
+        ProcessLaunchDeadline? launchDeadline, CancellationToken cancellationToken)
     {
         // Gate before touching invocation data, arguments, secrets, or a callback.
         if (!enabled)
             throw new RacInfobaseCreationInvocationException("RacInfobaseCreationInvocationDisabled");
+        launchDeadline?.DemandNotExpired();
         if (recipe is null)
             throw new RacInfobaseCreationInvocationException("InvalidRacInfobaseCreationRecipe");
 
@@ -109,7 +125,9 @@ public sealed class RacInfobaseCreationInvocation
             try
             {
                 // Exactly one call; no retries and no separate process/shell construction.
-                result = await runner.RunAsync(recipe.Command, Capture, cancellationToken).ConfigureAwait(false);
+                // The legacy entry point preserves any deadline already attached to the command.
+                var command = launchDeadline is null ? recipe.Command : recipe.Command with { LaunchDeadline = launchDeadline };
+                result = await runner.RunAsync(command, Capture, cancellationToken).ConfigureAwait(false);
             }
             catch
             {

@@ -44,8 +44,9 @@ public sealed class TargetCreationOneShotCoordinatorTests
         public SqlTargetNamespaceScope Scope { get; private set; } = null!;
         public string? Failure;
         public bool Acknowledged = true, Disposed;
-        public int Checks, Invocations, Claims;
-        public Action? AfterClaim, LastCheck, OnDispose;
+        public int Checks, Invocations, Claims, PhysicalInvocations;
+        public Action? AfterClaim, LastCheck, OnDispose, BeforePhysicalInvocation;
+        public ProcessLaunchDeadline? PortDeadline;
         private readonly TargetCreationCredentialHttpClient credentials;
         private readonly TargetCreationExecutionClaimHttpClient claims;
         public Fixture()
@@ -112,9 +113,10 @@ public sealed class TargetCreationOneShotCoordinatorTests
             if (Failure == "mismatched-claim") otherBinding = b with { AttemptId = Guid.NewGuid() };
             var grant = await claims.ClaimAsync(i, otherBinding ?? b, cancellationToken); AfterClaim?.Invoke(); return grant;
         }
-        public Task<RacInfobaseCreationOutcome> InvokeAsync(RacInfobaseCreationScope scope, TargetCreationDeliveredSecretValues secrets, CancellationToken ct)
+        public Task<RacInfobaseCreationOutcome> InvokeAsync(RacInfobaseCreationScope scope, TargetCreationDeliveredSecretValues secrets, ProcessLaunchDeadline launchDeadline, CancellationToken ct)
         {
             Order.Add("invoke"); Invocations++; Assert.Equal(Canary, secrets.ClusterPassword);
+            PortDeadline = launchDeadline; launchDeadline.DemandNotExpired(); BeforePhysicalInvocation?.Invoke(); launchDeadline.DemandNotExpired(); PhysicalInvocations++;
             Assert.Equal(2, Journal.GetTargetCreationIntent(Intent.OperationId)!.Revision);
             if (Failure == "invoke") throw new InvalidOperationException(Canary);
             return Task.FromResult(RacInfobaseCreationOutcomes.Classify(scope, new(123, 0, ProcessCompletion.Exited, false), Acknowledged ? $"infobase: {Guid.NewGuid():D}\n" : "", ""));
@@ -219,6 +221,14 @@ public sealed class TargetCreationOneShotCoordinatorTests
     {
         using var f = new Fixture(); f.AfterClaim = () => f.Clock.Ticks += ticks;
         f.AssertQuarantined(await f.Run(), invoke); Assert.Equal(invoke ? 1 : 0, f.Invocations);
+    }
+    [Fact]
+    public async Task Port_delay_keeps_preclaim_deadline_and_prevents_physical_invocation()
+    {
+        using var f = new Fixture(); f.AfterClaim = () => f.Clock.Ticks = TimeSpan.FromSeconds(9).Ticks;
+        f.BeforePhysicalInvocation = () => f.Clock.Ticks = TimeSpan.FromSeconds(10).Ticks;
+        f.AssertQuarantined(await f.Run(), true); Assert.Equal(1, f.Invocations); Assert.Equal(0, f.PhysicalInvocations);
+        Assert.NotNull(f.PortDeadline); Assert.Throws<ProcessRunnerException>(() => f.PortDeadline.DemandNotExpired());
     }
     [Fact]
     public async Task Budget_expiring_during_final_hold_check_prevents_invocation()

@@ -40,11 +40,13 @@ public interface ITargetCreationAbsencePort
 /// <summary>Trusted bounded, cooperative adapter for ONE RacInfobaseCreationInvocation, no retries.
 /// Secrets MUST NOT be retained or logged. Completion must include physical process completion;
 /// ignoring cancellation does not permit detaching work or releasing the namespace early.
-/// No production adapter or physical endpoint mapping is supplied by this slice.</summary>
+/// The same pre-claim monotonic launch deadline must reach the runner without renewal.
+/// No production host registration or physical endpoint mapping is supplied by this slice.</summary>
 public interface ITargetCreationSingleInvocation
 {
     Task<RacInfobaseCreationOutcome> InvokeAsync(RacInfobaseCreationScope scope,
-        TargetCreationDeliveredSecretValues secrets, CancellationToken cancellationToken = default);
+        TargetCreationDeliveredSecretValues secrets, ProcessLaunchDeadline launchDeadline,
+        CancellationToken cancellationToken = default);
 }
 
 public enum TargetCreationOneShotOutcome { AlreadyAttempted, ReconciliationRequired }
@@ -181,6 +183,9 @@ public sealed class TargetCreationOneShotCoordinator
                     if (elapsed < TimeSpan.Zero || elapsed >= budget) throw new InvalidOperationException();
                 }
                 CheckBudget();
+                // Construct once from the pre-claim timestamp and the validated server TTL;
+                // downstream delivery must not restart this clock or create fresh authority.
+                var launchDeadline = new ProcessLaunchDeadline(_clock, started, budget);
                 await hold.CheckHeldAsync(cancellationToken).ConfigureAwait(false);
                 CheckBudget();
                 if (_journal.GetTargetCreationIntent(intent.OperationId) != begunRecord ||
@@ -192,7 +197,8 @@ public sealed class TargetCreationOneShotCoordinator
                 cancellationToken.ThrowIfCancellationRequested();
                 CheckBudget();
                 attempted = true; // Attempt boundary only; a thrown port may or may not have launched.
-                var outcome = await _invocation.InvokeAsync(bridge.CreationScope, secrets, cancellationToken).ConfigureAwait(false);
+                var outcome = await _invocation.InvokeAsync(bridge.CreationScope, secrets, launchDeadline,
+                    cancellationToken).ConfigureAwait(false);
                 acknowledged = !cancellationToken.IsCancellationRequested && outcome is not null &&
                     outcome.Scope == bridge.CreationScope && !outcome.Executable && !outcome.RetryAllowed &&
                     outcome.ScheduledJobsMustRemainBlocked && outcome.RequiresIndependentVerification &&
