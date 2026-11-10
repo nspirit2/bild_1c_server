@@ -51,6 +51,13 @@ internal static class AgentEndpoints
 
         var machine = app.MapGroup("/api/agent").RequireAuthorization("AgentOnly")
             .WithMetadata(new AgentMachineEndpoint());
+        // Observes current authenticated identity only; not execution authority, host ACLs, or physical TLS proof.
+        machine.MapGet("/readiness-identity", (HttpContext context, ClaimsPrincipal user) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.Pragma = "no-cache";
+            return Results.Ok(new { agentId = Id(user), executable = false, freshAuthority = false, readinessComplete = false });
+        });
         machine.MapPost("/capabilities", async (AgentCapabilities input, ClaimsPrincipal user, IAgentControl service, CancellationToken ct) =>
         { await service.SetCapabilitiesAsync(Id(user), input, ct); return Results.NoContent(); });
         machine.MapPost("/poll", async (ClaimsPrincipal user, IAgentControl service, CancellationToken ct) =>
