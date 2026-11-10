@@ -1,0 +1,21 @@
+# Agent execution-claim HTTP client
+
+Isolated default-off transport for the DISTINCT one-shot server-issued CREATE claim. Existing start/permit/credential receipts remain nonexecutable; this response alone carries server issuance authorization, not physical absence, held lock, a continuing lease or proof that the original deadline has not elapsed since delivery. No consumer, worker, CLI registration or physical CREATE is added here.
+
+## Input and exchange
+
+Trusted caller supplies the FULL immutable TargetCreationIntent and credential-bound permit binding. Pure synthetic in-flight preflight validates ID/namespace/revision/binding shape only, not journal persistence or a real fencing lease. Caller must durably consume the local attempt and retain exclusive namespace plus fresh paired absence before any eventual claim/invocation orchestration.
+
+HTTPS root options, timeout1..60seconds(default30), Enabledfalse. POST exactly `/api/agents/target-creation-execution-claims`, JSON exact5 fields permitId/expectedPermitRevision2/attemptId/credentialId/endpointMappingId. Fresh token provider once per explicit call; no redirects/cookies/decompression/tracing or automatic retry. Whole exchange send/open/read has monotonic deadline with WaitAsync; ignored-cancellation late task completions observed/disposed. Provider synchronous calls/disposal cannot be preempted. Only HTTP200 accepted; no error-body reads. Any409, lost response, cancellation, invalid data or unknown exchange outcome is unavailable, NEVER fresh/recovered authority.
+
+## Strict grant
+
+Closed exact13 fields: claimId,permitId,operationId,attemptId,agentId,credentialId,endpointMappingId,issuedAt,expiresAt,newlyIssued,executable,scheduledJobsMustRemainBlocked,retryAllowed. Nonzero claim ID and all returned pins match expected intent/binding. IssuedAt is UTC within original permit window; ExpiresAt MUST equal original StartBefore; no renewed five minutes. NewlyIssued/executable/jobsblocked true, retryAllowed false required. The API/agent local wall clock is NOT used as a substitute for authoritative SQL time. Delayed delivery is not proof of remaining time; eventual coordinator must separately enforce its approved freshness/claim-use boundary.
+
+Mandatory no-store, UTF8 JSON media/charset including quoted UTF8, no encoding, actual bounded32KiB+1 detection byte, strict Unicode/JSON/schema/duplicate/unknown/case rejection. Fixed failures exclude token/body/URL/raw exceptions and inner exceptions.
+
+Grant is sealed, internal-constructor and get-only. ServerIssued=true describes the received issuance, not current physical readiness. It exposes NO FreshAuthority claim. ToString fixed/redacted; System.Text.Json read/write (including null and object serialization) forbidden to prevent accidental persistence/replay. This is defense-in-depth, not cryptographic prevention of trusted caller copying values; the future durable coordinator must consume the sole local invocation exactly once. This transport has no local attempt cache, journal mutation or rearming; an explicitly repeated call still reaches the server and must be rejected there, never automatically retried or converted to a grant from409.
+
+## Tests and limits
+
+Fake-only transport regressions plus real API serializer -> agent parser -> existing SQLite in-flight state interop. Added Agent project reference to API test project for actual same-contract integration, rather than a copied server JSON fixture alone. No SQL stand/target or RAC processes involved. 43 targeted cases passed:39 transport +4 real serializer/SQLite interop. Includes exact32768-byte success/32769 overflow, cancellation-ignoring send/open/read deadlines, JSON object/null denial, old SQL clock, explicit second409 with no cached authority, and shape-valid TTL extension rejection. Locked solution restore passed. Full local Release2088passed/0failed,264SQLexplicitlyskipped; integration320total. Independent frozen-source review found no blockers. Optional coverage gaps: timeout tests release late completions without explicitly asserting late response/stream cleanup or fault observation; declared oversized Content-Length and duplicate charset are implemented but lack dedicated cases. ServerIssued historical marker is an intentional additional documented property, not a freshness grant. CIafterpush recorded separately.
