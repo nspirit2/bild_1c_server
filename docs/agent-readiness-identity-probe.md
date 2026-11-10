@@ -2,7 +2,7 @@
 
 ## Scope
 
-The explicit identity probe complements offline readiness; it does not replace it and never authorizes execution. This increment adds a server GET and an isolated default-off client, tested with in-process API fixtures and fake HTTP handlers only. It does not register a worker/CLI or load DPAPI tokens. No stand request or live operational probe is performed by implementation/tests.
+The explicit identity probe complements offline readiness; it does not replace it and never authorizes execution. This increment adds a server GET and an isolated default-off client, tested with in-process API fixtures and fake HTTP handlers only. The transport-only increment does not register a worker/CLI or load DPAPI tokens. A separate explicit Windows host/CLI is documented in [identity probe host](agent-identity-probe-host.md); it is independently default-off and does not change the offline readiness path. No stand request or live operational probe is performed by implementation/tests.
 
 GET `/api/agent/readiness-identity` is under the existing AgentOnly machine endpoint group. Existing HTTPS bearer authentication resolves a currently Approved agent using a no-tracking database read. The endpoint does not poll, obtain a lease, claim an attempt, update capabilities, send heartbeats, read creation credentials or open a journal. Its no-store JSON contains exactly agentId and three false flags: executable, freshAuthority, readinessComplete. It returns no grant or creation metadata.
 
