@@ -21,4 +21,12 @@ All remain mandatory operational/runtime prerequisites. Configuring Encrypt=Mand
 
 ## Verification
 
-Tests use isolated temporary dummy artifacts only. They verify disabled precedence, fixed failure redaction, strict HTTPS origins, missing artifacts, unchanged file contents/directory entries and invariant non-readiness. 17 targeted cases passed; independent final source/tests review found no blockers. Full local Release2254passed/0failed,264SQLexplicitlyskipped; integration320total. Tests confirm malformed artifact bytes and exact directory entries unchanged with no lock/WAL/SHM creation. Optional future coverage: explicit config snapshot unchanged and fragment-origin rejection. CIafterpush recorded separately. This increment exposes an offline API only, not a CLI or operational probe.
+Tests use isolated temporary dummy artifacts only. They verify disabled precedence, fixed failure redaction, strict HTTPS origins, missing artifacts, unchanged file contents/directory entries and invariant non-readiness. 17 targeted cases passed; independent final source/tests review found no blockers. Full local Release2254passed/0failed,264SQLexplicitlyskipped; integration320total. Tests confirm malformed artifact bytes and exact directory entries unchanged with no lock/WAL/SHM creation. Optional future coverage: explicit config snapshot unchanged and fragment-origin rejection. CIafterpush recorded separately. The API is also exposed by the explicit read-only CLI below; it is not an operational network probe.
+
+## Read-only CLI
+
+```
+BuildSystem.Agent check-target-creation-readiness
+```
+
+Exactly one command argument is accepted; extra flags are rejected before configuration. It returns before any worker or execution-host entry. JSON is fixed metadata in camelCase. Exit3 means DisabledNotAssessed, exit4 InvalidConfiguration, exit2 StaticChecksPassedRequiresOperationalVerification, exit5 output failure. There is no success0 and no permission to execute. Malformed host configuration produces the same redacted invalid report. The original execution Enabled value is never changed. Even enabled valid configuration invokes only offline evaluation, never the execution host. Eight targeted CLI cases passed, including actual-agent subprocess with Enabled=true dummy configuration and unchanged malformed SQLite/DPAPI artifact bytes. Independent final routing/command/tests review found no blockers. Full local Release2262passed/0failed,264SQLexplicitlyskipped; integration320total. No remote target probes, credentials or SQLite opens; CIafterpush recorded separately.

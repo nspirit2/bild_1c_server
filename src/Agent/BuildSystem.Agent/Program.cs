@@ -6,7 +6,8 @@ using Microsoft.Extensions.Logging;
 
 // Reject misspelled commands/extra flags before configuration, token IO or worker startup.
 if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args) &&
-    !TargetCreationStartCommand.IsStartCommand(args) && !TargetCreationOneShotCommand.IsOneShotCommand(args))
+    !TargetCreationStartCommand.IsStartCommand(args) && !TargetCreationOneShotCommand.IsOneShotCommand(args) &&
+    !TargetCreationOneShotReadinessCommand.IsReadinessCommand(args))
 {
     Console.Error.WriteLine("UnsupportedAgentCommand");
     Environment.ExitCode = 64;
@@ -15,6 +16,11 @@ if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationComman
 // Positional explicit command arguments are not configuration key/value overrides.
 HostApplicationBuilder builder;
 try { builder = Host.CreateApplicationBuilder(Array.Empty<string>()); }
+catch (Exception) when (TargetCreationOneShotReadinessCommand.IsReadinessCommand(args))
+{
+    Environment.ExitCode = await TargetCreationOneShotReadinessCommand.WriteConfigurationFailureAsync(Console.Out);
+    return;
+}
 catch (Exception) when (TargetCreationOneShotCommand.IsOneShotCommand(args))
 {
     try { Console.Out.WriteLine("{\"status\":\"TargetCreationOneShotUnavailable\",\"executable\":false,\"freshAuthority\":false,\"scheduledJobsMustRemainBlocked\":true,\"retryAllowed\":false,\"physicalInvocationAttempted\":false,\"creationAcknowledged\":false}"); }
@@ -33,6 +39,11 @@ catch (Exception) when (TargetObservationCommand.IsObservationCommand(args))
     Console.Error.WriteLine("TargetObservationConfigurationOrStorageFailure");
     Environment.ExitCode = 5;
     return;
+}
+if (TargetCreationOneShotReadinessCommand.IsReadinessCommand(args))
+{
+    Environment.ExitCode = await TargetCreationOneShotReadinessCommand.RunAsync(builder.Configuration, Console.Out);
+    return; // Offline static checks only: no worker, token load, journal open or host command.
 }
 if (TargetCreationOneShotCommand.TryParse(args, out var oneShotPermitId))
 {
