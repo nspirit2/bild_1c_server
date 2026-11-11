@@ -30,6 +30,12 @@
       <ul id="audit-events" aria-label="Исторические события аудита"></ul>
       <p id="audit-truncated" hidden>Показаны только 50 новейших событий. Более ранние события не включены.</p>
     </section>
+    <section id="execution-evidence" hidden aria-labelledby="evidence-heading">
+      <h2 id="evidence-heading">Исторические свидетельства выдачи claim</h2>
+      <p class="notice">Только сохранённая история, не действующий допуск и не разрешение повторного запуска. Исходные issuedAt и expiresAt не продлевают окно выполнения. Физический исход неизвестен; требуется сверка, задания остаются заблокированы.</p>
+      <p id="evidence-message" role="status" aria-live="polite"></p>
+      <dl id="evidence-values"></dl>
+    </section>
   </main>
 </body>
 </html>

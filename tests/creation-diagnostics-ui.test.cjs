@@ -14,9 +14,9 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   set innerHTML(_) { throw new Error('Unsafe HTML rendering'); }
 }
-function harness(metadataFetch, auditFetch = async url => ok(audit({ operationId: url.split('/').at(-2) }))) {
+function harness(metadataFetch, auditFetch = async url => ok(audit({ operationId: url.split('/').at(-2) })), evidenceFetch = async () => denied(404)) {
   const nodes = new Map(), events = {}, documentEvents = {}, requests = [];
-  const fetch = (url, options) => { requests.push({ url, options }); return (url.endsWith('/audit') ? auditFetch : metadataFetch)(url, options); };
+  const fetch = (url, options) => { requests.push({ url, options }); return (url.endsWith('/execution-evidence') ? evidenceFetch : url.endsWith('/audit') ? auditFetch : metadataFetch)(url, options); };
   const document = { hidden: false, getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: () => new Element(), createDocumentFragment: () => new Element(), addEventListener(name, handler) { documentEvents[name] = handler; } };
   vm.runInNewContext(source, { document, fetch, AbortController, addEventListener(name, handler) { events[name] = handler; } });
   const submit = id => { nodes.get('operation-id').value = id; return nodes.get('lookup-form').listeners.submit({ preventDefault() {} }); };
@@ -27,6 +27,13 @@ const second = '22222222-2222-2222-2222-222222222222';
 const receipt = overrides => ({ operationId: id, restoreIntentId: id, environmentId: id, stageJobId: id, reservationId: id, artifactId: id, agentId: id, targetIncarnationId: id, canonicalClusterId: id, canonicalSqlServerId: id, infobaseName: '<img src=x onerror=bad>', sqlDbName: 'canonical-db', state: 'AttemptRecorded', revision: 2, attemptId: second, attemptExpectedRevision: 1, quarantineReason: null, newlyRecorded: false, executable: false, scheduledJobsMustRemainBlocked: true, ...overrides });
 const auditEvent = overrides => ({ id: second, actorId: id, action: 'TargetCreationRegistered', createdAt: '2026-11-06T08:00:00Z', ...overrides });
 const audit = overrides => ({ operationId: id, events: [], truncated: false, executable: false, scheduledJobsMustRemainBlocked: true, ...overrides });
+const claim = overrides => ({ claimId: id, permitId: second, attemptId: second, agentId: id,
+  credentialId: '33333333-3333-3333-3333-333333333333', endpointMappingId: '44444444-4444-4444-4444-444444444444',
+  issuedAt: '2020-01-01T00:00:00.0000000Z', expiresAt: '2020-01-01T00:05:00+00:00', ...overrides });
+const evidence = overrides => ({ operationId: id, claimRecorded: true, historicalClaim: claim(), executable: false,
+  freshAuthority: false, retryAllowed: false, scheduledJobsMustRemainBlocked: true,
+  reconciliationRequired: true, physicalOutcomeKnown: false, ...overrides });
+const evidenceRendered = nodes => nodes.get('evidence-values').children.flatMap(fragment => fragment.children.map(child => child.textContent)).join('\n');
 const auditRendered = nodes => nodes.get('audit-events').children.flatMap(fragment => fragment.children.map(child => child.textContent));
 const ok = value => ({ ok: true, status: 200, json: async () => value });
 const denied = status => ({ ok: false, status });
@@ -91,7 +98,7 @@ test('audit follows validated metadata with safe text rendering and unchanged se
   const entries = [auditEvent({ action: 'TargetCreationQuarantined', createdAt: '2026-11-05T08:00:00Z' }), auditEvent({ id, action: 'TargetCreationAttemptRecorded' })];
   const h = harness(async () => ok(receipt()), async () => ok(audit({ events: entries })));
   await h.submit(id);
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 3);
   assert.equal(h.requests[1].url, '/api/admin/target-creation-operations/' + id + '/audit');
   const options = h.requests[1].options;
   assert.equal(options.method, 'GET'); assert.equal(options.cache, 'no-store');
@@ -179,6 +186,128 @@ test('editing, hiding and BFCache transitions clear both sections and invalidate
     body.resolve(audit({ events: [auditEvent()] })); await request;
     assert.equal(h.nodes.get('result').hidden, true); assert.equal(rendered(h.nodes), '');
     assert.equal(h.nodes.get('audit').hidden, true); assert.deepEqual(auditRendered(h.nodes), []);
+  }
+});
+
+test('expired claimed evidence follows main and audit, displays six pins and original UTC times without authority', async () => {
+  const payload = evidence();
+  const h = harness(async () => ok(receipt()), undefined, async () => ok(payload));
+  await h.submit(id.toUpperCase());
+  assert.deepEqual(h.requests.map(request => request.url), [
+    '/api/admin/target-creation-operations/' + id,
+    '/api/admin/target-creation-operations/' + id + '/audit',
+    '/api/admin/target-creation-operations/' + id + '/execution-evidence']);
+  const options = h.requests[2].options;
+  assert.equal(options.method, 'GET'); assert.equal(options.credentials, 'same-origin');
+  assert.equal(options.cache, 'no-store'); assert.equal(options.redirect, 'error');
+  assert.equal(options.signal, h.requests[0].options.signal);
+  assert.equal(h.nodes.get('execution-evidence').hidden, false);
+  assert.equal(h.nodes.get('evidence-message').textContent, 'Историческая выдача claim зафиксирована');
+  const text = evidenceRendered(h.nodes);
+  for (const key of ['claimId', 'permitId', 'attemptId', 'agentId', 'credentialId', 'endpointMappingId', 'issuedAt', 'expiresAt']) {
+    assert.ok(text.includes(key + '\n' + payload.historicalClaim[key]));
+  }
+  for (const [key, expected] of Object.entries({ executable: false, freshAuthority: false, retryAllowed: false,
+    scheduledJobsMustRemainBlocked: true, reconciliationRequired: true, physicalOutcomeKnown: false })) {
+    assert.ok(text.includes(key + '\n' + expected));
+  }
+});
+
+test('absent claim explicitly leaves physical launch unknown and does not show stale pins', async () => {
+  let payload = evidence();
+  const h = harness(async () => ok(receipt()), undefined, async () => ok(payload));
+  await h.submit(id); assert.match(evidenceRendered(h.nodes), /claimId/);
+  payload = evidence({ claimRecorded: false, historicalClaim: null }); await h.submit(id);
+  assert.equal(h.nodes.get('evidence-message').textContent,
+    'В снимке нет сохранённой записи выдачи claim. Это не доказывает отсутствие физического запуска.');
+  assert.doesNotMatch(evidenceRendered(h.nodes), /claimId|issuedAt|expiresAt/);
+  assert.match(evidenceRendered(h.nodes), /physicalOutcomeKnown\nfalse/);
+});
+
+test('evidence rejects unsafe pins, unknown shapes, mismatch, nonliteral flags and invalid UTC windows', async () => {
+  const malformed = [
+    { operationId: second }, { operationId: id.toUpperCase().replace('1', 'A') }, { claimRecorded: 'true' },
+    { claimRecorded: false }, { historicalClaim: null }, { extra: 'unknown' },
+    ...['executable', 'freshAuthority', 'retryAllowed', 'physicalOutcomeKnown'].map(key => ({ [key]: true })),
+    ...['scheduledJobsMustRemainBlocked', 'reconciliationRequired'].map(key => ({ [key]: false })),
+    { executable: 0 }, { freshAuthority: null },
+    ...['claimId', 'permitId', 'attemptId', 'agentId', 'credentialId', 'endpointMappingId'].map(key => ({ historicalClaim: claim({ [key]: '<img src=x onerror=bad>' }) })),
+    ...[{ attemptId: id }, { agentId: second }, { extra: true }, { claimId: '00000000-0000-0000-0000-000000000000' },
+      { issuedAt: 'invalid-date' }, { issuedAt: '2020-01-01T00:00:00' }, { issuedAt: '2020-01-01T00:00:00+01:00' },
+      { issuedAt: '2020-02-30T00:00:00Z' }, { expiresAt: '2020-01-01T00:00:00Z' },
+      { expiresAt: '2019-12-31T23:59:59Z' }, { expiresAt: '2020-01-01T00:05:00.001Z' },
+      { expiresAt: '2020-01-01T00:05:00.0000001Z' }].map(value => ({ historicalClaim: claim(value) }))
+  ];
+  for (const change of malformed) {
+    const h = harness(async () => ok(receipt()), undefined, async () => ok(evidence(change)));
+    await h.submit(id);
+    assert.equal(evidenceRendered(h.nodes), '', JSON.stringify(change));
+    assert.match(h.nodes.get('evidence-message').textContent, /недоступны/, JSON.stringify(change));
+    assert.equal(h.nodes.get('result').hidden, false);
+    assert.equal(h.nodes.get('audit').hidden, false);
+  }
+  for (const attemptId of [null, id]) {
+    const h = harness(async () => ok(receipt({ attemptId })), undefined, async () => ok(evidence()));
+    await h.submit(id); assert.equal(evidenceRendered(h.nodes), '');
+  }
+});
+
+test('evidence authorization clears all sections; other failures clear only evidence and never imply no claim', async () => {
+  for (const failure of [denied(401), denied(403), denied(404), denied(409), denied(500), new Error('network'),
+    { ok: true, status: 200, json: async () => { throw new Error('invalid json'); } }]) {
+    let response = ok(evidence());
+    const h = harness(async () => ok(receipt()), async () => ok(audit({ events: [auditEvent()] })), async () => {
+      if (response instanceof Error) throw response; return response;
+    });
+    await h.submit(id); assert.match(evidenceRendered(h.nodes), /claimId/);
+    response = failure; await h.submit(id);
+    const unauthorized = failure.status === 401 || failure.status === 403;
+    assert.equal(evidenceRendered(h.nodes), '');
+    assert.equal(h.nodes.get('result').hidden, unauthorized);
+    assert.equal(h.nodes.get('audit').hidden, unauthorized);
+    assert.equal(h.nodes.get('execution-evidence').hidden, unauthorized);
+    assert.equal(h.nodes.get('session-link').hidden, failure.status !== 401);
+    if (unauthorized) { assert.equal(rendered(h.nodes), ''); assert.deepEqual(auditRendered(h.nodes), []); }
+    else {
+      assert.match(h.nodes.get('evidence-message').textContent, /недоступны/);
+      assert.doesNotMatch(h.nodes.get('evidence-message').textContent, /В снимке нет/);
+      assert.match(rendered(h.nodes), /AttemptRecorded/); assert.equal(auditRendered(h.nodes).length, 1);
+    }
+  }
+});
+
+test('stale evidence transport and body completions including auth cannot repopulate or clear new lookup', async () => {
+  for (const bodyPending of [false, true]) {
+    for (const late of [ok(evidence()), denied(401), denied(403)]) {
+      const pending = deferred(), started = deferred();
+      const h = harness(async url => ok(receipt({ operationId: url.split('/').at(-1) })), undefined, async url => {
+        if (!url.includes(id)) return ok(evidence({ operationId: second, claimRecorded: false, historicalClaim: null }));
+        if (!bodyPending) { started.resolve(); return pending.promise; }
+        return { ok: true, status: 200, json: () => { started.resolve(); return pending.promise; } };
+      });
+      const first = h.submit(id); await started.promise; await h.submit(second);
+      assert.equal(h.requests[2].options.signal.aborted, true);
+      pending.resolve(bodyPending ? evidence() : late); await first;
+      assert.match(rendered(h.nodes), new RegExp(second));
+      assert.match(evidenceRendered(h.nodes), new RegExp(second));
+      assert.match(h.nodes.get('evidence-message').textContent, /В снимке нет/);
+      assert.equal(h.nodes.get('session-link').hidden, true);
+    }
+  }
+});
+
+test('editing, page transitions and hidden tabs clear evidence and invalidate pending bodies', async () => {
+  for (const trigger of [h => h.nodes.get('operation-id').listeners.input(), h => h.events.pagehide(), h => h.events.pageshow(), h => { h.document.hidden = true; h.documentEvents.visibilitychange(); }]) {
+    const body = deferred(), started = deferred(); let pending = false;
+    const h = harness(async () => ok(receipt()), undefined, async () => !pending ? ok(evidence())
+      : { ok: true, status: 200, json: () => { started.resolve(); return body.promise; } });
+    await h.submit(id); assert.match(evidenceRendered(h.nodes), /claimId/);
+    pending = true; const request = h.submit(id); await started.promise; trigger(h);
+    assert.equal(h.requests.at(-1).options.signal.aborted, true);
+    body.resolve(evidence()); await request;
+    assert.equal(h.nodes.get('execution-evidence').hidden, true); assert.equal(evidenceRendered(h.nodes), '');
+    assert.equal(h.nodes.get('evidence-message').textContent, '');
+    assert.equal(h.nodes.get('result').hidden, true); assert.equal(h.nodes.get('audit').hidden, true);
   }
 });
 

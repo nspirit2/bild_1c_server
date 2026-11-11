@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values', 'audit', 'audit-message', 'audit-events', 'audit-truncated'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values', 'audit', 'audit-message', 'audit-events', 'audit-truncated', 'execution-evidence', 'evidence-message', 'evidence-values'].map(id => [id, document.getElementById(id)]));
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
   const pins = [
@@ -18,9 +18,14 @@
     ui['audit-message'].textContent = '';
     ui['audit-truncated'].hidden = true;
   }
+  function clearEvidence() {
+    ui['execution-evidence'].hidden = true;
+    ui['evidence-values'].replaceChildren();
+    ui['evidence-message'].textContent = '';
+  }
   function clear() {
     generation++; controller?.abort(); controller = null;
-    ui.result.hidden = true; ui.values.replaceChildren(); clearAudit();
+    ui.result.hidden = true; ui.values.replaceChildren(); clearAudit(); clearEvidence();
     ui['lookup-form'].setAttribute('aria-busy', 'false');
     ui['session-link'].hidden = true;
   }
@@ -93,6 +98,76 @@
       ui['audit-message'].textContent = 'История аудита недоступна. Повторите поиск; метаданные записи показаны отдельно.';
     }
   }
+  const evidenceFlags = {
+    executable: false, freshAuthority: false, retryAllowed: false,
+    scheduledJobsMustRemainBlocked: true, reconciliationRequired: true, physicalOutcomeKnown: false
+  };
+  const claimPins = ['claimId', 'permitId', 'attemptId', 'agentId', 'credentialId', 'endpointMappingId'];
+  function exactKeys(value, keys) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  }
+  function historicalTime(value) {
+    if (typeof value !== 'string') return null;
+    const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?(?:Z|\+00:00)$/.exec(value);
+    if (!match) return null;
+    const parsed = Date.parse(match[1] + 'Z');
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 19) !== match[1]) return null;
+    // Compare the original server precision, not a rounded browser millisecond window.
+    return BigInt(parsed) * 10000n + BigInt((match[2] || '').padEnd(7, '0'));
+  }
+  function validateEvidence(value, operation, id) {
+    if (!exactKeys(value, ['operationId', 'claimRecorded', 'historicalClaim', ...Object.keys(evidenceFlags)])
+      || value.operationId !== id || value.operationId !== operation.operationId
+      || typeof value.claimRecorded !== 'boolean'
+      || !Object.entries(evidenceFlags).every(([key, expected]) => value[key] === expected)) return false;
+    if (!value.claimRecorded) return value.historicalClaim === null;
+    const claim = value.historicalClaim;
+    if (!exactKeys(claim, [...claimPins, 'issuedAt', 'expiresAt']) || !claimPins.every(key => hasGuid(claim[key]))
+      || !hasGuid(operation.attemptId) || claim.attemptId !== operation.attemptId
+      || !hasGuid(operation.agentId) || claim.agentId !== operation.agentId) return false;
+    const issued = historicalTime(claim.issuedAt), expires = historicalTime(claim.expiresAt);
+    return issued !== null && expires !== null && expires > issued && expires - issued <= 3000000000n;
+  }
+  function renderEvidence(value) {
+    ui['evidence-message'].textContent = value.claimRecorded
+      ? 'Историческая выдача claim зафиксирована'
+      : 'В снимке нет сохранённой записи выдачи claim. Это не доказывает отсутствие физического запуска.';
+    const rows = [['Operation ID', value.operationId]];
+    if (value.claimRecorded) {
+      for (const key of [...claimPins, 'issuedAt', 'expiresAt']) rows.push([key, value.historicalClaim[key]]);
+    }
+    for (const [key, flag] of Object.entries(evidenceFlags)) rows.push([key, flag]);
+    const fragment = document.createDocumentFragment();
+    for (const [label, value] of rows) {
+      const dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = label; dd.textContent = String(value); fragment.append(dt, dd);
+    }
+    ui['evidence-values'].replaceChildren(fragment); ui['execution-evidence'].hidden = false;
+  }
+  async function loadEvidence(id, operation, version, request) {
+    if (version !== generation) return;
+    ui['execution-evidence'].hidden = false; ui['evidence-message'].textContent = 'Загрузка исторических свидетельств выдачи…';
+    try {
+      const response = await fetch('/api/admin/target-creation-operations/' + id + '/execution-evidence', {
+        method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: request.signal
+      });
+      if (version !== generation) return;
+      if (response.status === 401 || response.status === 403) {
+        clear(); ui.message.textContent = errors[response.status];
+        ui['session-link'].hidden = response.status !== 401; return;
+      }
+      if (!response.ok) throw new Error('Evidence unavailable');
+      const value = await response.json();
+      if (version !== generation) return;
+      if (!validateEvidence(value, operation, id)) throw new Error('Invalid execution evidence');
+      renderEvidence(value);
+    } catch (error) {
+      if (version !== generation) return;
+      clearEvidence(); ui['execution-evidence'].hidden = false;
+      ui['evidence-message'].textContent = 'Исторические свидетельства выдачи недоступны. Отсутствие записи claim не установлено; повторите поиск.';
+    }
+  }
   const errors = {
     400: 'Некорректный идентификатор операции.',
     401: 'Сеанс завершён. Войдите через существующую страницу Stage.',
@@ -121,6 +196,7 @@
       if (!validate(value, id)) throw new Error('Invalid diagnostic response');
       render(value); ui.message.textContent = 'Показаны только метаданные журнала. Выполнение не разрешено.';
       await loadAudit(id, version, request);
+      await loadEvidence(id, value, version, request);
     } catch (error) {
       if (version !== generation) return;
       ui.result.hidden = true; ui.values.replaceChildren();
