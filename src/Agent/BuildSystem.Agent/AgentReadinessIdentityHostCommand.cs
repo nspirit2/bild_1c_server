@@ -33,7 +33,7 @@ public static class AgentReadinessIdentityHostCommand
                     Enabled = true,
                     BaseUri = options.ApiOrigin,
                     TimeoutSeconds = options.HttpTimeoutSeconds
-                }, () => TokenStore.Load(Path.Combine(options.DataDirectory, "agent-token.dpapi"))))
+                }, () => IdentityProbeTokenLoader.Load(Path.Combine(options.DataDirectory, "agent-token.dpapi"))))
                 {
                     await client.ProbeAsync(options.ExpectedAgentId, ct).ConfigureAwait(false);
                 }
