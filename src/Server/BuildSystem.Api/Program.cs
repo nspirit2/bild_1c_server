@@ -344,6 +344,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
 }).RequireAuthorization();
 app.MapAdministration();
 app.MapEnvironmentBrowseEndpoints();
+app.MapEnvironmentOrderSummaryEndpoints();
 app.MapAgentEndpoints();
 app.MapTargetCreationCredentialDelivery();
 app.MapTargetCreationPermits();

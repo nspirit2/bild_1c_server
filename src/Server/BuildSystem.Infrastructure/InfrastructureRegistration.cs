@@ -51,6 +51,7 @@ public static class InfrastructureRegistration
         services.AddScoped<IArchiveCatalogBrowse, SqlArchiveCatalogBrowse>();
         services.AddScoped<IProjectBrowse, SqlProjectBrowse>();
         services.AddScoped<IEnvironmentBrowse, SqlEnvironmentBrowse>();
+        services.AddScoped<IEnvironmentOrderSummary, SqlEnvironmentOrderSummary>();
         return services;
     }
 }

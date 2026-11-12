@@ -41,6 +41,12 @@
         <nav class="pagination" aria-label="Страницы окружений"><button id="environment-previous" class="secondary" type="button" disabled>← Назад</button><span id="environment-page" role="status" aria-live="polite" aria-atomic="true">Страница окружений 1</span><button id="environment-next" class="secondary" type="button" disabled>Далее →</button></nav>
         <p id="environment-detail-status" class="environments-message" role="status" aria-live="polite" aria-atomic="true"></p>
         <dl id="environment-details" class="detail-grid"></dl>
+        <section class="order-summary" aria-label="Исходный заказ">
+          <button id="order-summary-load" class="secondary" type="button" aria-controls="order-summary-values" hidden disabled>Показать исходный заказ</button>
+          <p id="order-summary-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <dl id="order-summary-values" class="detail-grid"></dl>
+          <button id="order-stage-load" class="secondary" type="button" hidden disabled>Показать stage и cleanup</button>
+        </section>
         <p class="footnote">Состояние показано как получено от сервера, без проверки физической готовности или подключения. Срок не доказывает удаление ресурсов. Список не восстанавливает потерянный ключ заказа и не подтверждает исход неизвестного запроса.</p>
       </section>
       <section class="card" aria-labelledby="archive-browser-title">

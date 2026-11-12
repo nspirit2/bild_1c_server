@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed','order-summary-load','order-summary-status','order-summary-values','order-stage-load'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -24,7 +24,58 @@
   let environmentsController = null, environmentDetailController = null, environmentsBusy = false;
   let environmentRows = new Map(), selectedEnvironment = null;
   let environmentHistory = [null], environmentNext = null;
+  let summaryGeneration = 0, summaryController = null, orderSummary = null, historyStage = false;
+  function clearSummary() {
+    summaryGeneration++; summaryController?.abort(); summaryController = null; orderSummary = null;
+    ui['order-summary-values'].replaceChildren(); ui['order-summary-status'].textContent = '';
+    ui['order-summary-load'].hidden = true; ui['order-summary-load'].disabled = true;
+    ui['order-stage-load'].hidden = true; ui['order-stage-load'].disabled = true;
+    if (historyStage) closeDetail();
+  }
+  const closedShape = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  function validSummary(value, id, projectId) {
+    const raw = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f\u007f-\u009f]/.test(v);
+    return closedShape(value, ['environmentId','projectId','displayName','environmentState','requestId','requestState','createdAt','ttlDays','jobId','jobKind','jobState','source']) &&
+      ['environmentId','projectId','requestId','jobId'].every(k => hasGuid(value[k]) && value[k].length === 36) &&
+      value.environmentId.toLowerCase() === id.toLowerCase() && value.projectId.toLowerCase() === projectId.toLowerCase() &&
+      raw(value.displayName, 120) && ['environmentState','requestState','jobState'].every(k => raw(value[k], 64)) && ['ProvisionArchive','ObserveArchiveStage'].includes(value.jobKind) &&
+      typeof value.createdAt === 'string' && value.createdAt.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$/.test(value.createdAt) && Number.isFinite(Date.parse(value.createdAt)) &&
+      Number.isInteger(value.ttlDays) && value.ttlDays >= 1 && value.ttlDays <= 36500 &&
+      closedShape(value.source, ['archiveVersionId','format','sha256','sizeBytes']) && hasGuid(value.source.archiveVersionId) && value.source.archiveVersionId.length === 36 &&
+      ['dt','bak'].includes(value.source.format) && typeof value.source.sha256 === 'string' && value.source.sha256.length === 64 && /^[0-9a-f]{64}$/i.test(value.source.sha256) &&
+      Number.isSafeInteger(value.source.sizeBytes) && value.source.sizeBytes > 0;
+  }
+  async function loadSummary() {
+    const id = selectedEnvironment, row = id && environmentRows.get(id.toLowerCase());
+    if (!authenticated || !row || ui['order-summary-load'].hidden || ui['order-summary-load'].disabled) return;
+    clearSummary(); ui['order-summary-load'].hidden = false;
+    const version = ++summaryGeneration, session = generation; summaryController = new AbortController();
+    const current = () => version === summaryGeneration && session === generation && authenticated && selectedEnvironment === id;
+    ui['order-summary-status'].textContent = 'Загрузка исходного заказа…';
+    try {
+      const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/order-summary', summaryController.signal);
+      if (!current()) return;
+      if (!validSummary(value, id, row.projectId)) throw new Error('Invalid order summary');
+      orderSummary = value;
+      const entries = [['Окружение',value.environmentId],['Проект',value.projectId],['Название заказа',value.displayName],['Состояние окружения',value.environmentState],
+        ['Запрос',value.requestId],['Состояние запроса',value.requestState],['Создан (UTC)',value.createdAt],['TTL заказа, дней',String(value.ttlDays)],
+        ['Задание',value.jobId],['Тип задания',value.jobKind],['Состояние задания',value.jobState],['Источник: версия архива',value.source.archiveVersionId],
+        ['Формат источника',value.source.format],['SHA-256 источника',value.source.sha256],['Размер источника',bytes(value.source.sizeBytes)]];
+      const fragment = document.createDocumentFragment();
+      for (const [label, content] of entries) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd); }
+      ui['order-summary-values'].replaceChildren(fragment);
+      const supported = value.jobKind === 'ProvisionArchive';
+      ui['order-stage-load'].hidden = !supported; ui['order-stage-load'].disabled = !supported;
+      ui['order-summary-status'].textContent = 'Метаданные исходного заказа; не подтверждают Ready, владение целью или наличие файла. TTL не доказывает удаление. ' +
+        (supported ? 'Stage и cleanup — отдельные наблюдения по явной кнопке.' : 'Для этого типа задания существующие наблюдения stage и cleanup не поддерживаются.');
+    } catch (error) {
+      if (!current() || error.name === 'AbortError') return;
+      if (!environmentAccessError(error)) ui['order-summary-status'].textContent = 'Исходный заказ недоступен; состояние неизвестно. ' + errorText(error);
+    } finally { if (current()) ui['order-summary-load'].disabled = false; }
+  }
   function clearEnvironmentDetail() {
+    clearSummary();
     environmentDetailGeneration++; environmentDetailController?.abort(); environmentDetailController = null;
     selectedEnvironment = null; ui['environment-details'].replaceChildren(); ui['environment-detail-status'].textContent = '';
     ui['environment-details'].setAttribute('aria-busy', 'false');
@@ -127,6 +178,7 @@
         const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd);
       }
       ui['environment-details'].replaceChildren(fragment);
+      ui['order-summary-load'].hidden = false; ui['order-summary-load'].disabled = false;
       ui['environment-detail-status'].textContent = 'Метаданные окружения получены отдельным запросом. Физическая готовность и подключение не проверялись.';
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
@@ -195,6 +247,7 @@
   };
   const bytes = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? new Intl.NumberFormat('ru-RU').format(value) + ' байт' : '—';
   function closeDetail() {
+    historyStage = false;
     detailGeneration++; detailController?.abort(); detailController = null;
     selected = null; ui['detail-panel'].hidden = true; ui['detail-values'].replaceChildren();
     ui['detail-retention'].hidden = true; ui['detail-retention-reasons'].replaceChildren();
@@ -446,7 +499,7 @@
     ui['detail-retention-reasons'].replaceChildren(fragment); ui['detail-retention'].hidden = false;
   }
   const cleanupStates = { None:'Нет retirement intent', IntentRequested:'Intent запрошен', Authorized:'Разрешение записано', DeletedReported:'Удаление сообщено агентом', StagingReleased:'Staging allocation освобождена' };
-  async function loadCleanup(id, version, session, signal) {
+  async function loadCleanup(id, version, session, signal, expected = null) {
     ui['cleanup-values'].replaceChildren(); ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
     const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
     try {
@@ -455,6 +508,7 @@
       const nullableId = v => v === null || hasGuid(v);
       const amounts = ['reservedStagingBytes','heldStagingBytes','releasedStagingBytes'];
       if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() || !hasGuid(value.jobId) ||
+          (expected && value.jobId.toLowerCase() !== expected.jobId.toLowerCase()) ||
           !Object.hasOwn(cleanupStates, value.cleanupState) || !['artifactId','retirementId','authorizationId','resultId','releaseId'].every(k => nullableId(value[k])) ||
           !amounts.every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) ||
           value.heldStagingBytes + value.releasedStagingBytes !== value.reservedStagingBytes ||
@@ -480,22 +534,23 @@
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
       ui['cleanup-values'].replaceChildren();
-      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
       ui['cleanup-message'].textContent = error instanceof ApiError && error.status === 404
         ? 'Учёт cleanup недоступен: endpoint отсутствует в этой версии или нет доступа. Состояние неизвестно; не считать staging свободным.'
         : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
     }
   }
-  async function loadDetail(id) {
+  async function loadDetail(id, expected = null) {
     if (!authenticated || busy || !guid.test(id)) return;
-    closeDetail(); selected = id; markSelection();
+    closeDetail(); historyStage = !!expected; selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
-    void loadCleanup(id, version, session, detailController.signal);
+    void loadCleanup(id, version, session, detailController.signal, expected);
     try {
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
       if (version !== detailGeneration || session !== generation || !authenticated) return;
-      if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase()) throw new Error('Invalid detail response');
+      if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() ||
+          (expected && (!hasGuid(value.requestId) || !hasGuid(value.jobId) || value.requestId.toLowerCase() !== expected.requestId.toLowerCase() || value.jobId.toLowerCase() !== expected.jobId.toLowerCase()))) throw new Error('Invalid detail response');
       const restoreEntries = restoreIntentEntries(value.restoreIntent);
       const entries = [
         ['Окружение', text(value.environmentId)], ['Запрос', text(value.requestId)], ['Задание', text(value.jobId)],
@@ -512,8 +567,8 @@
       ui['detail-values'].replaceChildren(fragment); renderRetention(value); ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
     } catch (error) {
       if (version !== detailGeneration || session !== generation || error.name === 'AbortError') return;
-      if (error instanceof ApiError && error.status === 401) { showLogin('Сеанс завершён. Войдите снова.'); return; }
-      ui['detail-message'].textContent = errorText(error);
+      if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      ui['detail-message'].textContent = (expected ? 'Наблюдение stage недоступно; состояние неизвестно. Это не отсутствие удержаний. ' : '') + errorText(error);
     } finally { if (version === detailGeneration) ui['detail-panel'].setAttribute('aria-busy', 'false'); }
   }
   async function checkSession() {
@@ -561,6 +616,11 @@
       }
       message((expired ? 'Сеанс уже завершён.' : 'Выход не подтверждён сервером. Данные скрыты; повторите выход после восстановления связи.') + warning, !expired);
     } finally { if (op.version === generation) { busy = false; controls(); } }
+  });
+  ui['order-summary-load'].addEventListener('click', loadSummary);
+  ui['order-stage-load'].addEventListener('click', () => {
+    if (authenticated && orderSummary && orderSummary.environmentId === selectedEnvironment && orderSummary.jobKind === 'ProvisionArchive' && !ui['order-stage-load'].disabled)
+      loadDetail(orderSummary.environmentId, { requestId: orderSummary.requestId, jobId: orderSummary.jobId });
   });
   ui['environments-refresh'].addEventListener('click', () => loadEnvironments(true));
   ui['environment-previous'].addEventListener('click', () => {
