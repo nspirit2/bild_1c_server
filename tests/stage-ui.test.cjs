@@ -15,7 +15,7 @@ class Element {
 }
 function harness(fetch) {
   const nodes = new Map();
-  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment') };
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment'), addEventListener(name, handler) { nodes.set('document:' + name, handler); } };
   vm.runInNewContext(source, { document, fetch, AbortController, URLSearchParams, Intl, Date, console, crypto:require('node:crypto').webcrypto, addEventListener(name, handler) { nodes.set(name, handler); } });
   return nodes;
 }

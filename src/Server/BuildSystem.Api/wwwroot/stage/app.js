@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -20,6 +20,100 @@
   let catalogIds = new Set(), selectedArchive = null, orderIntent = null, orderBusy = false, orderAccepted = false;
   let orderGeneration = 0, orderController = null, forgottenOrder = false;
   const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+  let environmentsGeneration = 0, environmentDetailGeneration = 0;
+  let environmentsController = null, environmentDetailController = null, environmentsBusy = false;
+  let environmentRows = new Map(), selectedEnvironment = null;
+  function clearEnvironmentDetail() {
+    environmentDetailGeneration++; environmentDetailController?.abort(); environmentDetailController = null;
+    selectedEnvironment = null; ui['environment-details'].replaceChildren(); ui['environment-detail-status'].textContent = '';
+    ui['environment-details'].setAttribute('aria-busy', 'false');
+    for (const button of ui['environments-list'].querySelectorAll('button')) button.setAttribute('aria-expanded', 'false');
+  }
+  function clearEnvironments() {
+    environmentsGeneration++; environmentsController?.abort(); environmentsController = null;
+    environmentsBusy = false; environmentRows = new Map(); clearEnvironmentDetail();
+    ui['environments-list'].replaceChildren();
+    ui['environments-status'].textContent = 'Нажмите «Обновить окружения». Автоматического обновления нет.';
+    environmentControls();
+  }
+  function environmentControls() {
+    ui['environments-refresh'].disabled = !authenticated || environmentsBusy;
+    ui['environments-panel'].setAttribute('aria-busy', String(environmentsBusy));
+  }
+  function validEnvironment(value) {
+    return value && hasGuid(value.id) && hasGuid(value.projectId) &&
+      typeof value.displayName === 'string' && value.displayName.trim().length > 0 && value.displayName.length <= 120 &&
+      !/[\u0000-\u001f\u007f-\u009f]/.test(value.displayName) &&
+      typeof value.state === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value.state) &&
+      (value.expiresAt === null || (typeof value.expiresAt === 'string' && value.expiresAt.length <= 64 &&
+        /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value.expiresAt) && Number.isFinite(Date.parse(value.expiresAt))));
+  }
+  const environmentExpiry = value => value === null ? 'Не указан' : date(value);
+  function environmentAccessError(error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      showLogin(error.status === 401 ? 'Сеанс завершён. Войдите снова.' : 'Доступ запрещён. Данные скрыты; проверьте учётную запись.');
+      return true;
+    }
+    return false;
+  }
+  async function loadEnvironments() {
+    if (!authenticated) return;
+    environmentsGeneration++; environmentsController?.abort(); environmentsController = new AbortController();
+    const version = environmentsGeneration, session = generation;
+    clearEnvironmentDetail(); environmentRows = new Map(); ui['environments-list'].replaceChildren();
+    environmentsBusy = true; environmentControls(); ui['environments-status'].textContent = 'Загрузка окружений…';
+    try {
+      const values = await request('/api/test-environments', environmentsController.signal);
+      if (version !== environmentsGeneration || session !== generation || !authenticated) return;
+      if (!Array.isArray(values) || !values.every(validEnvironment)) throw new Error('Invalid environments response');
+      const ids = new Set();
+      for (const value of values) {
+        const id = value.id.toLowerCase(); if (ids.has(id)) throw new Error('Duplicate environment'); ids.add(id);
+      }
+      const fragment = document.createDocumentFragment();
+      for (const value of values.slice(0, 200)) {
+        const row = document.createElement('tr'); cell(row, value.id); cell(row, value.displayName);
+        cell(row, value.state); cell(row, environmentExpiry(value.expiresAt));
+        environmentRows.set(value.id.toLowerCase(), value);
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary'; button.textContent = 'Сведения';
+        button.dataset.environment = value.id; button.setAttribute('aria-controls', 'environment-details'); button.setAttribute('aria-expanded', 'false');
+        button.addEventListener('click', () => loadEnvironment(value.id)); cell(row, '').append(button); fragment.append(row);
+      }
+      ui['environments-list'].replaceChildren(fragment);
+      ui['environments-status'].textContent = values.length > 200
+        ? 'Показаны первые 200 из ' + values.length + ' окружений. Список ограничен интерфейсом; постраничного просмотра нет.'
+        : values.length ? 'Получено окружений: ' + values.length + '. Без автоматического обновления.' : 'Доступных окружений нет.';
+    } catch (error) {
+      if (version !== environmentsGeneration || session !== generation || error.name === 'AbortError') return;
+      environmentRows = new Map(); ui['environments-list'].replaceChildren();
+      if (!environmentAccessError(error)) ui['environments-status'].textContent = errorText(error);
+    } finally { if (version === environmentsGeneration) { environmentsBusy = false; environmentControls(); } }
+  }
+  async function loadEnvironment(id) {
+    if (!authenticated || environmentsBusy || !hasGuid(id)) return;
+    const expected = environmentRows.get(id.toLowerCase()); if (!expected) return;
+    clearEnvironmentDetail(); selectedEnvironment = id;
+    const version = ++environmentDetailGeneration, listVersion = environmentsGeneration, session = generation;
+    environmentDetailController = new AbortController();
+    const current = () => version === environmentDetailGeneration && listVersion === environmentsGeneration && session === generation && authenticated && selectedEnvironment === id;
+    ui['environment-details'].setAttribute('aria-busy', 'true'); ui['environment-detail-status'].textContent = 'Загрузка окружения…';
+    for (const button of ui['environments-list'].querySelectorAll('button')) button.setAttribute('aria-expanded', String(button.dataset.environment === id));
+    try {
+      const value = await request('/api/test-environments/' + encodeURIComponent(id), environmentDetailController.signal);
+      if (!current()) return;
+      if (!validEnvironment(value) || value.id.toLowerCase() !== id.toLowerCase() || value.projectId.toLowerCase() !== expected.projectId.toLowerCase()) throw new Error('Invalid environment detail');
+      const fragment = document.createDocumentFragment();
+      for (const [label, content] of [['Окружение',value.id],['Проект',value.projectId],['Название',value.displayName],['Состояние сервера',value.state],['Срок до (локальное время)',environmentExpiry(value.expiresAt)]]) {
+        const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd);
+      }
+      ui['environment-details'].replaceChildren(fragment);
+      ui['environment-detail-status'].textContent = 'Метаданные окружения получены отдельным запросом. Физическая готовность и подключение не проверялись.';
+    } catch (error) {
+      if (!current() || error.name === 'AbortError') return;
+      ui['environment-details'].replaceChildren();
+      if (!environmentAccessError(error)) ui['environment-detail-status'].textContent = errorText(error);
+    } finally { if (current()) ui['environment-details'].setAttribute('aria-busy', 'false'); }
+  }
   const lostOrderWarning = ' Локальный ключ забыт; заказ мог быть принят. Это не отмена: проверьте историю операций перед новым заказом.';
   function discardOrder() {
     const unknown = orderIntent && !orderAccepted; if (unknown) forgottenOrder = true;
@@ -189,7 +283,7 @@
     } finally { if (version === catalogGeneration) { catalogBusy = false; archiveControls(); } }
   }
   function begin() {
-    generation++; controller?.abort(); closeDetail(); clearArchiveBrowser(); controller = new AbortController();
+    generation++; controller?.abort(); closeDetail(); clearArchiveBrowser(); clearEnvironments(); controller = new AbortController();
     return { version:generation, signal:controller.signal };
   }
   function controls() {
@@ -199,7 +293,7 @@
     ui['login-submit'].disabled = busy;
     for (const button of ui['operations-body'].querySelectorAll('button')) button.disabled = busy || !button.dataset.environment;
     ui['workspace'].setAttribute('aria-busy', String(busy));
-    archiveControls();
+    archiveControls(); environmentControls();
   }
   function message(value, error = false) { ui.message.textContent = value; ui.message.classList.toggle('error', error); }
   function clearData() {
@@ -448,6 +542,7 @@
       message((expired ? 'Сеанс уже завершён.' : 'Выход не подтверждён сервером. Данные скрыты; повторите выход после восстановления связи.') + warning, !expired);
     } finally { if (op.version === generation) { busy = false; controls(); } }
   });
+  ui['environments-refresh'].addEventListener('click', loadEnvironments);
   ui.refresh.addEventListener('click', () => loadList(true));
   ui['state-filter'].addEventListener('change', () => loadList(true));
   ui.previous.addEventListener('click', () => { if (!orderIntent && !busy && history.length > 1) { history.pop(); loadList(); } });
@@ -484,6 +579,9 @@
   ui['order-abandon-ack'].addEventListener('change', orderControls);
   ui['order-abandon'].addEventListener('click', () => { if (!orderIntent || orderAccepted || orderBusy || !ui['order-abandon-ack'].checked) return; discardOrder(); message(lostOrderWarning,true); controls(); });
   globalThis.addEventListener('beforeunload', event => { if (orderIntent && !orderAccepted) { event.preventDefault(); event.returnValue=''; } });
+  globalThis.addEventListener('pagehide', clearEnvironments);
+  globalThis.addEventListener('pageshow', clearEnvironments);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearEnvironments(); });
   checkSession();
 })();
 // end

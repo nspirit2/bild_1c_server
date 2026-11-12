@@ -33,6 +33,14 @@
         <p id="empty-list" class="empty" hidden>Доступных операций по этому фильтру нет.</p>
         <nav class="pagination" aria-label="Страницы операций"><button id="previous" class="secondary" type="button" disabled>← Назад</button><span id="page-number">Страница 1</span><button id="next" class="secondary" type="button" disabled>Далее →</button></nav>
       </section>
+      <section id="environments-panel" class="card environments-panel" aria-labelledby="environments-title">
+        <div class="card-header"><div><h2 id="environments-title">Мои окружения</h2><p class="muted">Доступные окружения (администратор видит все). Это не история всех заказов.</p></div><button id="environments-refresh" class="secondary" type="button" disabled>Обновить окружения</button></div>
+        <p id="environments-status" class="environments-message" role="status" aria-live="polite" aria-atomic="true">Нажмите «Обновить окружения». Автоматического обновления нет.</p>
+        <div class="table-wrap"><table><caption class="sr-only">Доступные окружения: серверные метаданные</caption><thead><tr><th scope="col">UUID окружения</th><th scope="col">Название</th><th scope="col">Состояние сервера</th><th scope="col">Срок до (локальное время)</th><th scope="col">Сведения</th></tr></thead><tbody id="environments-list"></tbody></table></div>
+        <p id="environment-detail-status" class="environments-message" role="status" aria-live="polite" aria-atomic="true"></p>
+        <dl id="environment-details" class="detail-grid"></dl>
+        <p class="footnote">Состояние показано как получено от сервера, без проверки физической готовности или подключения. Срок не доказывает удаление ресурсов. Список не восстанавливает потерянный ключ заказа и не подтверждает исход неизвестного запроса.</p>
+      </section>
       <section class="card" aria-labelledby="archive-browser-title">
         <div class="card-header"><div><h2 id="archive-browser-title">Архивы проекта</h2><p class="muted">Выберите разрешённую версию для stage-заказа. Восстановление базы не выполняется.</p></div><button id="browse-archives" class="secondary" type="button" aria-controls="archive-browser" aria-expanded="false">Архивы проекта</button></div>
         <div id="archive-browser" class="archive-browser" hidden>
