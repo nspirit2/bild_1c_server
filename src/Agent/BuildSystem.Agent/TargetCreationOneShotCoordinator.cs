@@ -139,6 +139,7 @@ public sealed class TargetCreationOneShotCoordinator
             ITargetCreationNamespaceHold? hold = null;
             var attempted = false;
             var acknowledged = false;
+            TargetCreationAcknowledgement? acknowledgement = null;
             try
             {
                 if (begunRecord.Intent != intent || begunBinding != binding) throw new InvalidOperationException();
@@ -205,6 +206,9 @@ public sealed class TargetCreationOneShotCoordinator
                     outcome.Kind == RacInfobaseCreationOutcomeKind.AcknowledgementObserved &&
                     outcome.ReportedInfobaseId is { } reported && reported != Guid.Empty &&
                     outcome.ReasonCode == "CreationAcknowledgementObserved";
+                if (acknowledged)
+                    acknowledgement = new TargetCreationAcknowledgement(intent, binding, grant.ClaimId,
+                        outcome!.ReportedInfobaseId!.Value, grant.IssuedAt, grant.ExpiresAt);
             }
             catch (Exception) { /* Untrusted diagnostics and secrets never escape. No physical retry. */ }
             finally
@@ -216,11 +220,16 @@ public sealed class TargetCreationOneShotCoordinator
                 try { prepared.Dispose(); }
                 catch (Exception) { acknowledged = false; }
             }
-            if (cancellationToken.IsCancellationRequested) acknowledged = false;
+            if (cancellationToken.IsCancellationRequested || acknowledgement is null) acknowledged = false;
             try
             {
-                var record = _journal.QuarantineTargetCreation(begunRecord.Intent.OperationId, begunRecord.Revision,
-                    cancellationToken.IsCancellationRequested ? "Cancelled" : "OutcomeUnknown");
+                // Only the successful atomic commit makes the acknowledgement durable. On failure,
+                // retain the in-flight barrier: no fallback quarantine, adoption, or retry.
+                var record = acknowledged && acknowledgement is not null
+                    ? _journal.QuarantineTargetCreationWithAcknowledgement(begunRecord.Intent.OperationId,
+                        begunRecord.Revision, acknowledgement)
+                    : _journal.QuarantineTargetCreation(begunRecord.Intent.OperationId, begunRecord.Revision,
+                        cancellationToken.IsCancellationRequested ? "Cancelled" : "OutcomeUnknown");
                 return new(record, begunBinding, TargetCreationOneShotOutcome.ReconciliationRequired, attempted, acknowledged);
             }
             catch (Exception) { throw new TargetCreationOneShotException(true); }
