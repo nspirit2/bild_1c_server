@@ -136,13 +136,13 @@ public sealed class ProcessLaunchDeadlineTests : IDisposable
     {
         var output = new ConcurrentBag<ProcessOutput>();
         var runner = Runner();
-        var without = await runner.RunAsync(Command("echo", "optional-null") with { LaunchDeadline = null },
+        var without = await runner.RunAsync(Command("echo", "optional-null") with { Timeout = TimeSpan.FromSeconds(30), LaunchDeadline = null },
             line => { output.Add(line); return Task.CompletedTask; });
         Assert.Equal(ProcessCompletion.Exited, without.Completion);
         Assert.Equal(0, without.ExitCode);
         Assert.Contains(output, line => line.Text.Contains("stdout:optional-null", StringComparison.Ordinal));
         output.Clear();
-        var with = await runner.RunAsync(Command("echo", "live") with { LaunchDeadline = Deadline(new ManualClock()) },
+        var with = await runner.RunAsync(Command("echo", "live") with { Timeout = TimeSpan.FromSeconds(30), LaunchDeadline = Deadline(new ManualClock()) },
             line => { output.Add(line); return Task.CompletedTask; });
         Assert.Equal(ProcessCompletion.Exited, with.Completion);
         Assert.Equal(0, with.ExitCode);
