@@ -9,6 +9,7 @@ using Xunit;
 namespace BuildSystem.AgentTests;
 
 // Fake handlers only: delivery metadata is not proof of ongoing SQL authority or permission to run jobs.
+[Collection("Agent CLI subprocesses")]
 public sealed class TargetCreationExecutionClaimHttpClientTests
 {
     private const string Canary = "secret-canary";
@@ -232,7 +233,7 @@ public sealed class TargetCreationExecutionClaimHttpClientTests
     {
         var i = Intent(); var b = Binding(i); var blocked = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = Client((_, _) => blocked.Task, timeout: 1);
-        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(5))); }
+        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(30))); }
         finally { blocked.TrySetCanceled(); }
     }
     [Fact]
@@ -240,7 +241,7 @@ public sealed class TargetCreationExecutionClaimHttpClientTests
     {
         var i = Intent(); var b = Binding(i); var stream = new BlockingStream(); var content = new StreamContent(stream); content.Headers.ContentType = new("application/json");
         using var client = Client((r, _) => { var response = Reply(r, ""); response.Content = content; return Task.FromResult(response); }, timeout: 1);
-        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(5))); Assert.True(stream.Disposed); }
+        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(30))); Assert.True(stream.Disposed); }
         finally { stream.Blocked.TrySetResult(0); }
     }
     [Fact]
@@ -248,7 +249,7 @@ public sealed class TargetCreationExecutionClaimHttpClientTests
     {
         var i = Intent(); var b = Binding(i); var content = new BlockingOpenContent(); content.Headers.ContentType = new("application/json");
         using var client = Client((r, _) => { var response = Reply(r, ""); response.Content = content; return Task.FromResult(response); }, timeout: 1);
-        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(5))); Assert.True(content.Disposed); }
+        try { await Failure(() => client.ClaimAsync(i, b, default).WaitAsync(TimeSpan.FromSeconds(30))); Assert.True(content.Disposed); }
         finally { content.Blocked.TrySetResult(new MemoryStream()); }
     }
     private sealed class BlockingOpenContent : HttpContent

@@ -148,7 +148,7 @@ public sealed class TargetCreationAcknowledgementJournalTests : IDisposable
             journal.QuarantineTargetCreationWithAcknowledgement(intent.OperationId, 2, Ack(intent, binding));
         }
         var path = Path.Combine(directory, "agent-journal.sqlite");
-        using (var db = new SqliteConnection($"Data Source={path}"))
+        using (var db = new SqliteConnection($"Data Source={path};Pooling=False"))
         {
             db.Open();
             using (var drop = db.CreateCommand())
@@ -171,7 +171,7 @@ public sealed class TargetCreationAcknowledgementJournalTests : IDisposable
     {
         var intent = Intent(); var binding = Binding(intent); using var journal = new AgentJournal(directory);
         var record = Begin(journal, intent, binding);
-        using var db = new SqliteConnection($"Data Source={Path.Combine(directory, "agent-journal.sqlite")}");
+        using var db = new SqliteConnection($"Data Source={Path.Combine(directory, "agent-journal.sqlite")};Pooling=False");
         db.Open();
         using (var command = db.CreateCommand())
         {
@@ -201,7 +201,7 @@ public sealed class TargetCreationAcknowledgementJournalTests : IDisposable
         Assert.Equal(firstAck, journal.GetTargetCreationAcknowledgement(first.OperationId));
         Assert.Null(journal.GetTargetCreationAcknowledgement(second.OperationId));
         Assert.Equal(secondRecord, journal.GetTargetCreationIntent(second.OperationId));
-        using var db = new SqliteConnection($"Data Source={Path.Combine(directory, "agent-journal.sqlite")}");
+        using var db = new SqliteConnection($"Data Source={Path.Combine(directory, "agent-journal.sqlite")};Pooling=False");
         db.Open();
         using var command = db.CreateCommand();
         command.CommandText = """
@@ -228,7 +228,7 @@ public sealed class TargetCreationAcknowledgementJournalTests : IDisposable
         Begin(journal, intent, binding); var ack = Ack(intent, binding);
         journal.QuarantineTargetCreationWithAcknowledgement(intent.OperationId, 2, ack);
         var path = Path.Combine(directory, "agent-journal.sqlite");
-        using var db = new SqliteConnection($"Data Source={path}"); db.Open();
+        using var db = new SqliteConnection($"Data Source={path};Pooling=False"); db.Open();
         foreach (var sql in new[] {
             "DELETE FROM target_creation_acknowledgements",
             "UPDATE target_creation_acknowledgements SET claim='tampered-sensitive-value'",
