@@ -28,8 +28,10 @@ public sealed class InfobaseRegistrationReadbackException : Exception
 public sealed class InfobaseRegistrationReadbackResult
 {
     internal InfobaseRegistrationReadbackResult(InfobaseRegistrationReadbackScope scope,
-        Guid infobaseId, string infobaseName, string sqlServer, string databaseName, string dbms)
+        Guid infobaseId, string infobaseName, string sqlServer, string databaseName, string dbms,
+        string profileId)
     {
+        ProfileId = profileId;
         Scope = scope;
         InfobaseId = infobaseId;
         InfobaseName = infobaseName;
@@ -39,7 +41,7 @@ public sealed class InfobaseRegistrationReadbackResult
     }
 
     public InfobaseRegistrationReadbackScope Scope { get; }
-    public string ProfileId => InfobaseRegistrationReadback.ProfileId;
+    public string ProfileId { get; }
     public Guid InfobaseId { get; }
     public string InfobaseName { get; }
     public string SqlServer { get; }
@@ -56,10 +58,14 @@ public sealed class InfobaseRegistrationReadbackResult
 }
 
 /// <summary>
-/// Explicit synthetic CONTRACT profile only: NOT a validated RAC CLI/version interoperability
-/// profile. Requires a real version-specific fixture and reviewed adapter before enablement/use.
-/// Exactly six fields are accepted; real RAC info may contain additional fields and is rejected.
-/// MSSQLServer and on are unvalidated contract spellings. There is no IO or host wiring here.
+/// The default is the unchanged synthetic, closed six-field CONTRACT profile. The explicitly
+/// selected observed profile accepts the 21-key shape of an authorized read-only RAC 8.3.22.2557
+/// sample (exit zero, no stderr, 1219 characters, two terminal blank lines). Its extras were redacted
+/// on Windows before transfer: neither byte-exact whitespace nor raw secret values were preserved.
+/// Tests reconstruct that shape; they are NOT a byte-exact real-output fixture. The sampled bs_smoke
+/// target is not a reservation target and cannot be adopted. Output does not attest the binary
+/// version: operator-owned trusted executable/version assertion is separate, not independent binary
+/// attestation. There is no IO here.
 /// A trusted future adapter must bind the physical cluster, endpoint, command and normal complete
 /// capture; exit zero alone does not authenticate them. SQL server comparison is literal Ordinal,
 /// not case folding, alias resolution, normalization or proof of physical SQL identity.
@@ -67,14 +73,23 @@ public sealed class InfobaseRegistrationReadbackResult
 public static class InfobaseRegistrationReadback
 {
     public const string ProfileId = "rac-registration-contract-v1";
+    public const string ObservedProfileId = "rac-registration-8.3.22.2557-v1";
+    public const int ObservedMaxFields = 21;
+    public const int MaxExtraValueCharacters = 4096;
     public const int MaxOutputCharacters = 16384;
     public const int MaxFields = 6;
     public const int MaxNameCharacters = 128;
     public const int MaxSqlServerCharacters = 255;
 
     public static InfobaseRegistrationReadbackResult Parse(InfobaseRegistrationReadbackScope scope,
-        int exitCode, bool outputTruncated, string stdout)
+        int exitCode, bool outputTruncated, string stdout) =>
+        Parse(scope, exitCode, outputTruncated, stdout, ProfileId);
+
+    public static InfobaseRegistrationReadbackResult Parse(InfobaseRegistrationReadbackScope scope,
+        int exitCode, bool outputTruncated, string stdout, string profileId)
     {
+        ValidateProfile(profileId);
+        var observed = profileId == ObservedProfileId;
         Validate(scope);
         if (exitCode != 0 || outputTruncated) throw Error("InfobaseRegistrationUnavailable");
         if (stdout is null || stdout.Length > MaxOutputCharacters ||
@@ -82,23 +97,38 @@ public static class InfobaseRegistrationReadback
             throw Error("InfobaseRegistrationInvalidReadback");
         var normalized = stdout.Replace("\r\n", "\n", StringComparison.Ordinal);
         if (normalized.Contains('\r')) throw Error("InfobaseRegistrationInvalidReadback");
+        // Only the six required values are retained. Seen keys (including potentially secret
+        // extra fields) detect duplicates without retaining extra values. Substrings can exist
+        // transiently in managed memory; this is data minimization, not forensic erasure.
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var trailingBlank = false;
         var lines = normalized.Split('\n');
         for (var index = 0; index < lines.Length; index++)
         {
             var raw = lines[index];
-            // A single terminal line ending is optional. Blank records/lines are not this profile.
-            if (index == lines.Length - 1 && raw.Length == 0) continue;
+            if (observed && raw.Trim(' ', '\t').Length == 0)
+            {
+                if (keys.Count == 0) throw Error("InfobaseRegistrationInvalidReadback");
+                trailingBlank = true;
+                continue;
+            }
+            // Keep the synthetic profile's single optional terminal line ending unchanged.
+            if (!observed && index == lines.Length - 1 && raw.Length == 0) continue;
+            if (trailingBlank) throw Error("InfobaseRegistrationInvalidReadback");
             var colon = raw.IndexOf(':');
             if (colon < 1) throw Error("InfobaseRegistrationInvalidReadback");
             var key = raw[..colon].Trim(' ', '\t');
-            var value = raw[(colon + 1)..].Trim(' ', '\t');
-            if (key is not ("infobase" or "name" or "dbms" or "db-server" or "db-name" or "scheduled-jobs-deny") ||
-                value.Length == 0 || value.Any(char.IsControl) || fields.Count >= MaxFields ||
-                !fields.TryAdd(key, value))
+            var required = key is "infobase" or "name" or "dbms" or "db-server" or "db-name" or "scheduled-jobs-deny";
+            if ((!required && (!observed || !IsObservedExtra(key))) ||
+                keys.Count >= (observed ? ObservedMaxFields : MaxFields) || !keys.Add(key))
                 throw Error("InfobaseRegistrationInvalidReadback");
+            var value = raw[(colon + 1)..].Trim(' ', '\t');
+            if (value.Any(char.IsControl) || (required ? value.Length == 0 : value.Length > MaxExtraValueCharacters))
+                throw Error("InfobaseRegistrationInvalidReadback");
+            if (required) fields.Add(key, value);
         }
-        if (fields.Count != MaxFields ||
+        if (keys.Count != (observed ? ObservedMaxFields : MaxFields) || fields.Count != MaxFields ||
             !Guid.TryParseExact(fields["infobase"], "D", out var id) || id == Guid.Empty ||
             !string.Equals(fields["infobase"], id.ToString("D"), StringComparison.Ordinal) ||
             fields["name"].Length > MaxNameCharacters || fields["db-name"].Length > MaxNameCharacters ||
@@ -112,15 +142,41 @@ public static class InfobaseRegistrationReadback
             throw Error("InfobaseRegistrationTargetMismatch");
         if (!string.Equals(fields["scheduled-jobs-deny"], "on", StringComparison.Ordinal))
             throw Error("InfobaseRegistrationJobsNotBlocked");
-        return new(scope, id, fields["name"], fields["db-server"], fields["db-name"], fields["dbms"]);
+        return new(scope, id, fields["name"], fields["db-server"], fields["db-name"], fields["dbms"], profileId);
     }
 
-    /// <summary>Exact captured correlation only; same-scope replay is not prevented.</summary>
+    private static bool IsObservedExtra(string key) => key is
+        "db-user" or "security-level" or "license-distribution" or "sessions-deny" or
+        "denied-from" or "denied-message" or "denied-parameter" or "denied-to" or
+        "permission-code" or "external-session-manager-connection-string" or
+        "external-session-manager-required" or "security-profile-name" or
+        "safe-mode-security-profile-name" or "reserve-working-processes" or "descr";
+
+    private static void ValidateProfile(string profileId)
+    {
+        if (profileId is not (ProfileId or ObservedProfileId))
+            throw Error("InfobaseRegistrationInvalidProfile");
+    }
+
+    /// <summary>
+    /// Exact captured correlation only; does not bind the profile. Same-scope replay is not prevented.
+    /// Use the explicit-profile overload when a profile binding is required.
+    /// </summary>
     public static void RequireMatch(InfobaseRegistrationReadbackResult result,
         InfobaseRegistrationReadbackScope scope)
     {
         Validate(scope);
         if (result is null || result.Scope != scope) throw Error("InfobaseRegistrationScopeMismatch");
+    }
+
+    /// <summary>Exact scope and selected profile binding; not freshness or authority.</summary>
+    public static void RequireMatch(InfobaseRegistrationReadbackResult result,
+        InfobaseRegistrationReadbackScope scope, string expectedProfileId)
+    {
+        ValidateProfile(expectedProfileId);
+        RequireMatch(result, scope);
+        if (!string.Equals(result.ProfileId, expectedProfileId, StringComparison.Ordinal))
+            throw Error("InfobaseRegistrationProfileMismatch");
     }
 
     private static void Validate(InfobaseRegistrationReadbackScope scope)

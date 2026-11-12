@@ -1,5 +1,7 @@
 # Exact RAC registration readback: synthetic contract only
 
+> Историческое описание первого synthetic-only среза. Позже по запросу владельца выполнен отдельный read-only probe и добавлен explicit observed-version profile; актуальные границы и provenance см. [RAC 8.3.22.2557 profile](registration-readback-8.3.22.2557.md). Старый default synthetic profile остаётся неизменным; утверждения ниже «live-команды не выполнялись» относятся к первоначальному срезу, не ко всей последующей истории.
+
 Продолжение принятой conservative ownership policy: saved parsed ACK сам не устанавливает владение. Следующий компонент проверяет, что отдельный ответ registration readback сообщает тот же infobase UUID, reservation-generated name и ожидаемую SQL server/database связь с запретом scheduled jobs.
 
 **Это synthetic contract profile, не подтверждённая совместимость с реальной версией RAC.** Нового production host/CLI/worker wiring нет. Observer по умолчанию выключен; никакие live-команды не выполнялись, ownership/restore acceptance не добавлены.

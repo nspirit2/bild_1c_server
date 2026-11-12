@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildSystem.Agent.Execution;
 using BuildSystem.Agent.Tools;
 using Xunit;
@@ -9,7 +10,8 @@ public sealed class InfobaseRegistrationObserverTests
     private const string User = "private cluster user";
     private const string Password = "private-cluster-password";
     private static readonly Guid Physical = Guid.NewGuid();
-    private static InfobaseRegistrationObserverOptions Options(string invalid = "") => new()
+    private static InfobaseRegistrationObserverOptions Options(string invalid = "",
+        string? profile = InfobaseRegistrationReadback.ProfileId, string? version = null) => new()
     {
         Enabled = true, TrustedRacToolId = invalid == "tool" ? "bad\n" : "operator-rac",
         Endpoint = invalid == "endpoint" ? "--danger" : "rac.example:1545",
@@ -22,7 +24,7 @@ public sealed class InfobaseRegistrationObserverTests
         SqlEndpointMappingId = Guid.Parse("17968f43-d166-4821-80c8-00fa323fcbd6"),
         PhysicalClusterId = invalid == "physical" ? Guid.Empty : Physical,
         ExpectedSqlServer = invalid == "server" ? "sql host" : "sql01\\INSTANCE",
-        OutputProfileId = InfobaseRegistrationReadback.ProfileId
+        OutputProfileId = profile, TrustedRacVersion = version
     };
     private static InfobaseRegistrationReadbackScope Scope()
     {
@@ -308,6 +310,149 @@ public sealed class InfobaseRegistrationObserverTests
             }));
         Assert.Equal("InfobaseRegistrationObserverInvalidOptions", ex.Code);
         Assert.Null(ex.InnerException);
+    }
+
+    private const string PermissionCanary = "CANARY-permission-code-private";
+    private const string ConnectionCanary = "CANARY-external-connection-private";
+    private const string DescriptionCanary = "CANARY-description-private";
+
+    // Reconstructed offline fixture, never copied from live output.
+    private static string Observed(InfobaseRegistrationReadbackScope scope) => Valid(scope) +
+        "db-user : \nsecurity-level : 0\nlicense-distribution : deny\nsessions-deny : on\n" +
+        "denied-from : \ndenied-message : \ndenied-parameter : \ndenied-to : \n" +
+        $"permission-code : {PermissionCanary}\n" +
+        $"external-session-manager-connection-string : {ConnectionCanary}\n" +
+        "external-session-manager-required : no\nsecurity-profile-name : \n" +
+        "safe-mode-security-profile-name : \nreserve-working-processes : no\n" +
+        $"descr : {DescriptionCanary}\n";
+
+    [Fact]
+    public async Task ObservedProfileWithExactOperatorVersionReturnsActualProfileAndNoSecrets()
+    {
+        var scope = Scope();
+        var runner = new FakeRunner(async (_, callback, _) =>
+        {
+            await Emit(callback, Observed(scope));
+            return Success();
+        });
+        var result = await new InfobaseRegistrationObserver(runner,
+            Options(profile: InfobaseRegistrationReadback.ObservedProfileId, version: "8.3.22.2557"))
+            .ObserveAsync(scope, Credentials());
+        Assert.Same(scope, result.Scope);
+        Assert.Equal(InfobaseRegistrationReadback.ObservedProfileId, result.ProfileId);
+        Assert.False(result.Executable);
+        Assert.False(result.RestoreAllowed);
+        Assert.False(result.FreshAuthority);
+        Assert.True(result.RequiresIndependentVerification);
+        AssertNoOutputSecrets(JsonSerializer.Serialize(result));
+        AssertNoOutputSecrets(result.ToString()!);
+        Assert.Equal(1, runner.Calls);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("8.3.22.2556")]
+    [InlineData("8.3.22.2557 ")]
+    [InlineData("8.3.22.2557\n")]
+    public void ObservedProfileRequiresExactVersionBeforeRunner(string? version)
+    {
+        var runner = new FakeRunner((_, _, _) => throw new Exception("must not run"));
+        var error = Assert.Throws<InfobaseRegistrationObserverException>(() =>
+            new InfobaseRegistrationObserver(runner,
+                Options(profile: InfobaseRegistrationReadback.ObservedProfileId, version: version)));
+        Assert.Equal("InfobaseRegistrationObserverInvalidOptions", error.Code);
+        Assert.Null(error.InnerException);
+        Assert.Equal(0, runner.Calls);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("rac-registration-8.3.22.2557-v2")]
+    [InlineData("rac-registration-8.3.22.2557-v1 ")]
+    public void UnknownProfileWithMatchingVersionFailsBeforeRunner(string? profile)
+    {
+        var runner = new FakeRunner((_, _, _) => throw new Exception("must not run"));
+        var error = Assert.Throws<InfobaseRegistrationObserverException>(() =>
+            new InfobaseRegistrationObserver(runner, Options(profile: profile, version: "8.3.22.2557")));
+        Assert.Equal("InfobaseRegistrationObserverInvalidOptions", error.Code);
+        Assert.Null(error.InnerException);
+        Assert.Equal(0, runner.Calls);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("8.3.22.2557")]
+    public async Task SyntheticProfileRejectsObservedOutputWithoutAutodetectionOrDowngrade(string? version)
+    {
+        var scope = Scope();
+        var runner = new FakeRunner(async (_, callback, _) =>
+        {
+            await Emit(callback, Observed(scope));
+            return Success();
+        });
+        var error = await Assert.ThrowsAsync<InfobaseRegistrationObserverException>(() =>
+            new InfobaseRegistrationObserver(runner, Options(version: version)).ObserveAsync(scope, Credentials()));
+        AssertUnavailableWithoutOutputSecrets(error);
+        Assert.Equal(1, runner.Calls);
+    }
+
+    [Fact]
+    public async Task ObservedProfileRejectsSixFieldSyntheticOutputWithoutFallback()
+    {
+        var scope = Scope();
+        var runner = new FakeRunner(async (_, callback, _) =>
+        {
+            await Emit(callback, Valid(scope));
+            return Success();
+        });
+        var error = await Assert.ThrowsAsync<InfobaseRegistrationObserverException>(() =>
+            new InfobaseRegistrationObserver(runner,
+                Options(profile: InfobaseRegistrationReadback.ObservedProfileId, version: "8.3.22.2557"))
+                .ObserveAsync(scope, Credentials()));
+        AssertUnavailableWithoutOutputSecrets(error);
+        Assert.Equal(1, runner.Calls);
+    }
+
+    [Theory]
+    [InlineData("unknown-field")]
+    [InlineData("malformed")]
+    [InlineData("stderr")]
+    [InlineData("runner-error")]
+    public async Task ObservedOutputFailuresNeverLeakOutputSecrets(string failure)
+    {
+        var scope = Scope();
+        var runner = new FakeRunner(async (_, callback, _) =>
+        {
+            await Emit(callback, Observed(scope));
+            if (failure == "unknown-field") await Emit(callback, $"unknown-field : {PermissionCanary}\n");
+            if (failure == "malformed") await Emit(callback, $"{ConnectionCanary} malformed {DescriptionCanary}\n");
+            if (failure == "stderr") await Emit(callback, PermissionCanary + ConnectionCanary + DescriptionCanary,
+                ProcessOutputStream.StandardError);
+            if (failure == "runner-error") throw new InvalidOperationException(
+                PermissionCanary + ConnectionCanary + DescriptionCanary);
+            return Success();
+        });
+        var error = await Assert.ThrowsAsync<InfobaseRegistrationObserverException>(() =>
+            new InfobaseRegistrationObserver(runner,
+                Options(profile: InfobaseRegistrationReadback.ObservedProfileId, version: "8.3.22.2557"))
+                .ObserveAsync(scope, Credentials()));
+        AssertUnavailableWithoutOutputSecrets(error);
+        Assert.Equal(1, runner.Calls);
+    }
+
+    private static void AssertUnavailableWithoutOutputSecrets(InfobaseRegistrationObserverException error)
+    {
+        Assert.Equal("InfobaseRegistrationObserverUnavailable", error.Code);
+        Assert.Equal("InfobaseRegistrationObserverUnavailable", error.Message);
+        Assert.Null(error.InnerException);
+        AssertNoOutputSecrets(error.ToString());
+    }
+
+    private static void AssertNoOutputSecrets(string text)
+    {
+        foreach (var secret in new[] { PermissionCanary, ConnectionCanary, DescriptionCanary, User, Password })
+            Assert.DoesNotContain(secret, text);
     }
 
     private sealed class FakeRunner(Func<ProcessCommand, Func<ProcessOutput, Task>, CancellationToken,

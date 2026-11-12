@@ -8,6 +8,12 @@ public sealed class InfobaseRegistrationObserverOptions
 {
     public bool Enabled { get; init; } = false;
     public string? TrustedRacToolId { get; init; }
+    /// <summary>
+    /// Operator assertion of the trusted RAC version, not independently verified by this observer.
+    /// Actual trusted executable inventory remains the operator contract through the existing tool-ID resolver.
+    /// The observed profile requires exactly 8.3.22.2557; the legacy synthetic profile does not require a version.
+    /// </summary>
+    public string? TrustedRacVersion { get; init; }
     public string? Endpoint { get; init; }
     public string? WorkingDirectory { get; init; }
     public TimeSpan Timeout { get; init; }
@@ -32,8 +38,12 @@ public sealed class InfobaseRegistrationObserverException(string code) : Excepti
 }
 
 /// <summary>
-/// Read-only synthetic contract observation; disabled by default. The profile is NOT validated
-/// against a real RAC version. A successful observation is neither authority nor fresh evidence.
+/// Read-only observation using explicitly selected synthetic or observed-profile metadata; disabled by default.
+/// TrustedRacVersion is an operator assertion, not binary verification; trusted executable inventory and
+/// the tool-ID resolver remain the operator contract. No profile autodetection or fallback is performed.
+/// A successful observation establishes neither ownership nor restore permission, authority, or fresh evidence.
+/// The trusted runner MUST NOT log raw stdout or stderr: output can contain secrets unknown before parsing,
+/// including RAC permission codes. ProcessCommand credential redaction does not cover these output secrets.
 /// The runner contract requires all callbacks to finish before RunAsync completes; callbacks
 /// arriving after completion are rejected, but cannot retract a value already returned to a caller.
 /// Cancellation and deadline require a cooperative runner: no detached process or false hard-preempt.
@@ -47,6 +57,7 @@ public sealed class InfobaseRegistrationObserver
     private readonly string endpoint = "";
     private readonly string directory = "";
     private readonly string expectedSqlServer = "";
+    private readonly string outputProfileId = "";
     private readonly TimeSpan timeout;
     private readonly Guid canonicalClusterId, canonicalSqlServerId, racMappingId, sqlMappingId, physicalClusterId;
 
@@ -63,7 +74,9 @@ public sealed class InfobaseRegistrationObserver
             string.IsNullOrWhiteSpace(options.WorkingDirectory) || options.WorkingDirectory.Length > 4096 ||
             options.WorkingDirectory.Any(char.IsControl) || !Path.IsPathFullyQualified(options.WorkingDirectory) ||
             !ValidEndpoint(options.Endpoint) || !ValidServer(options.ExpectedSqlServer) ||
-            options.OutputProfileId != InfobaseRegistrationReadback.ProfileId ||
+            !(options.OutputProfileId == InfobaseRegistrationReadback.ProfileId ||
+              (options.OutputProfileId == InfobaseRegistrationReadback.ObservedProfileId &&
+               string.Equals(options.TrustedRacVersion, "8.3.22.2557", StringComparison.Ordinal))) ||
             options.Timeout < TimeSpan.FromSeconds(1) || options.Timeout > TimeSpan.FromSeconds(60) ||
             options.CanonicalClusterId == Guid.Empty || options.CanonicalSqlServerId == Guid.Empty ||
             options.RacEndpointMappingId == Guid.Empty || options.SqlEndpointMappingId == Guid.Empty ||
@@ -79,6 +92,7 @@ public sealed class InfobaseRegistrationObserver
         sqlMappingId = options.SqlEndpointMappingId;
         physicalClusterId = options.PhysicalClusterId;
         expectedSqlServer = options.ExpectedSqlServer!;
+        outputProfileId = options.OutputProfileId!;
     }
 
     public async Task<InfobaseRegistrationReadbackResult> ObserveAsync(
@@ -170,7 +184,7 @@ public sealed class InfobaseRegistrationObserver
         }
         try
         {
-            var parsed = InfobaseRegistrationReadback.Parse(scope, 0, false, stdout);
+            var parsed = InfobaseRegistrationReadback.Parse(scope, 0, false, stdout, outputProfileId);
             lock (gate)
             {
                 CheckDeadline();
