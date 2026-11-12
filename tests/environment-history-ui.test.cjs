@@ -40,8 +40,10 @@ const id2 = '22222222-2222-2222-2222-222222222222';
 const project = '33333333-3333-3333-3333-333333333333';
 const row = (id = id1, overrides = {}) => ({ id, projectId: project, displayName: 'Environment ' + id, state: 'Requested', expiresAt: null, ...overrides });
 const content = element => [element.textContent, ...element.children.map(content)].join('\n');
-const listRoute = '/api/test-environments';
-function harness(routeFixture = () => ok([]), authenticated = true) {
+const detailRoute = '/api/test-environments';
+const listRoute = detailRoute + '/browse?limit=25';
+const page = (items = [], nextCursor = null, overrides = {}) => ({ items, nextCursor, observedAt: '2026-11-12T07:00:00Z', ...overrides });
+function harness(routeFixture = () => ok(page()), authenticated = true) {
   const nodes = new Map(), events = {}, documentEvents = {}, calls = [], timers = [];
   const document = {
     hidden: false, visibilityState: 'visible',
@@ -76,7 +78,7 @@ function harness(routeFixture = () => ok([]), authenticated = true) {
     async emit(name, event = {}) { for (const handler of [...(events[name] || []), ...(documentEvents[name] || [])]) await handler(event); await flush(); }
   };
 }
-const historyCalls = h => h.calls.filter(call => call.route === listRoute || /^\/api\/test-environments\/[^/]+$/.test(call.route));
+const historyCalls = h => h.calls.filter(call => call.route.startsWith(detailRoute + '/browse?') || /^\/api\/test-environments\/[^/]+$/.test(call.route));
 const cleared = h => {
   assert.equal(h.nodes.get('environments-list').children.length, 0);
   assert.equal(h.nodes.get('environment-details').children.length, 0);
@@ -84,7 +86,7 @@ const cleared = h => {
 
 test('history is explicit-refresh only, unauthenticated disabled, and never polls or posts', async () => {
   for (const signedIn of [false, true]) {
-    const h = harness(() => ok([row()]), signedIn); await flush();
+    const h = harness(() => ok(page([row()])), signedIn); await flush();
     assert.equal(h.nodes.get('environments-refresh').disabled, !signedIn);
     assert.equal(historyCalls(h).length, 0);
     await h.refresh();
@@ -97,14 +99,14 @@ test('history is explicit-refresh only, unauthenticated disabled, and never poll
 test('list and selected detail use protected GET options, text nodes, and strict row identity', async () => {
   const attack = '<img src=x onerror=alert(1)>';
   const value = row(id1, { displayName: attack, state: 'UnrecognizedServerState' });
-  const h = harness(route => route === listRoute ? ok([value]) : ok(value)); await flush(); await h.refresh();
+  const h = harness(route => route === listRoute ? ok(page([value])) : ok(value)); await flush(); await h.refresh();
   assert.match(content(h.nodes.get('environments-list')), /<img src=x onerror=alert\(1\)>/);
   assert.equal(h.nodes.get('environments-list').querySelectorAll('img').length, 0);
   assert.equal(h.nodes.get('environments-list').querySelectorAll('script').length, 0);
   assert.equal(h.buttons().length, 1); assert.equal(h.buttons()[0].dataset.environment, id1);
   await h.fire(h.buttons()[0]);
   assert.match(content(h.nodes.get('environment-details')), /<img src=x onerror=alert\(1\)>/);
-  assert.deepEqual(historyCalls(h).map(c => c.route), [listRoute, `${listRoute}/${id1}`]);
+  assert.deepEqual(historyCalls(h).map(c => c.route), [listRoute, `${detailRoute}/${id1}`]);
   for (const { options } of historyCalls(h)) {
     assert.equal(options.method || 'GET', 'GET'); assert.equal(options.credentials, 'same-origin');
     assert.equal(options.cache, 'no-store'); assert.equal(options.redirect, 'error'); assert.ok(options.signal);
@@ -114,7 +116,7 @@ test('list and selected detail use protected GET options, text nodes, and strict
 
 test('detail rejects a foreign environment or project identity', async () => {
   for (const mismatch of [{ id: id2 }, { projectId: id2 }]) {
-    const h = harness(route => route === listRoute ? ok([row()]) : ok(row(id1, mismatch)));
+    const h = harness(route => route === listRoute ? ok(page([row()])) : ok(row(id1, mismatch)));
     await flush(); await h.refresh(); await h.fire(h.buttons()[0]);
     assert.equal(h.nodes.get('environment-details').children.length, 0);
     assert.ok(h.nodes.get('environment-detail-status').textContent);
@@ -124,8 +126,8 @@ test('detail rejects a foreign environment or project identity', async () => {
 test('latest selected detail wins even when stale response body ignores abort', async () => {
   const body = deferred(); let firstSignal;
   const h = harness((route, options) => {
-    if (route === listRoute) return ok([row(), row(id2)]);
-    if (route === `${listRoute}/${id1}`) { firstSignal = options.signal; return { ok: true, status: 200, json: () => body.promise }; }
+    if (route === listRoute) return ok(page([row(), row(id2)]));
+    if (route === `${detailRoute}/${id1}`) { firstSignal = options.signal; return { ok: true, status: 200, json: () => body.promise }; }
     return ok(row(id2, { displayName: 'Latest selection' }));
   });
   await flush(); await h.refresh(); await h.fire(h.buttons()[0]); await h.fire(h.buttons()[1]);
@@ -138,7 +140,7 @@ test('latest selected detail wins even when stale response body ignores abort', 
 test('refresh invalidates selected detail transport and late data cannot repopulate details', async () => {
   const transport = deferred(); let signal;
   const h = harness((route, options) => {
-    if (route === listRoute) return ok([row()]);
+    if (route === listRoute) return ok(page([row()]));
     signal = options.signal; return transport.promise;
   });
   await flush(); await h.refresh(); await h.fire(h.buttons()[0]); await h.refresh();
@@ -153,10 +155,10 @@ test('new list refresh aborts stale list transport and body without restoring ol
     const h = harness((route, options) => {
       assert.equal(route, listRoute);
       if (++count === 1) { oldSignal = options.signal; return pendingBody ? { ok: true, status: 200, json: () => pending.promise } : pending.promise; }
-      return ok([row(id2, { displayName: 'Newest list' })]);
+      return ok(page([row(id2, { displayName: 'Newest list' })]));
     });
     await flush(); await h.refresh(); await h.refresh(); assert.equal(oldSignal.aborted, true);
-    pending.resolve(pendingBody ? [row()] : ok([row()])); await flush();
+    pending.resolve(pendingBody ? page([row()]) : ok(page([row()]))); await flush();
     assert.equal(h.buttons().length, 1); assert.equal(h.buttons()[0].dataset.environment, id2);
   }
 });
@@ -164,7 +166,7 @@ test('new list refresh aborts stale list transport and body without restoring ol
 test('401 and 403 on either endpoint clear session, history and existing form password', async () => {
   for (const status of [401, 403]) for (const endpoint of ['list', 'detail']) {
     let lists = 0;
-    const h = harness(route => route === listRoute ? (++lists === 1 || endpoint === 'detail' ? ok([row()]) : denied(status)) : denied(status));
+    const h = harness(route => route === listRoute ? (++lists === 1 || endpoint === 'detail' ? ok(page([row()])) : denied(status)) : denied(status));
     await flush(); await h.refresh(); h.nodes.get('password').value = 'must-not-leak';
     if (endpoint === 'list') await h.refresh(); else await h.fire(h.buttons()[0]);
     cleared(h); assert.equal(h.nodes.get('workspace').hidden, true);
@@ -177,7 +179,7 @@ test('401 and 403 on either endpoint clear session, history and existing form pa
 test('logout and operation navigation clear history and abort pending detail', async () => {
   for (const action of ['logout', 'refresh', 'state-filter']) {
     const pending = deferred(); let signal;
-    const h = harness((route, options) => route === listRoute ? ok([row()]) : (signal = options.signal, pending.promise));
+    const h = harness((route, options) => route === listRoute ? ok(page([row()])) : (signal = options.signal, pending.promise));
     await flush(); await h.refresh(); await h.fire(h.buttons()[0]);
     await h.fire(h.nodes.get(action), action === 'state-filter' ? 'change' : 'click');
     assert.equal(signal.aborted, true); cleared(h);
@@ -188,17 +190,17 @@ test('logout and operation navigation clear history and abort pending detail', a
 test('pagehide, BFCache restoration and hidden visibility clear history and abort pending list', async () => {
   for (const event of ['pagehide', 'pageshow', 'visibilitychange']) {
     const pending = deferred(); let count = 0, signal;
-    const h = harness((route, options) => { assert.equal(route, listRoute); if (++count === 1) return ok([row()]); signal = options.signal; return pending.promise; });
+    const h = harness((route, options) => { assert.equal(route, listRoute); if (++count === 1) return ok(page([row()])); signal = options.signal; return pending.promise; });
     await flush(); await h.refresh(); await h.refresh();
     if (event === 'visibilitychange') { h.document.hidden = true; h.document.visibilityState = 'hidden'; }
     await h.emit(event, { persisted: true }); assert.equal(signal.aborted, true); cleared(h);
-    pending.resolve(ok([row()])); await flush(); cleared(h);
+    pending.resolve(ok(page([row()]))); await flush(); cleared(h);
   }
 });
 
 test('malformed lists clear previous rows rather than inventing a usable state', async () => {
-  for (const invalid of [{ items: [row()] }, [row(id1, { projectId: '../foreign' })], [row(id1, { displayName: null })], [row(id1, { state: null })], [row(id1, { expiresAt: 'not-a-date' })], [row(), row()]]) {
-    let count = 0; const h = harness(() => ok(++count === 1 ? [row()] : invalid));
+  for (const invalid of [{ items: [row()] }, page([row(id1, { projectId: '../foreign' })]), page([row(id1, { displayName: null })]), page([row(id1, { state: null })]), page([row(id1, { expiresAt: 'not-a-date' })]), page([row(), row()])]) {
+    let count = 0; const h = harness(() => ok(++count === 1 ? page([row()]) : invalid));
     await flush(); await h.refresh(); assert.equal(h.buttons().length, 1); await h.refresh(); cleared(h);
     assert.ok(h.nodes.get('environments-status').textContent);
   }
@@ -206,19 +208,94 @@ test('malformed lists clear previous rows rather than inventing a usable state',
 
 test('malformed detail clears prior fields instead of retaining an earlier selection', async () => {
   for (const invalid of [null, row(id1, { displayName: 17 }), row(id1, { state: null }), row(id1, { expiresAt: 'invalid-date' })]) {
-    let count = 0; const h = harness(route => route === listRoute ? ok([row()]) : ok(++count === 1 ? row() : invalid));
+    let count = 0; const h = harness(route => route === listRoute ? ok(page([row()])) : ok(++count === 1 ? row() : invalid));
     await flush(); await h.refresh(); await h.fire(h.buttons()[0]); assert.ok(h.nodes.get('environment-details').children.length);
     await h.fire(h.buttons()[0]); assert.equal(h.nodes.get('environment-details').children.length, 0);
     assert.ok(h.nodes.get('environment-detail-status').textContent);
   }
 });
 
-test('empty list has explicit message; large list caps rendering with honest shown count', async () => {
-  const empty = harness(() => ok([])); await flush(); await empty.refresh(); cleared(empty);
+test('empty bounded page has explicit message and an oversized page is rejected', async () => {
+  const empty = harness(() => ok(page())); await flush(); await empty.refresh(); cleared(empty);
   assert.match(empty.nodes.get('environments-status').textContent, /нет|пуст|не найден/i);
-  const rows = Array.from({ length: 205 }, (_, i) => row(`00000001-0000-0000-0000-${String(i + 1).padStart(12, '0')}`));
-  const h = harness(() => ok(rows)); await flush(); await h.refresh();
-  assert.equal(h.buttons().length, 200);
-  assert.match(h.nodes.get('environments-status').textContent, /показан\S*\s+(?:первые\s+)?200/i);
-  assert.match(h.nodes.get('environments-status').textContent, /205/);
+  const rows = Array.from({ length: 26 }, (_, i) => row(`00000001-0000-0000-0000-${String(i + 1).padStart(12, '0')}`));
+  const h = harness(() => ok(page(rows))); await flush(); await h.refresh(); cleared(h);
+  assert.equal(h.nodes.get('environment-next').disabled, true);
+});
+
+
+test('bounded paging supports next, previous, refresh reset and never exposes cursors', async () => {
+  const rows = Array.from({ length: 25 }, (_, i) => row(`00000001-0000-0000-0000-${String(i + 1).padStart(12, '0')}`));
+  const h = harness(route => route === listRoute ? ok(page(rows, 'opaque_ABC-123')) : ok(page([row(id2)])));
+  await flush(); await h.refresh();
+  assert.equal(h.buttons().length, 25);
+  assert.equal(h.nodes.get('environment-previous').disabled, true);
+  assert.equal(h.nodes.get('environment-next').disabled, false);
+  assert.match(h.nodes.get('environment-observed').textContent, /Наблюдалось/);
+  await h.fire(h.nodes.get('environment-next'));
+  assert.equal(historyCalls(h).at(-1).route, listRoute + '&cursor=opaque_ABC-123');
+  assert.match(h.nodes.get('environment-page').textContent, /2$/);
+  assert.equal(h.nodes.get('environment-next').disabled, true);
+  assert.equal(h.nodes.get('environment-previous').disabled, false);
+  await h.fire(h.nodes.get('environment-previous'));
+  assert.equal(historyCalls(h).at(-1).route, listRoute);
+  await h.fire(h.nodes.get('environment-next')); await h.refresh();
+  assert.equal(historyCalls(h).at(-1).route, listRoute);
+  assert.match(h.nodes.get('environment-page').textContent, /1$/);
+  for (const id of ['environments-status', 'environment-page', 'environment-observed']) assert.doesNotMatch(content(h.nodes.get(id)), /opaque_ABC-123/);
+  assert.equal(h.calls.some(c => c.route === detailRoute), false);
+});
+
+test('paging guards busy and auth, rejects stale bodies and clears cursor state on hide', async () => {
+  const body = deferred(); let signal;
+  const h = harness((route, options) => {
+    if (route === listRoute) return ok(page([row()], 'next_page'));
+    signal = options.signal; return { ok: true, status: 200, json: () => body.promise };
+  });
+  await flush(); await h.refresh(); await h.fire(h.nodes.get('environment-next'));
+  assert.equal(h.nodes.get('environment-next').disabled, true);
+  assert.equal(h.nodes.get('environment-previous').disabled, true);
+  const count = historyCalls(h).length;
+  await h.fire(h.nodes.get('environment-next')); await h.fire(h.nodes.get('environment-previous'));
+  assert.equal(historyCalls(h).length, count);
+  h.document.hidden = true; await h.emit('visibilitychange');
+  assert.equal(signal.aborted, true); cleared(h);
+  assert.match(h.nodes.get('environment-page').textContent, /1$/);
+  assert.equal(h.nodes.get('environment-observed').textContent, '');
+  body.resolve(page([row(id2)], 'late_cursor')); await flush(); cleared(h);
+  assert.equal(h.nodes.get('environment-next').disabled, true);
+  const deniedPage = harness(route => route === listRoute ? ok(page([row()], 'next_page')) : denied(401));
+  await flush(); await deniedPage.refresh(); await deniedPage.fire(deniedPage.nodes.get('environment-next'));
+  cleared(deniedPage);
+  for (const id of ['environment-previous', 'environment-next', 'environments-refresh']) assert.equal(deniedPage.nodes.get(id).disabled, true);
+  const deniedCount = historyCalls(deniedPage).length;
+  await deniedPage.fire(deniedPage.nodes.get('environment-next')); await deniedPage.fire(deniedPage.nodes.get('environment-previous'));
+  assert.equal(historyCalls(deniedPage).length, deniedCount);
+});
+
+test('invalid page contracts and repeated cursors fail closed; rejected cursor allows explicit recovery', async () => {
+  const invalidPages = [
+    page([], ''), page([], 'has=padding'), page([], 'x'.repeat(513)), page([], 7),
+    page([], null, { observedAt: '2026-11-12T07:00:00' }), page([], null, { observedAt: 'not-a-date' }),
+    page([], null, { observedAt: 'x'.repeat(65) }), page([], null, { extra: true }),
+    { nextCursor: null, observedAt: '2026-11-12T07:00:00Z' }, [row()],
+    page([row(id1, { id: '00000000-0000-0000-0000-000000000000' })]),
+    page([row(), row(id1.toUpperCase())])
+  ];
+  for (const invalid of invalidPages) {
+    const h = harness(() => ok(invalid)); await flush(); await h.refresh(); cleared(h);
+    assert.equal(h.nodes.get('environment-next').disabled, true);
+    assert.equal(h.nodes.get('environment-observed').textContent, '');
+  }
+  for (const response of [ok(page([row(id2)], 'same_cursor')), denied(400)]) {
+    const h = harness(route => route === listRoute ? ok(page([row()], 'same_cursor')) : response);
+    await flush(); await h.refresh(); await h.fire(h.nodes.get('environment-next')); cleared(h);
+    assert.equal(h.nodes.get('environment-next').disabled, true);
+    assert.equal(h.nodes.get('environment-previous').disabled, false);
+    assert.equal(historyCalls(h).length, 2); await flush(); assert.equal(historyCalls(h).length, 2);
+    if (response.status === 400) assert.match(h.nodes.get('environments-status').textContent, /Обновить окружения.*первой/);
+    await h.fire(h.nodes.get('environment-previous')); assert.equal(h.buttons().length, 1);
+    await h.fire(h.nodes.get('environment-next')); await h.refresh();
+    assert.equal(historyCalls(h).at(-1).route, listRoute); assert.equal(h.buttons().length, 1);
+  }
 });

@@ -343,6 +343,7 @@ app.MapPost("/api/auth/logout", async (SignInManager<BuildSystemUser> signIn) =>
     return Results.NoContent();
 }).RequireAuthorization();
 app.MapAdministration();
+app.MapEnvironmentBrowseEndpoints();
 app.MapAgentEndpoints();
 app.MapTargetCreationCredentialDelivery();
 app.MapTargetCreationPermits();

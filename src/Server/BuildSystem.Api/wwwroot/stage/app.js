@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -23,6 +23,7 @@
   let environmentsGeneration = 0, environmentDetailGeneration = 0;
   let environmentsController = null, environmentDetailController = null, environmentsBusy = false;
   let environmentRows = new Map(), selectedEnvironment = null;
+  let environmentHistory = [null], environmentNext = null;
   function clearEnvironmentDetail() {
     environmentDetailGeneration++; environmentDetailController?.abort(); environmentDetailController = null;
     selectedEnvironment = null; ui['environment-details'].replaceChildren(); ui['environment-detail-status'].textContent = '';
@@ -32,12 +33,16 @@
   function clearEnvironments() {
     environmentsGeneration++; environmentsController?.abort(); environmentsController = null;
     environmentsBusy = false; environmentRows = new Map(); clearEnvironmentDetail();
+    environmentHistory = [null]; environmentNext = null; ui['environment-observed'].textContent = '';
     ui['environments-list'].replaceChildren();
     ui['environments-status'].textContent = 'Нажмите «Обновить окружения». Автоматического обновления нет.';
     environmentControls();
   }
   function environmentControls() {
     ui['environments-refresh'].disabled = !authenticated || environmentsBusy;
+    ui['environment-previous'].disabled = !authenticated || environmentsBusy || environmentHistory.length === 1;
+    ui['environment-next'].disabled = !authenticated || environmentsBusy || !environmentNext;
+    ui['environment-page'].textContent = 'Страница окружений ' + environmentHistory.length;
     ui['environments-panel'].setAttribute('aria-busy', String(environmentsBusy));
   }
   function validEnvironment(value) {
@@ -56,22 +61,34 @@
     }
     return false;
   }
-  async function loadEnvironments() {
+  function validEnvironmentPage(value, cursor) {
+    return value && typeof value === 'object' && !Array.isArray(value) &&
+      Object.keys(value).length === 3 && ['items','nextCursor','observedAt'].every(key => Object.hasOwn(value, key)) &&
+      Array.isArray(value.items) && value.items.length <= 25 && value.items.every(validEnvironment) &&
+      (value.nextCursor === null || (typeof value.nextCursor === 'string' && value.nextCursor.length > 0 && value.nextCursor.length <= 512 && !/[^A-Za-z0-9_-]/.test(value.nextCursor) && value.nextCursor !== cursor)) &&
+      typeof value.observedAt === 'string' && value.observedAt.length <= 64 &&
+      /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value.observedAt) && Number.isFinite(Date.parse(value.observedAt));
+  }
+  async function loadEnvironments(reset = false) {
     if (!authenticated) return;
+    if (reset) environmentHistory = [null];
+    environmentNext = null; ui['environment-observed'].textContent = '';
+    const cursor = environmentHistory[environmentHistory.length - 1];
     environmentsGeneration++; environmentsController?.abort(); environmentsController = new AbortController();
     const version = environmentsGeneration, session = generation;
     clearEnvironmentDetail(); environmentRows = new Map(); ui['environments-list'].replaceChildren();
     environmentsBusy = true; environmentControls(); ui['environments-status'].textContent = 'Загрузка окружений…';
     try {
-      const values = await request('/api/test-environments', environmentsController.signal);
+      const query = new URLSearchParams({ limit: '25' }); if (cursor) query.set('cursor', cursor);
+      const page = await request('/api/test-environments/browse?' + query, environmentsController.signal);
       if (version !== environmentsGeneration || session !== generation || !authenticated) return;
-      if (!Array.isArray(values) || !values.every(validEnvironment)) throw new Error('Invalid environments response');
-      const ids = new Set();
+      if (!validEnvironmentPage(page, cursor)) throw new Error('Invalid environments page');
+      const values = page.items, ids = new Set();
       for (const value of values) {
         const id = value.id.toLowerCase(); if (ids.has(id)) throw new Error('Duplicate environment'); ids.add(id);
       }
       const fragment = document.createDocumentFragment();
-      for (const value of values.slice(0, 200)) {
+      for (const value of values) {
         const row = document.createElement('tr'); cell(row, value.id); cell(row, value.displayName);
         cell(row, value.state); cell(row, environmentExpiry(value.expiresAt));
         environmentRows.set(value.id.toLowerCase(), value);
@@ -80,13 +97,16 @@
         button.addEventListener('click', () => loadEnvironment(value.id)); cell(row, '').append(button); fragment.append(row);
       }
       ui['environments-list'].replaceChildren(fragment);
-      ui['environments-status'].textContent = values.length > 200
-        ? 'Показаны первые 200 из ' + values.length + ' окружений. Список ограничен интерфейсом; постраничного просмотра нет.'
-        : values.length ? 'Получено окружений: ' + values.length + '. Без автоматического обновления.' : 'Доступных окружений нет.';
+      environmentNext = page.nextCursor;
+      ui['environment-observed'].textContent = 'Наблюдалось: ' + date(page.observedAt);
+      ui['environments-status'].textContent = values.length
+        ? 'На странице ' + environmentHistory.length + ' окружений: ' + values.length + '. Без автоматического обновления.'
+        : 'На странице ' + environmentHistory.length + ' доступных окружений нет.';
     } catch (error) {
       if (version !== environmentsGeneration || session !== generation || error.name === 'AbortError') return;
       environmentRows = new Map(); ui['environments-list'].replaceChildren();
-      if (!environmentAccessError(error)) ui['environments-status'].textContent = errorText(error);
+      if (!environmentAccessError(error)) ui['environments-status'].textContent = error instanceof ApiError && error.status === 400
+        ? 'Страница отклонена сервером. Нажмите «Обновить окружения», чтобы начать с первой страницы.' : errorText(error);
     } finally { if (version === environmentsGeneration) { environmentsBusy = false; environmentControls(); } }
   }
   async function loadEnvironment(id) {
@@ -542,7 +562,13 @@
       message((expired ? 'Сеанс уже завершён.' : 'Выход не подтверждён сервером. Данные скрыты; повторите выход после восстановления связи.') + warning, !expired);
     } finally { if (op.version === generation) { busy = false; controls(); } }
   });
-  ui['environments-refresh'].addEventListener('click', loadEnvironments);
+  ui['environments-refresh'].addEventListener('click', () => loadEnvironments(true));
+  ui['environment-previous'].addEventListener('click', () => {
+    if (authenticated && !environmentsBusy && environmentHistory.length > 1) { environmentHistory.pop(); loadEnvironments(); }
+  });
+  ui['environment-next'].addEventListener('click', () => {
+    if (authenticated && !environmentsBusy && environmentNext) { environmentHistory.push(environmentNext); loadEnvironments(); }
+  });
   ui.refresh.addEventListener('click', () => loadList(true));
   ui['state-filter'].addEventListener('change', () => loadList(true));
   ui.previous.addEventListener('click', () => { if (!orderIntent && !busy && history.length > 1) { history.pop(); loadList(); } });
