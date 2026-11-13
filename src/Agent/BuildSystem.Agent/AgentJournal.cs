@@ -38,6 +38,7 @@ public sealed partial class AgentJournal : IDisposable
         InitializeTargetCreationIntents();
         InitializeTargetCreationPermitBindings();
         InitializeTargetCreationAcknowledgements();
+        InitializeTargetRegistrationEvidence();
         InitializeTargetObservations();
         }
         catch { _db?.Dispose(); _lock.Dispose(); throw; }
