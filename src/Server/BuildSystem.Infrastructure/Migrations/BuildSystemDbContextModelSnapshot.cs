@@ -72,6 +72,130 @@ namespace BuildSystem.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("BuildSystem.Domain.TargetRegistrationEvidenceRecord", b =>
+                {
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasPrecision(7)
+                        .HasColumnType("datetimeoffset(7)");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttemptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalClusterId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CanonicalSqlServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ClaimId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CreationEndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CredentialId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("DatabaseName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<long>("FencingToken")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("InfobaseName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PermitId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RacEndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RacObservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RegistrationProfileId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("ReportedInfobaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RestoreIntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SqlCreateDate")
+                        .IsRequired()
+                        .HasMaxLength(33)
+                        .HasColumnType("nvarchar(33)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<int>("SqlDatabaseId")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SqlEndpointMappingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SqlObservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SqlServer")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<string>("SqlState")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("TargetIncarnationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ClaimId");
+
+                    b.HasIndex("AttemptId").IsUnique();
+
+                    b.HasIndex("OperationId").IsUnique();
+
+                    b.HasIndex("RacObservationId").IsUnique();
+
+                    b.HasIndex("SqlObservationId").IsUnique();
+
+                    b.ToTable("TargetRegistrationEvidenceRecords", t =>
+                        {
+                            t.UseSqlOutputClause(false);
+                            t.HasTrigger("TR_TargetRegistrationEvidenceRecords_AppendOnly");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_AcceptedAt", "DATEPART(TZOFFSET, [AcceptedAt]) = 0");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_CreateDate", "LEN([SqlCreateDate]) BETWEEN 1 AND 33");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_DistinctObservations", "[RacObservationId] <> [SqlObservationId]");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Ids", "[ClaimId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AgentId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000' AND [PermitId] <> '00000000-0000-0000-0000-000000000000' AND [CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [CreationEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [RestoreIntentId] <> '00000000-0000-0000-0000-000000000000' AND [TargetIncarnationId] <> '00000000-0000-0000-0000-000000000000' AND [ReservationId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalClusterId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalSqlServerId] <> '00000000-0000-0000-0000-000000000000' AND [ReportedInfobaseId] <> '00000000-0000-0000-0000-000000000000' AND [RacObservationId] <> '00000000-0000-0000-0000-000000000000' AND [SqlObservationId] <> '00000000-0000-0000-0000-000000000000' AND [RacEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [SqlEndpointMappingId] <> '00000000-0000-0000-0000-000000000000'");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Names", "LEN([InfobaseName]) > 0 AND LEN([SqlServer]) > 0 AND LEN([DatabaseName]) > 0");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Positive", "[SqlDatabaseId] > 0 AND [FencingToken] > 0");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Profile", "[RegistrationProfileId] = N'rac-registration-8.3.22.2557-v1' AND DATALENGTH([RegistrationProfileId]) = 62");
+                            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_SqlState", "[SqlState] = N'ONLINE' AND DATALENGTH([SqlState]) = 12");
+                        });
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.AgentEnrollment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1541,6 +1665,21 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
+                });
+
+            modelBuilder.Entity("BuildSystem.Domain.TargetRegistrationEvidenceRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Domain.TargetCreationExecutionClaim", null)
+                        .WithMany()
+                        .HasForeignKey("ClaimId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.CreationOperationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OperationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("BuildSystem.Domain.TargetCreationExecutionClaim", b =>

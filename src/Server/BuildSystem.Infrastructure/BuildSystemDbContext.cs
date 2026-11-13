@@ -1,3 +1,4 @@
+using BuildSystem.Domain;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
     public DbSet<EnvironmentRecord> TestEnvironments => Set<EnvironmentRecord>();
     public DbSet<EnvironmentJob> EnvironmentJobs => Set<EnvironmentJob>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<TargetRegistrationEvidenceRecord> TargetRegistrationEvidenceReceipts => Set<TargetRegistrationEvidenceRecord>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -56,6 +58,8 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ChangeTracker.DetectChanges();
         GuardCreationPermits();
         GuardCreationExecutionClaims();
+        if (ChangeTracker.Entries<TargetRegistrationEvidenceRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Target registration evidence receipts are immutable.");
         GuardTargetCredentials();
         if (ChangeTracker.Entries<TargetObservationReceiptRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Target observation receipts are immutable.");
@@ -105,6 +109,39 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
                 throw new InvalidOperationException("Archive versions are immutable; publish a new version.");
     }
 
+    private static void ConfigureTargetRegistrationEvidenceModel(ModelBuilder b)
+    {
+        var row = b.Entity<TargetRegistrationEvidenceRecord>();
+        row.HasKey(x => x.ClaimId);
+        row.Property(x => x.ClaimId).ValueGeneratedNever();
+        row.HasIndex(x => x.OperationId).IsUnique();
+        row.HasIndex(x => x.AttemptId).IsUnique();
+        row.HasIndex(x => x.RacObservationId).IsUnique();
+        row.HasIndex(x => x.SqlObservationId).IsUnique();
+        row.HasOne<TargetCreationExecutionClaim>().WithMany().HasForeignKey(x => x.ClaimId).OnDelete(DeleteBehavior.Restrict);
+        row.HasOne<CreationOperationRecord>().WithMany().HasForeignKey(x => x.OperationId).OnDelete(DeleteBehavior.Restrict);
+        row.Property(x => x.RegistrationProfileId).HasMaxLength(64).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.InfobaseName).HasMaxLength(128).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.SqlServer).HasMaxLength(255).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.DatabaseName).HasMaxLength(128).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.SqlCreateDate).HasMaxLength(33).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.SqlState).HasMaxLength(16).UseCollation("Latin1_General_100_BIN2");
+        row.Property(x => x.AcceptedAt).HasPrecision(7);
+        row.ToTable("TargetRegistrationEvidenceRecords", t =>
+        {
+            t.HasTrigger("TR_TargetRegistrationEvidenceRecords_AppendOnly");
+            t.UseSqlOutputClause(false);
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Positive", "[SqlDatabaseId] > 0 AND [FencingToken] > 0");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_DistinctObservations", "[RacObservationId] <> [SqlObservationId]");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Profile", "[RegistrationProfileId] = N'rac-registration-8.3.22.2557-v1' AND DATALENGTH([RegistrationProfileId]) = 62");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_SqlState", "[SqlState] = N'ONLINE' AND DATALENGTH([SqlState]) = 12");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_CreateDate", "LEN([SqlCreateDate]) BETWEEN 1 AND 33");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_AcceptedAt", "DATEPART(TZOFFSET, [AcceptedAt]) = 0");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Names", "LEN([InfobaseName]) > 0 AND LEN([SqlServer]) > 0 AND LEN([DatabaseName]) > 0");
+            t.HasCheckConstraint("CK_TargetRegistrationEvidenceRecords_Ids", "[ClaimId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000' AND [AgentId] <> '00000000-0000-0000-0000-000000000000' AND [AttemptId] <> '00000000-0000-0000-0000-000000000000' AND [PermitId] <> '00000000-0000-0000-0000-000000000000' AND [CredentialId] <> '00000000-0000-0000-0000-000000000000' AND [CreationEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [RestoreIntentId] <> '00000000-0000-0000-0000-000000000000' AND [TargetIncarnationId] <> '00000000-0000-0000-0000-000000000000' AND [ReservationId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalClusterId] <> '00000000-0000-0000-0000-000000000000' AND [CanonicalSqlServerId] <> '00000000-0000-0000-0000-000000000000' AND [ReportedInfobaseId] <> '00000000-0000-0000-0000-000000000000' AND [RacObservationId] <> '00000000-0000-0000-0000-000000000000' AND [SqlObservationId] <> '00000000-0000-0000-0000-000000000000' AND [RacEndpointMappingId] <> '00000000-0000-0000-0000-000000000000' AND [SqlEndpointMappingId] <> '00000000-0000-0000-0000-000000000000'");
+        });
+    }
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -115,6 +152,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureCreationOperationModel(b);
         ConfigureCreationPermitModel(b);
         ConfigureCreationExecutionClaimModel(b);
+        ConfigureTargetRegistrationEvidenceModel(b);
         ConfigureTargetCredentials(b);
         ConfigureTargetObservationModel(b);
         ConfigureTargetObservationReceiptModel(b);
