@@ -29,6 +29,7 @@ public static class InfrastructureRegistration
         services.AddScoped<ITargetCreationOperations>(sp => sp.GetRequiredService<SqlTargetCreationOperations>());
         services.AddScoped<ITargetCreationOperationReads>(sp => sp.GetRequiredService<SqlTargetCreationOperations>());
         services.AddScoped<ITargetCreationExecutionEvidenceReads, SqlTargetCreationExecutionEvidenceReads>();
+        services.AddScoped<ITargetRegistrationEvidenceReads, SqlTargetRegistrationEvidenceReads>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetCreationPermitOptions());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetCreationExecutionClaimOptions());
         services.AddScoped<ITargetCreationExecutionClaims, SqlTargetCreationExecutionClaims>();

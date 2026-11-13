@@ -12,9 +12,12 @@ internal static class TargetCreationDiagnostics
     public static void MapTargetCreationDiagnostics(this WebApplication app)
     {
         if (app.Services.GetRequiredService<TargetCreationDiagnosticsOptions>().Enabled)
+        {
             app.MapGet("/api/admin/target-creation-operations/{operationId}/execution-evidence", async (string operationId,
                 ClaimsPrincipal principal, ITargetCreationExecutionEvidenceReads reads, HttpResponse response, CancellationToken ct) =>
             {
+                response.Headers.CacheControl = "no-store";
+                response.Headers.Pragma = "no-cache";
                 if (!Guid.TryParseExact(operationId, "D", out var id) || id == Guid.Empty ||
                     !string.Equals(operationId, id.ToString("D"), StringComparison.Ordinal))
                     return Results.BadRequest(new { code = "InvalidTargetCreation" });
@@ -22,10 +25,25 @@ internal static class TargetCreationDiagnostics
                     return Results.Json(new { code = "Forbidden" }, statusCode: StatusCodes.Status403Forbidden);
                 // The read service rechecks the current database administrator role; this is never a fresh grant.
                 var view = await reads.GetAsync(new Actor(userId, principal.IsInRole("Administrator")), id, ct);
-                response.Headers.CacheControl = "no-store";
-                response.Headers.Pragma = "no-cache";
                 return Results.Ok(view);
             }).RequireAuthorization(policy => policy.RequireRole("Administrator"));
+
+            // Historical observations are diagnostic only, never ownership or execution authority.
+            app.MapGet("/api/admin/target-creation-operations/{operationId}/registration-evidence", async (string operationId,
+                ClaimsPrincipal principal, ITargetRegistrationEvidenceReads reads, HttpResponse response, CancellationToken ct) =>
+            {
+                response.Headers.CacheControl = "no-store";
+                response.Headers.Pragma = "no-cache";
+                if (!Guid.TryParseExact(operationId, "D", out var id) || id == Guid.Empty ||
+                    !string.Equals(operationId, id.ToString("D"), StringComparison.Ordinal))
+                    return Results.BadRequest(new { code = "InvalidTargetCreation" });
+                if (!Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) || userId == Guid.Empty)
+                    return Results.Json(new { code = "Forbidden" }, statusCode: StatusCodes.Status403Forbidden);
+                // The service rechecks the current database administrator role, not just cookie claims.
+                var view = await reads.GetAsync(new Actor(userId, principal.IsInRole("Administrator")), id, ct);
+                return Results.Ok(view);
+            }).RequireAuthorization(policy => policy.RequireRole("Administrator"));
+        }
 
         // Bind the route as text: the guid constraint would turn malformed IDs into 404 instead of 400.
         app.MapGet("/api/admin/target-creation-operations/{operationId}", async (string operationId,
