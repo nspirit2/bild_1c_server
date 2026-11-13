@@ -227,8 +227,11 @@ public sealed class TargetRegistrationEvidenceReceiptTests
                 _ => CopyClaim(c, mapping: Guid.NewGuid())
             });
             var before = await Snapshot(sql); await using var db = sql.NewContext();
-            await Reject(() => Report(db, f), pin == "agent" ? 401 : 409,
-                pin == "agent" ? "AgentUnauthorized" : "TargetRegistrationEvidenceReceiptMismatch");
+            // A crossed operation resolves to another agent's intent: authorization must win
+            // over structural mismatch, just as for a crossed claim.AgentId.
+            var unauthorized = pin is "agent" or "operation";
+            await Reject(() => Report(db, f), unauthorized ? 401 : 409,
+                unauthorized ? "AgentUnauthorized" : "TargetRegistrationEvidenceReceiptMismatch");
             Assert.Empty(await db.TargetRegistrationEvidenceReceipts.ToListAsync()); Assert.Equal(before, await Snapshot(sql));
         }
     }
