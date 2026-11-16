@@ -42,7 +42,7 @@ jobs:
           BUILDSYSTEM_DESIGN_CONNECTION: 'Server=unused;Database=unused;Integrated Security=true'
         run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
       - name: Test domain, HTTP, SQLite, process and pipeline contracts (SQL requires opt-in)
-        run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
+        run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none
       - name: Annotate failed tests without publishing exception bodies
         if: always()
         shell: python
@@ -63,5 +63,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tests-${{ matrix.os }}
-          path: TestResults/*.trx
+          path: |
+            TestResults/*.trx
+            TestResults/**/*Sequence.xml
           if-no-files-found: warn
