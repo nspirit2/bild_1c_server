@@ -322,11 +322,19 @@ public sealed class TargetCreationCredentialHttpClientTests
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         HttpRequestMessage? captured = null;
         using var client = Client((request, _) => { captured = request; entered.SetResult(); return finish.Task; }, timeout: 1);
-        var pending = client.ResolveAsync(Request()); await entered.Task; client.Dispose();
-        await Failure(() => pending);
-        var content = new SpyContent([]) { OnDispose = () => disposed.TrySetResult() };
-        var response = Reply(captured!, ""); response.Content = content; finish.SetResult(response);
-        await disposed.Task; Assert.True(content.Disposed);
+        var pending = client.ResolveAsync(Request());
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30)); client.Dispose();
+            await Failure(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
+            var content = new SpyContent([]) { OnDispose = () => disposed.TrySetResult() };
+            var response = Reply(captured!, ""); response.Content = content; finish.SetResult(response);
+            await disposed.Task.WaitAsync(TimeSpan.FromSeconds(30)); Assert.True(content.Disposed);
+        }
+        finally
+        {
+            finish.TrySetCanceled(); client.Dispose();
+        }
     }
 
     [Fact]

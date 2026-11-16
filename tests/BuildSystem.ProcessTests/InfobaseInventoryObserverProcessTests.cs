@@ -96,7 +96,9 @@ public sealed class InfobaseInventoryObserverProcessTests : IDisposable
     public async Task RealTimeoutRejectsEvenCompleteValidInventory()
     {
         var bridge = Bridge();
-        await Reject(Observer(bridge, "inventory-hang", TimeSpan.FromSeconds(2)), Scope(), Credentials(),
+        // Windows CI cold startup can consume the former two-second budget before stdout.
+        // Keep the timeout rejection and complete-output assertions; allow fixture startup time.
+        await Reject(Observer(bridge, "inventory-hang", TimeSpan.FromSeconds(10)), Scope(), Credentials(),
             "InfobaseInventoryReadbackUnavailable");
 
         Assert.NotNull(bridge.Result);

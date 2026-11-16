@@ -42,7 +42,12 @@ jobs:
           BUILDSYSTEM_DESIGN_CONNECTION: 'Server=unused;Database=unused;Integrated Security=true'
         run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
       - name: Test domain, HTTP, SQLite, process and pipeline contracts (SQL requires opt-in)
-        run: dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          mkdir -p TestResults
+          set -o pipefail
+          dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --logger "console;verbosity=normal" --results-directory TestResults --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none 2>&1 | tee TestResults/test-console.log
       - name: Annotate failed tests without publishing exception bodies
         if: always()
         shell: python
@@ -66,4 +71,5 @@ jobs:
           path: |
             TestResults/*.trx
             TestResults/**/*Sequence.xml
+            TestResults/test-console.log
           if-no-files-found: warn
