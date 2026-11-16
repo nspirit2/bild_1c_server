@@ -114,55 +114,7 @@ public sealed partial class AgentJournal
             TargetRegistrationEvidence? result;
             using (var transaction = _db.BeginTransaction())
             {
-                ValidateTargetCreationOperation(operationId);
-                string[]? values = null;
-                using (var command = Command("""
-                    SELECT operation,attempt,claim,reported_infobase,fencing_token,incarnation,reservation,
-                        canonical_cluster,canonical_sql,rac_mapping,sql_mapping,rac_observation,sql_observation,
-                        profile,infobase_name,sql_server,database_name,database_id,create_date,state
-                    FROM target_registration_evidence WHERE operation=$0 LIMIT 1
-                    """, operationId.ToString()))
-                using (var reader = command.ExecuteReader())
-                {
-                    if (reader.Read())
-                    {
-                        values = new string[20];
-                        for (var i = 0; i < values.Length; i++)
-                        {
-                            if (reader.GetFieldType(i) != typeof(string)) throw new TargetRegistrationEvidenceUnavailableException();
-                            values[i] = reader.GetString(i);
-                            // Bounded after materialization; not a claim of pre-allocation protection.
-                            if (values[i].Length > RegistrationEvidenceFieldLimit(i))
-                                throw new TargetRegistrationEvidenceUnavailableException();
-                        }
-                    }
-                }
-                if (values is null) result = null;
-                else
-                {
-                    var acknowledgement = GetTargetCreationAcknowledgement(operationId)
-                        ?? throw new TargetRegistrationEvidenceUnavailableException();
-                    var scope = new TargetRegistrationAssessmentScope(new InfobaseRegistrationReadbackScope(
-                        ReadAcknowledgementId(values[0]), ReadEvidencePositiveLong(values[4]),
-                        ReadAcknowledgementId(values[5]), ReadAcknowledgementId(values[6]),
-                        ReadAcknowledgementId(values[7]), ReadAcknowledgementId(values[8]),
-                        ReadAcknowledgementId(values[9]), ReadAcknowledgementId(values[10]),
-                        ReadAcknowledgementId(values[1]), ReadAcknowledgementId(values[2]),
-                        ReadAcknowledgementId(values[3]), ReadAcknowledgementId(values[11]),
-                        values[14], values[15], values[16]), ReadAcknowledgementId(values[12]), values[13]);
-                    var databaseId = ReadEvidencePositiveLong(values[17]);
-                    if (databaseId > int.MaxValue ||
-                        !DateTime.TryParseExact(values[18], "O", CultureInfo.InvariantCulture,
-                            DateTimeStyles.RoundtripKind, out var createDate) ||
-                        values[18] != createDate.ToString("O", CultureInfo.InvariantCulture))
-                        throw new TargetRegistrationEvidenceUnavailableException();
-                    var database = new SqlDatabaseObservedIdentity(values[16], (int)databaseId, createDate, values[19]);
-                    ValidateRegistrationEvidence(acknowledgement, scope, database);
-                    if (scope.RegistrationScope.OperationId != operationId ||
-                        !values.SequenceEqual(RegistrationEvidenceValues(scope, database).Cast<string>(), StringComparer.Ordinal))
-                        throw new TargetRegistrationEvidenceUnavailableException();
-                    result = new(acknowledgement, scope, database);
-                }
+                result = ReadTargetRegistrationEvidenceUnderCurrentTransaction(operationId);
                 transaction.Commit();
             }
             return result;
@@ -170,6 +122,60 @@ public sealed partial class AgentJournal
         catch (Exception)
         {
             throw new TargetRegistrationEvidenceUnavailableException();
+        }
+    }
+
+    // Caller owns the transaction; shared by strict historical evidence and delivery reads.
+    private TargetRegistrationEvidence? ReadTargetRegistrationEvidenceUnderCurrentTransaction(Guid operationId)
+    {
+        ValidateTargetCreationOperation(operationId);
+        string[]? values = null;
+        using (var command = Command("""
+            SELECT operation,attempt,claim,reported_infobase,fencing_token,incarnation,reservation,
+                canonical_cluster,canonical_sql,rac_mapping,sql_mapping,rac_observation,sql_observation,
+                profile,infobase_name,sql_server,database_name,database_id,create_date,state
+            FROM target_registration_evidence WHERE operation=$0 LIMIT 1
+            """, operationId.ToString()))
+        using (var reader = command.ExecuteReader())
+        {
+            if (reader.Read())
+            {
+                values = new string[20];
+                for (var i = 0; i < values.Length; i++)
+                {
+                    if (reader.GetFieldType(i) != typeof(string)) throw new TargetRegistrationEvidenceUnavailableException();
+                    values[i] = reader.GetString(i);
+                    // Bounded after materialization; not a claim of pre-allocation protection.
+                    if (values[i].Length > RegistrationEvidenceFieldLimit(i))
+                        throw new TargetRegistrationEvidenceUnavailableException();
+                }
+            }
+        }
+        if (values is null) return null;
+        else
+        {
+            var acknowledgement = GetTargetCreationAcknowledgement(operationId)
+                ?? throw new TargetRegistrationEvidenceUnavailableException();
+            var scope = new TargetRegistrationAssessmentScope(new InfobaseRegistrationReadbackScope(
+                ReadAcknowledgementId(values[0]), ReadEvidencePositiveLong(values[4]),
+                ReadAcknowledgementId(values[5]), ReadAcknowledgementId(values[6]),
+                ReadAcknowledgementId(values[7]), ReadAcknowledgementId(values[8]),
+                ReadAcknowledgementId(values[9]), ReadAcknowledgementId(values[10]),
+                ReadAcknowledgementId(values[1]), ReadAcknowledgementId(values[2]),
+                ReadAcknowledgementId(values[3]), ReadAcknowledgementId(values[11]),
+                values[14], values[15], values[16]), ReadAcknowledgementId(values[12]), values[13]);
+            var databaseId = ReadEvidencePositiveLong(values[17]);
+            if (databaseId > int.MaxValue ||
+                !DateTime.TryParseExact(values[18], "O", CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var createDate) ||
+                values[18] != createDate.ToString("O", CultureInfo.InvariantCulture))
+                throw new TargetRegistrationEvidenceUnavailableException();
+            var database = new SqlDatabaseObservedIdentity(values[16], (int)databaseId, createDate, values[19]);
+            ValidateRegistrationEvidence(acknowledgement, scope, database);
+            if (scope.RegistrationScope.OperationId != operationId ||
+                !values.SequenceEqual(RegistrationEvidenceValues(scope, database).Cast<string>(), StringComparer.Ordinal))
+                throw new TargetRegistrationEvidenceUnavailableException();
+            return new(acknowledgement, scope, database);
         }
     }
 
