@@ -47,6 +47,10 @@ builder.Services.AddSingleton(services => new TargetCreationExecutionClaimOption
 {
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationExecutionClaim:Enabled")
 });
+builder.Services.AddSingleton(services => new TargetRegistrationEvidenceEndpointOptions
+{
+    Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetRegistrationEvidenceEndpoint:Enabled")
+});
 builder.Services.AddSingleton(services => new TargetCreationExecutionClaimHttpOptions
 {
     Enabled = services.GetRequiredService<IConfiguration>().GetValue<bool>("TargetCreationExecutionClaimHttp:Enabled")
@@ -173,6 +177,21 @@ if (args.Length == 1 && args[0] == "migrate")
     await scope.ServiceProvider.GetRequiredService<BuildSystemDbContext>().Database.MigrateAsync();
     return;
 }
+// Historical machine reports have an independent boundary before redirects and browser auth.
+app.Use(async (context, next) =>
+{
+    if (!TargetRegistrationEvidenceEndpoints.IsEvidencePath(context.Request.Path))
+    { await next(context); return; }
+    TargetRegistrationEvidenceEndpoints.SetHeaders(context.Response);
+    context.Response.OnStarting(() =>
+    { TargetRegistrationEvidenceEndpoints.SetHeaders(context.Response); return Task.CompletedTask; });
+    if (!context.Request.IsHttps)
+    { await TargetRegistrationEvidenceEndpoints.ErrorAsync(context, 400, "TargetRegistrationEvidenceReceiptHttpsRequired"); return; }
+    try { await next(context); }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { context.Abort(); }
+    catch (Exception)
+    { await TargetRegistrationEvidenceEndpoints.ErrorAsync(context, 503, "TargetRegistrationEvidenceReceiptUnavailable"); }
+});
 // Distinct one-shot authority has its own boundary; never redirect Bearer requests.
 app.Use(async (context, next) =>
 {
@@ -294,7 +313,9 @@ app.Use(async (context, next) =>
     try { await next(context); }
     catch (RequestRejectedException ex)
     {
-        if (TargetCreationExecutionClaimEndpoints.IsClaimPath(context.Request.Path))
+        if (TargetRegistrationEvidenceEndpoints.IsEvidencePath(context.Request.Path))
+            await TargetRegistrationEvidenceEndpoints.ErrorAsync(context, 503, "TargetRegistrationEvidenceReceiptUnavailable");
+        else if (TargetCreationExecutionClaimEndpoints.IsClaimPath(context.Request.Path))
             await TargetCreationExecutionClaimEndpoints.ErrorAsync(context, 503, "TargetCreationExecutionClaimUnavailable");
         else if (TargetCreationPermitEndpoints.IsPermitPath(context.Request.Path))
             await TargetCreationPermitEndpoints.RejectedAsync(context, ex);
@@ -349,6 +370,7 @@ app.MapAgentEndpoints();
 app.MapTargetCreationCredentialDelivery();
 app.MapTargetCreationPermits();
 app.MapTargetCreationExecutionClaimEndpoints();
+app.MapTargetRegistrationEvidenceEndpoints();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
 app.MapTargetCreationDiagnosticsUi();

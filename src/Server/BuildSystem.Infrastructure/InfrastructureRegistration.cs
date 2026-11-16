@@ -1,4 +1,5 @@
 using BuildSystem.Application;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,11 @@ public static class InfrastructureRegistration
         services.AddScoped<ITargetCreationOperationReads>(sp => sp.GetRequiredService<SqlTargetCreationOperations>());
         services.AddScoped<ITargetCreationExecutionEvidenceReads, SqlTargetCreationExecutionEvidenceReads>();
         services.AddScoped<ITargetRegistrationEvidenceReads, SqlTargetRegistrationEvidenceReads>();
+        services.AddSingleton(sp => new TargetRegistrationEvidenceReceiptOptions
+        {
+            Enabled = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetValue<bool>("TargetRegistrationEvidenceReceipts:Enabled")
+        });
+        services.AddScoped<ITargetRegistrationEvidenceReceipts, SqlTargetRegistrationEvidenceReceipts>();
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetCreationPermitOptions());
         Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new TargetCreationExecutionClaimOptions());
         services.AddScoped<ITargetCreationExecutionClaims, SqlTargetCreationExecutionClaims>();
