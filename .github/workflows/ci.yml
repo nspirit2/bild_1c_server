@@ -17,7 +17,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Normal console diagnostics show ongoing successful FULL/DELETE SQLite cases on Windows,
+    # not a silent deadlock; keep per-test blame at three minutes and allow the full suite.
+    timeout-minutes: 30
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -42,7 +44,7 @@ jobs:
           BUILDSYSTEM_DESIGN_CONNECTION: 'Server=unused;Database=unused;Integrated Security=true'
         run: dotnet ef migrations has-pending-model-changes --project src/Server/BuildSystem.Infrastructure --configuration Release --no-build
       - name: Test domain, HTTP, SQLite, process and pipeline contracts (SQL requires opt-in)
-        timeout-minutes: 10
+        timeout-minutes: 25
         shell: bash
         run: |
           mkdir -p TestResults
