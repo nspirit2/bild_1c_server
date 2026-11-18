@@ -48,8 +48,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p TestResults
-          set -o pipefail
-          dotnet test BuildSystem.slnx --configuration Release --no-build --no-restore --logger trx --logger "console;verbosity=normal" --results-directory TestResults --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none 2>&1 | tee TestResults/test-console.log
+          # On Windows, isolate project output after a native console-write crash in the parallel run.
+          # Keep TRX and normal console diagnostics without a live tee pipe.
+          parallelism=()
+          if [[ "$RUNNER_OS" == Windows ]]; then parallelism=(-m:1); fi
+          dotnet test BuildSystem.slnx "${parallelism[@]}" --configuration Release --no-build --no-restore --logger trx --logger "console;verbosity=normal" --results-directory TestResults --blame-hang --blame-hang-timeout 3m --blame-hang-dump-type none > TestResults/test-console.log 2>&1
       - name: Annotate failed tests without publishing exception bodies
         if: always()
         shell: python
