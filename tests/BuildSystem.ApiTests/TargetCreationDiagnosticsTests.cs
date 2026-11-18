@@ -366,6 +366,7 @@ public sealed class TargetCreationDiagnosticsTests
         Assert.False(string.IsNullOrWhiteSpace(await response.Content.ReadAsStringAsync()));
         Assert.Contains("default-src 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
         Assert.Contains("frame-ancestors 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Contains("form-action 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
         Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal(0, factory.Reads.Calls);

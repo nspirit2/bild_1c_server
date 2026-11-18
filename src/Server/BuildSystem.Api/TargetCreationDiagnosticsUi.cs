@@ -12,7 +12,7 @@ internal static class TargetCreationDiagnosticsUi
         {
             app.MapGet(route, (HttpContext context) =>
             {
-                context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'";
+                context.Response.Headers.ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
                 context.Response.Headers["Referrer-Policy"] = "no-referrer";
                 context.Response.Headers["X-Frame-Options"] = "DENY";
                 context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";

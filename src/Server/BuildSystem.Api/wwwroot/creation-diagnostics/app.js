@@ -33,6 +33,7 @@
     ui.result.hidden = true; ui.values.replaceChildren(); clearAudit(); clearEvidence(); clearRegistrationEvidence();
     ui['lookup-form'].setAttribute('aria-busy', 'false');
     ui['session-link'].hidden = true;
+    ui.message.textContent = 'Введите идентификатор операции для просмотра сохранённых метаданных.';
   }
   function validate(value, id) {
     return value && pins.every(([key]) => hasGuid(value[key])) && value.operationId.toLowerCase() === id.toLowerCase()

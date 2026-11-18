@@ -472,11 +472,30 @@ test('editing, page transitions and hidden tabs clear registration evidence and 
   }
 });
 
-test('resources enforce administrator authorization and same Stage CSP without inline content or mutation controls', () => {
+test('leaving or restoring the page clears the prior lookup status and login prompt', async () => {
+  let result = ok(receipt());
+  const h = harness(async () => result);
+  await h.submit(id);
+  assert.match(h.nodes.get('message').textContent, /Показаны только/);
+  h.events.pagehide();
+  assert.match(h.nodes.get('message').textContent, /^Введите идентификатор/);
+  result = denied(401);
+  await h.submit(id);
+  assert.equal(h.nodes.get('session-link').hidden, false);
+  h.events.pageshow();
+  assert.equal(h.nodes.get('session-link').hidden, true);
+  assert.match(h.nodes.get('message').textContent, /^Введите идентификатор/);
+});
+
+test('resources require administrator authorization and forbid native form submission', () => {
   const mapper = fs.readFileSync(path.join(root, 'TargetCreationDiagnosticsUi.cs'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'wwwroot/creation-diagnostics/index.html'), 'utf8');
   assert.match(mapper, /RequireAuthorization\(policy => policy.RequireRole\("Administrator"\)\)/);
   assert.doesNotMatch(mapper, /AllowAnonymous/); assert.match(mapper, /default-src 'none'; script-src 'self'; style-src 'self'/);
+  assert.match(mapper, /form-action 'none'/);
+  const operationInput = html.match(/<input\b[^>]*\bid="operation-id"[^>]*>/i);
+  assert.ok(operationInput);
+  assert.doesNotMatch(operationInput[0], /\sname\s*=/i);
   assert.doesNotMatch(html, /<style|\sstyle=|\son\w+=/i); assert.match(html, /<script src="\/admin\/creation-diagnostics\/app.js" defer><\/script>/);
   assert.match(html, /href="\/stage"/); assert.match(html, /История аудита/); assert.match(html, /физической/);
   const registrationPanel = html.match(/<section id="registration-evidence" hidden aria-labelledby="registration-heading">([\s\S]*?)<\/section>/);
