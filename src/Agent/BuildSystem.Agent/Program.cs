@@ -8,7 +8,8 @@ using Microsoft.Extensions.Logging;
 if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationCommand.IsObservationCommand(args) &&
     !TargetCreationStartCommand.IsStartCommand(args) && !TargetCreationOneShotCommand.IsOneShotCommand(args) &&
     !TargetCreationOneShotReadinessCommand.IsReadinessCommand(args) &&
-    !AgentReadinessIdentityHostCommand.IsProbeCommand(args))
+    !AgentReadinessIdentityHostCommand.IsProbeCommand(args) &&
+    !TargetRegistrationEvidenceDeliveryHostCommand.IsCommand(args))
 {
     Console.Error.WriteLine("UnsupportedAgentCommand");
     Environment.ExitCode = 64;
@@ -17,6 +18,11 @@ if (!CleanupDeliveryCommand.SupportedArguments(args) && !TargetObservationComman
 // Positional explicit command arguments are not configuration key/value overrides.
 HostApplicationBuilder builder;
 try { builder = Host.CreateApplicationBuilder(Array.Empty<string>()); }
+catch (Exception) when (TargetRegistrationEvidenceDeliveryHostCommand.IsCommand(args))
+{
+    Environment.ExitCode = await TargetRegistrationEvidenceDeliveryHostCommand.WriteConfigurationFailureAsync(Console.Out);
+    return;
+}
 catch (Exception) when (AgentReadinessIdentityHostCommand.IsProbeCommand(args))
 {
     Environment.ExitCode = await AgentReadinessIdentityHostCommand.WriteConfigurationFailureAsync(Console.Out);
@@ -45,6 +51,19 @@ catch (Exception) when (TargetObservationCommand.IsObservationCommand(args))
     Console.Error.WriteLine("TargetObservationConfigurationOrStorageFailure");
     Environment.ExitCode = 5;
     return;
+}
+if (TargetRegistrationEvidenceDeliveryHostCommand.TryParse(args, out var evidenceOperationId))
+{
+    using var cancellation = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    Console.CancelKeyPress += cancel;
+    try
+    {
+        Environment.ExitCode = await TargetRegistrationEvidenceDeliveryHostCommand.RunAsync(
+            evidenceOperationId, builder.Configuration, Console.Out, cancellation.Token);
+    }
+    finally { Console.CancelKeyPress -= cancel; }
+    return; // Explicit metadata delivery only, without hosted worker registration.
 }
 if (AgentReadinessIdentityHostCommand.IsProbeCommand(args))
 {

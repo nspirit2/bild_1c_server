@@ -2,7 +2,7 @@
 
 ## Manual, independent default-off client
 
-TargetRegistrationEvidenceHttpClient реализует уже существующий ITargetRegistrationEvidenceTransport. Он сам не открывает journal, не запускает observation/CREATE/restore и не создаёт delivery worker. Enabled=false по умолчанию; URI/timeout валидируются при enabled snapshot. Null dependencies отвергаются fixed error независимо от switches. Нет host/CLI/DI enablement или автоматического retry.
+TargetRegistrationEvidenceHttpClient реализует уже существующий ITargetRegistrationEvidenceTransport. Он сам не открывает journal, не запускает observation/CREATE/restore и не создаёт delivery worker. Enabled=false по умолчанию; URI/timeout валидируются при enabled snapshot. Null dependencies отвергаются fixed error независимо от switches. Библиотека не регистрирует worker или DI и автоматически не повторяет отправку. Разовая команда описана ниже; на стенде ничего не включается.
 
 Назначение — fixed POST /api/agent/target-creation/registration-evidence от HTTPS root BaseUri без userinfo/path/query/fragment. Production handler отключает redirects, cookies, decompression и tracing propagation; TLS использует стандартную platform certificate validation, не bypass. Trusted test handler должен сохранять destination/headers и cooperative cancellation, не перехватывать credentials; это явная доверительная граница.
 
@@ -23,6 +23,12 @@ Await кооперативный: нет detached send/stream tasks или hard-
 ## Acceptance is historical only
 
 AcceptedAt не сравнивается с host now как freshness/lease proof. Даже потерянный или malformed HTTP ответ может следовать за server commit; следующий explicit delivery проход берёт неизменённый report из journal и использует exact server replay. Нет автоматического physical retry, adoption, release или unblocking scheduled jobs.
+
+## Разовая команда агента
+
+`deliver-target-registration-evidence <operation-id>` принимает только один явно заданный ненулевой UUID в нижнем регистре, в формате `D`. Команда не запускает worker, не перечисляет операции и не повторяет отправку автоматически. `Agent:TargetRegistrationEvidenceDelivery:Enabled` по умолчанию выключен. При включении применяется `TotalTimeoutSeconds` (1–120, по умолчанию 30); нужны Windows, существующий каталог агента на локальном диске с ограниченными ACL, существующий SQLite-журнал, HTTPS origin и штатный DPAPI-токен. При уже записанном ACK токен не читается. Журнал открывается со штатной инициализацией схемы; это не read-only команда. Команда использует эксклюзивную блокировку журнала; запускать её следует при остановленном worker. Настройки стенда этим изменением не меняются.
+
+Вывод — одна строка JSON без токенов, имён, идентификаторов и дат. Коды завершения: `0` — отчёт доставлен или локальный ACK уже записан; `3` — команда отключена; `5` — доставка недоступна, запись ACK не подтверждена или не удалось вывести статус; `64` — неверные аргументы. `acknowledgementMayHaveCompleted` касается только локальной записи: `false` не доказывает, что сервер не принял отчёт. Все результаты остаются историческими и не разрешают CREATE, restore или разблокировку заданий.
 
 ## Сквозная проверка
 
