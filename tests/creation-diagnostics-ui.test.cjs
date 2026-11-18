@@ -14,9 +14,15 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   set innerHTML(_) { throw new Error('Unsafe HTML rendering'); }
 }
-function harness(metadataFetch, auditFetch = async url => ok(audit({ operationId: url.split('/').at(-2) })), evidenceFetch = async () => denied(404)) {
+function harness(metadataFetch, auditFetch = async url => ok(audit({ operationId: url.split('/').at(-2) })),
+  evidenceFetch = async () => denied(404), registrationFetch = async () => denied(404)) {
   const nodes = new Map(), events = {}, documentEvents = {}, requests = [];
-  const fetch = (url, options) => { requests.push({ url, options }); return (url.endsWith('/execution-evidence') ? evidenceFetch : url.endsWith('/audit') ? auditFetch : metadataFetch)(url, options); };
+  const fetch = (url, options) => {
+    requests.push({ url, options });
+    const handler = url.endsWith('/registration-evidence') ? registrationFetch : url.endsWith('/execution-evidence') ? evidenceFetch
+      : url.endsWith('/audit') ? auditFetch : metadataFetch;
+    return handler(url, options);
+  };
   const document = { hidden: false, getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); }, createElement: () => new Element(), createDocumentFragment: () => new Element(), addEventListener(name, handler) { documentEvents[name] = handler; } };
   vm.runInNewContext(source, { document, fetch, AbortController, addEventListener(name, handler) { events[name] = handler; } });
   const submit = id => { nodes.get('operation-id').value = id; return nodes.get('lookup-form').listeners.submit({ preventDefault() {} }); };
@@ -33,6 +39,21 @@ const claim = overrides => ({ claimId: id, permitId: second, attemptId: second, 
 const evidence = overrides => ({ operationId: id, claimRecorded: true, historicalClaim: claim(), executable: false,
   freshAuthority: false, retryAllowed: false, scheduledJobsMustRemainBlocked: true,
   reconciliationRequired: true, physicalOutcomeKnown: false, ...overrides });
+const registrationFlags = { executable: false, ownershipEstablished: false, restoreAllowed: false, retryAllowed: false,
+  freshAuthority: false, requiresIndependentVerification: true, scheduledJobsMustRemainBlocked: true,
+  reportedEndpointMappingsAreAttested: false };
+const registrationHistory = overrides => ({ claimId: id, operationId: id, agentId: id, attemptId: second, permitId: second,
+  credentialId: '33333333-3333-3333-3333-333333333333', creationEndpointMappingId: '44444444-4444-4444-4444-444444444444',
+  restoreIntentId: id, fencingToken: 12, targetIncarnationId: id, reservationId: id, canonicalClusterId: id, canonicalSqlServerId: id,
+  reportedInfobaseId: '55555555-5555-5555-5555-555555555555', racObservationId: '66666666-6666-6666-6666-666666666666',
+  sqlObservationId: '77777777-7777-7777-7777-777777777777', racEndpointMappingId: '88888888-8888-8888-8888-888888888888',
+  sqlEndpointMappingId: '99999999-9999-9999-9999-999999999999', registrationProfileId: 'rac-registration-8.3.22.2557-v1',
+  infobaseName: '<img src=x onerror=bad>', sqlServer: '<svg/onload=bad>', databaseName: 'canonical-db', sqlDatabaseId: 17,
+  sqlCreateDate: '2020-01-01T03:00:00.1234567+03:00', sqlState: 'ONLINE', acceptedAt: '2020-01-01T00:05:00.1234567+00:00',
+  ...registrationFlags, ...overrides });
+const registration = overrides => ({ operationId: id, evidenceRecorded: true, historicalEvidence: registrationHistory(), ...registrationFlags, ...overrides });
+const registrationRendered = nodes => nodes.get('registration-values').children.flatMap(fragment => fragment.children.map(child => child.textContent)).join('\n');
+const registrationPath = operationId => '/api/admin/target-creation-operations/' + operationId + '/registration-evidence';
 const evidenceRendered = nodes => nodes.get('evidence-values').children.flatMap(fragment => fragment.children.map(child => child.textContent)).join('\n');
 const auditRendered = nodes => nodes.get('audit-events').children.flatMap(fragment => fragment.children.map(child => child.textContent));
 const ok = value => ({ ok: true, status: 200, json: async () => value });
@@ -45,7 +66,7 @@ test('strict nonempty D-format UUID validation sends no requests for invalid inp
   for (const value of ['', '00000000-0000-0000-0000-000000000000', ' ' + id, id + ' ', '{' + id + '}', id.replaceAll('-', ''), id + '?secret=x']) {
     await h.submit(value); assert.equal(h.nodes.get('result').hidden, true);
   }
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 0); assert.equal(h.requests.length, 0);
 });
 
 test('lookup is GET-only no-store same-origin without query; hostile names stay plain text', async () => {
@@ -98,7 +119,7 @@ test('audit follows validated metadata with safe text rendering and unchanged se
   const entries = [auditEvent({ action: 'TargetCreationQuarantined', createdAt: '2026-11-05T08:00:00Z' }), auditEvent({ id, action: 'TargetCreationAttemptRecorded' })];
   const h = harness(async () => ok(receipt()), async () => ok(audit({ events: entries })));
   await h.submit(id);
-  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests.length, 4);
   assert.equal(h.requests[1].url, '/api/admin/target-creation-operations/' + id + '/audit');
   const options = h.requests[1].options;
   assert.equal(options.method, 'GET'); assert.equal(options.cache, 'no-store');
@@ -135,6 +156,8 @@ test('audit authentication failures discard all data and only 401 offers session
     assert.equal(h.nodes.get('audit').hidden, true); assert.deepEqual(auditRendered(h.nodes), []);
     assert.equal(h.nodes.get('session-link').hidden, status !== 401);
     assert.match(h.nodes.get('message').textContent, status === 401 ? /Сеанс завершён/ : /Доступ запрещён/);
+    assert.equal(h.requests.at(-1).url, '/api/admin/target-creation-operations/' + id + '/audit');
+    assert.equal(h.nodes.get('registration-evidence').hidden, true);
   }
 });
 
@@ -196,7 +219,7 @@ test('expired claimed evidence follows main and audit, displays six pins and ori
   assert.deepEqual(h.requests.map(request => request.url), [
     '/api/admin/target-creation-operations/' + id,
     '/api/admin/target-creation-operations/' + id + '/audit',
-    '/api/admin/target-creation-operations/' + id + '/execution-evidence']);
+    '/api/admin/target-creation-operations/' + id + '/execution-evidence', registrationPath(id)]);
   const options = h.requests[2].options;
   assert.equal(options.method, 'GET'); assert.equal(options.credentials, 'same-origin');
   assert.equal(options.cache, 'no-store'); assert.equal(options.redirect, 'error');
@@ -311,6 +334,144 @@ test('editing, page transitions and hidden tabs clear evidence and invalidate pe
   }
 });
 
+test('found registration evidence uses only GET and renders historical fields as inert text independently of execution evidence', async () => {
+  const operationId = 'abcdefab-abcd-abcd-abcd-abcdefabcdef';
+  const databaseName = '</dd><script>bad</script>';
+  const historicalEvidence = registrationHistory({ operationId, databaseName });
+  const payload = registration({ operationId, historicalEvidence });
+  const h = harness(async () => ok(receipt({ operationId, sqlDbName: databaseName })), async () => denied(500),
+    async () => denied(500), async () => ok(payload));
+  await h.submit(operationId.toUpperCase());
+  const base = '/api/admin/target-creation-operations/' + operationId;
+  assert.deepEqual(h.requests.map(request => request.url), [base, base + '/audit', base + '/execution-evidence', registrationPath(operationId)]);
+  for (const { options } of h.requests) {
+    assert.equal(options.method, 'GET'); assert.equal(options.cache, 'no-store');
+    assert.equal(options.credentials, 'same-origin'); assert.equal(options.redirect, 'error');
+    assert.equal(options.body, undefined);
+    assert.equal(options.signal, h.requests[0].options.signal); assert.equal(options.signal.aborted, false);
+  }
+  assert.equal(h.nodes.get('registration-evidence').hidden, false);
+  assert.match(h.nodes.get('registration-message').textContent, /зафиксирован|сохранен|сохранён/i);
+  assert.match(h.nodes.get('audit-message').textContent, /недоступна/);
+  assert.match(h.nodes.get('evidence-message').textContent, /недоступны/);
+  const text = registrationRendered(h.nodes);
+  for (const [key, value] of Object.entries(historicalEvidence)) {
+    assert.ok(text.includes(key + '\n' + value), `historical field ${key}:\n${text}`);
+  }
+});
+
+test('absent registration evidence is explicit and clears historical fields without asserting physical outcome', async () => {
+  let payload = registration();
+  const h = harness(async () => ok(receipt()), undefined, async () => ok(evidence()), async () => ok(payload));
+  await h.submit(id); assert.match(registrationRendered(h.nodes), /reportedInfobaseId/);
+  payload = registration({ evidenceRecorded: false, historicalEvidence: null }); await h.submit(id);
+  assert.equal(h.nodes.get('registration-evidence').hidden, false);
+  assert.match(h.nodes.get('registration-message').textContent, /нет|отсутств/i);
+  assert.match(h.nodes.get('registration-message').textContent, /не доказывает|не означает|не подтверждает/i);
+  const text = registrationRendered(h.nodes);
+  assert.doesNotMatch(text, /claimId|reportedInfobaseId|acceptedAt|2020-01-01/);
+  for (const [key, flag] of Object.entries(registrationFlags)) assert.ok(text.includes(key + '\n' + flag), key);
+  assert.match(evidenceRendered(h.nodes), /claimId/);
+});
+
+test('malformed or mismatched registration evidence never renders historical details or apparent authority', async () => {
+  const nested = overrides => ({ historicalEvidence: registrationHistory(overrides) });
+  const malformed = [
+    { operationId: second }, { evidenceRecorded: 'true' }, { evidenceRecorded: false }, { historicalEvidence: null },
+    { freshAuthority: 0 }, { executable: undefined }, { accessToken: 'not part of the DTO' },
+    nested({ restoreAllowed: 'false' }), nested({ executable: undefined }), nested({ accessToken: 'not part of the DTO' }),
+    ...Object.entries(registrationFlags).flatMap(([key, flag]) => [{ [key]: !flag }, nested({ [key]: !flag })]),
+    ...['operationId', 'agentId', 'restoreIntentId', 'targetIncarnationId', 'reservationId', 'canonicalClusterId', 'canonicalSqlServerId']
+      .map(key => nested({ [key]: second })),
+    nested({ attemptId: id }), nested({ infobaseName: 'another infobase' }), nested({ databaseName: 'another database' }),
+    nested({ claimId: '00000000-0000-0000-0000-000000000000' }), nested({ racEndpointMappingId: '<img>' }),
+    nested({ sqlObservationId: registrationHistory().racObservationId }), nested({ fencingToken: 0 }),
+    nested({ fencingToken: Number.MAX_SAFE_INTEGER + 1 }), nested({ sqlDatabaseId: '17' }),
+    nested({ registrationProfileId: 'unknown-profile' }), nested({ sqlState: 'OFFLINE' }),
+    nested({ sqlCreateDate: '2020-02-30T00:00:00.0000000' }), nested({ acceptedAt: '2020-01-01T03:05:00+03:00' })
+  ];
+  let change;
+  const h = harness(async () => ok(receipt()), async () => ok(audit({ events: [auditEvent()] })), async () => ok(evidence()),
+    async () => ok(registration(change)));
+  await h.submit(id); assert.match(registrationRendered(h.nodes), /reportedInfobaseId/);
+  for (change of malformed) {
+    await h.submit(id);
+    const detail = JSON.stringify(change);
+    assert.equal(registrationRendered(h.nodes), '', detail);
+    assert.match(h.nodes.get('registration-message').textContent, /недоступ/i, detail);
+    assert.equal(h.nodes.get('result').hidden, false, detail);
+    assert.equal(auditRendered(h.nodes).length, 1, detail);
+    assert.match(evidenceRendered(h.nodes), /claimId/, detail);
+    assert.equal(h.nodes.get('session-link').hidden, true, detail);
+  }
+});
+
+test('registration 401 or 403 clears every panel; other failures do not imply absent evidence', async () => {
+  for (const failure of [denied(401), denied(403), denied(404), denied(409), denied(500), new Error('network'),
+    { ok: true, status: 200, json: async () => { throw new Error('invalid json'); } }]) {
+    let response = ok(registration());
+    const h = harness(async () => ok(receipt()), async () => ok(audit({ events: [auditEvent()] })), async () => ok(evidence()), async () => {
+      if (response instanceof Error) throw response;
+      return response;
+    });
+    await h.submit(id); assert.match(registrationRendered(h.nodes), /reportedInfobaseId/);
+    response = failure; await h.submit(id);
+    const unauthorized = failure.status === 401 || failure.status === 403;
+    assert.equal(registrationRendered(h.nodes), '');
+    for (const panel of ['result', 'audit', 'execution-evidence', 'registration-evidence']) {
+      assert.equal(h.nodes.get(panel).hidden, unauthorized, panel);
+    }
+    assert.equal(h.nodes.get('session-link').hidden, failure.status !== 401);
+    if (unauthorized) {
+      assert.equal(rendered(h.nodes), ''); assert.deepEqual(auditRendered(h.nodes), []); assert.equal(evidenceRendered(h.nodes), '');
+      assert.equal(h.nodes.get('registration-message').textContent, '');
+      assert.equal(h.requests.at(-1).options.signal.aborted, true);
+      assert.match(h.nodes.get('message').textContent, failure.status === 401 ? /Сеанс завершён/ : /Доступ запрещён/);
+    } else {
+      assert.match(h.nodes.get('registration-message').textContent, /недоступ/i);
+      assert.doesNotMatch(h.nodes.get('registration-message').textContent, /В снимке нет|запись отсутствует/i);
+      assert.match(rendered(h.nodes), /AttemptRecorded/); assert.equal(auditRendered(h.nodes).length, 1);
+      assert.match(evidenceRendered(h.nodes), /claimId/);
+    }
+  }
+});
+
+test('late registration transport (including auth failures) and late JSON cannot replace a new lookup', { timeout: 2000 }, async () => {
+  for (const { late, json } of [{ late: ok(registration()) }, { late: denied(401) }, { late: denied(403) }, { late: registration(), json: true }]) {
+    const pending = deferred(), started = deferred();
+    const h = harness(async url => ok(receipt({ operationId: url.split('/').at(-1) })), undefined, undefined, async url => {
+      if (url === registrationPath(second)) return ok(registration({ operationId: second, evidenceRecorded: false, historicalEvidence: null }));
+      if (json) return { ...ok(null), json: () => { started.resolve(); return pending.promise; } };
+      started.resolve(); return pending.promise;
+    });
+    const first = h.submit(id); await started.promise;
+    const oldRequest = h.requests.at(-1); assert.equal(oldRequest.url, registrationPath(id));
+    await h.submit(second); assert.equal(oldRequest.options.signal.aborted, true);
+    const freshText = registrationRendered(h.nodes);
+    assert.match(freshText, new RegExp(second)); assert.doesNotMatch(freshText, /reportedInfobaseId/);
+    pending.resolve(late); await first;
+    assert.equal(registrationRendered(h.nodes), freshText);
+    assert.equal(h.nodes.get('registration-evidence').hidden, false);
+    assert.match(rendered(h.nodes), new RegExp(second));
+    assert.equal(h.nodes.get('session-link').hidden, true);
+  }
+});
+
+test('editing, page transitions and hidden tabs clear registration evidence and invalidate pending JSON', { timeout: 2000 }, async () => {
+  for (const trigger of [h => h.nodes.get('operation-id').listeners.input(), h => h.events.pagehide(), h => h.events.pageshow(), h => { h.document.hidden = true; h.documentEvents.visibilitychange(); }]) {
+    const body = deferred(), started = deferred(); let pending = false;
+    const h = harness(async () => ok(receipt()), undefined, undefined, async () => !pending ? ok(registration())
+      : { ...ok(null), json: () => { started.resolve(); return body.promise; } });
+    await h.submit(id); assert.match(registrationRendered(h.nodes), /reportedInfobaseId/);
+    pending = true; const request = h.submit(id); await started.promise; trigger(h);
+    assert.equal(h.requests.at(-1).options.signal.aborted, true);
+    assert.equal(h.nodes.get('registration-evidence').hidden, true); assert.equal(registrationRendered(h.nodes), '');
+    body.resolve(registration()); await request;
+    assert.equal(h.nodes.get('registration-evidence').hidden, true); assert.equal(registrationRendered(h.nodes), '');
+    assert.equal(h.nodes.get('registration-message').textContent, '');
+  }
+});
+
 test('resources enforce administrator authorization and same Stage CSP without inline content or mutation controls', () => {
   const mapper = fs.readFileSync(path.join(root, 'TargetCreationDiagnosticsUi.cs'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'wwwroot/creation-diagnostics/index.html'), 'utf8');
@@ -318,5 +479,11 @@ test('resources enforce administrator authorization and same Stage CSP without i
   assert.doesNotMatch(mapper, /AllowAnonymous/); assert.match(mapper, /default-src 'none'; script-src 'self'; style-src 'self'/);
   assert.doesNotMatch(html, /<style|\sstyle=|\son\w+=/i); assert.match(html, /<script src="\/admin\/creation-diagnostics\/app.js" defer><\/script>/);
   assert.match(html, /href="\/stage"/); assert.match(html, /История аудита/); assert.match(html, /физической/);
+  const registrationPanel = html.match(/<section id="registration-evidence" hidden aria-labelledby="registration-heading">([\s\S]*?)<\/section>/);
+  assert.ok(registrationPanel, 'registration evidence is a separate, initially hidden panel');
+  assert.match(registrationPanel[1], /id="registration-message" role="status" aria-live="polite"/);
+  assert.match(registrationPanel[1], /сопоставления конечных точек RAC и SQL не подтверждены/);
+  assert.match(registrationPanel[1], /не устанавливают право владения и не разрешают выполнение, восстановление или повторную попытку/);
+  assert.match(registrationPanel[1], /независимая проверка; запланированные задания остаются заблокированы/);
   assert.equal((html.match(/<button/g) || []).length, 1); assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|method:\s*['"](?:POST|PUT|DELETE|PATCH)/);
 });

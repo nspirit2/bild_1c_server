@@ -12,6 +12,12 @@ Endpoint GET /api/admin/target-creation-operations/{operationId}/registration-ev
 
 Нет POST, agent token delivery, outbox, worker integration или нового executable authority. History/view flags: Executable/OwnershipEstablished/RestoreAllowed/RetryAllowed/FreshAuthority=false; RequiresIndependentVerification/ScheduledJobsMustRemainBlocked=true. Presence и absence не дают права на CREATE, restore, adoption, retry, release, drop или unblocking scheduled jobs.
 
+## Панель диагностики
+
+На существующей странице `/admin/creation-diagnostics` история регистрации запрашивается только при явном поиске конкретной операции. Это отдельный снимок, а не часть атомарного снимка метаданных операции, аудита или истории выдачи claim. Панель отличает «запись не сохранена» от «история недоступна»; ни один из этих статусов не сообщает о фактическом состоянии базы. Дата принятия отчёта не является временем наблюдения или доказательством свежести. Идентификаторы наблюдаемых RAC/SQL-эндпоинтов — заявленные привязки, не аттестация.
+
+Панель не предлагает действий над операцией. При смене поиска, скрытии страницы или ошибке авторизации данные очищаются. Feature gate, серверные роли и настройки стенда не меняются.
+
 ## Operational boundaries
 
 Read service не пишет audit, intent/operation state, leases, holds, reservations или credential metadata и не загружает credential envelope. Только read port зарегистрирован в DI; default-off receipt ingestion port не включается автоматически. Нет migration нового read slice и нет live configuration/deployment.

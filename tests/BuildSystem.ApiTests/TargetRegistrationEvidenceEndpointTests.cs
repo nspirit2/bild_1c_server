@@ -51,7 +51,13 @@ public sealed class TargetRegistrationEvidenceEndpointTests
         {
             Calls++; Actor = actor; Id = operationId;
             if (Rejection is not null) throw Rejection;
-            return Task.FromResult(new TargetRegistrationEvidenceView(operationId, Recorded, null));
+            TargetRegistrationEvidenceHistory? history = Recorded ? new(
+                Guid.NewGuid(), operationId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                Guid.NewGuid(), Guid.NewGuid(), 7, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                "rac-registration-8.3.22.2557-v1", "test_infobase", "sql.example.invalid", "test_database", 12,
+                "2026-11-13T10:11:12.1234567+03:00", "ONLINE", new DateTimeOffset(2026, 11, 13, 9, 0, 0, TimeSpan.Zero)) : null;
+            return Task.FromResult(new TargetRegistrationEvidenceView(operationId, Recorded, history));
         }
     }
 
@@ -142,7 +148,19 @@ public sealed class TargetRegistrationEvidenceEndpointTests
             json.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray());
         Assert.Equal(id, json.GetProperty("operationId").GetGuid());
         Assert.Equal(recorded, json.GetProperty("evidenceRecorded").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, json.GetProperty("historicalEvidence").ValueKind);
+        var history = json.GetProperty("historicalEvidence");
+        if (!recorded) Assert.Equal(JsonValueKind.Null, history.ValueKind);
+        else
+        {
+            Assert.Equal(34, history.EnumerateObject().Count());
+            Assert.Equal(id, history.GetProperty("operationId").GetGuid());
+            Assert.Equal("2026-11-13T10:11:12.1234567+03:00", history.GetProperty("sqlCreateDate").GetString());
+            Assert.Equal("2026-11-13T09:00:00+00:00", history.GetProperty("acceptedAt").GetString());
+            foreach (var name in new[] { "executable", "freshAuthority", "ownershipEstablished", "reportedEndpointMappingsAreAttested", "restoreAllowed", "retryAllowed" })
+                Assert.False(history.GetProperty(name).GetBoolean());
+            Assert.True(history.GetProperty("requiresIndependentVerification").GetBoolean());
+            Assert.True(history.GetProperty("scheduledJobsMustRemainBlocked").GetBoolean());
+        }
         foreach (var name in new[] { "executable", "freshAuthority", "ownershipEstablished", "reportedEndpointMappingsAreAttested", "restoreAllowed", "retryAllowed" })
             Assert.False(json.GetProperty(name).GetBoolean());
         foreach (var name in new[] { "requiresIndependentVerification", "scheduledJobsMustRemainBlocked" })

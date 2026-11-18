@@ -1,8 +1,8 @@
 'use strict';
 (() => {
-  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values', 'audit', 'audit-message', 'audit-events', 'audit-truncated', 'execution-evidence', 'evidence-message', 'evidence-values'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['lookup-form', 'operation-id', 'lookup-button', 'message', 'session-link', 'result', 'values', 'audit', 'audit-message', 'audit-events', 'audit-truncated', 'execution-evidence', 'evidence-message', 'evidence-values', 'registration-evidence', 'registration-message', 'registration-values'].map(id => [id, document.getElementById(id)]));
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+  const hasGuid = value => typeof value === 'string' && value.length === 36 && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
   const pins = [
     ['operationId', 'Operation ID'], ['restoreIntentId', 'Restore intent ID'],
     ['environmentId', 'Окружение UUID'], ['stageJobId', 'Задание Stage UUID'],
@@ -23,9 +23,14 @@
     ui['evidence-values'].replaceChildren();
     ui['evidence-message'].textContent = '';
   }
+  function clearRegistrationEvidence() {
+    ui['registration-evidence'].hidden = true;
+    ui['registration-values'].replaceChildren();
+    ui['registration-message'].textContent = '';
+  }
   function clear() {
     generation++; controller?.abort(); controller = null;
-    ui.result.hidden = true; ui.values.replaceChildren(); clearAudit(); clearEvidence();
+    ui.result.hidden = true; ui.values.replaceChildren(); clearAudit(); clearEvidence(); clearRegistrationEvidence();
     ui['lookup-form'].setAttribute('aria-busy', 'false');
     ui['session-link'].hidden = true;
   }
@@ -110,7 +115,7 @@
   function historicalTime(value) {
     if (typeof value !== 'string') return null;
     const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?(?:Z|\+00:00)$/.exec(value);
-    if (!match) return null;
+    if (!match || match[0] !== value) return null;
     const parsed = Date.parse(match[1] + 'Z');
     if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 19) !== match[1]) return null;
     // Compare the original server precision, not a rounded browser millisecond window.
@@ -168,6 +173,102 @@
       ui['evidence-message'].textContent = 'Исторические свидетельства выдачи недоступны. Отсутствие записи claim не установлено; повторите поиск.';
     }
   }
+  const registrationFlags = {
+    executable: false, ownershipEstablished: false, restoreAllowed: false, retryAllowed: false,
+    freshAuthority: false, requiresIndependentVerification: true, scheduledJobsMustRemainBlocked: true,
+    reportedEndpointMappingsAreAttested: false
+  };
+  const registrationFlagNames = Object.keys(registrationFlags);
+  const registrationMatches = ['operationId', 'agentId', 'attemptId', 'restoreIntentId', 'targetIncarnationId',
+    'reservationId', 'canonicalClusterId', 'canonicalSqlServerId'];
+  const registrationIds = [...registrationMatches, 'claimId', 'permitId', 'credentialId', 'creationEndpointMappingId',
+    'reportedInfobaseId', 'racObservationId', 'sqlObservationId', 'racEndpointMappingId', 'sqlEndpointMappingId'];
+  const registrationFields = [...registrationIds, 'fencingToken', 'registrationProfileId', 'infobaseName',
+    'sqlServer', 'databaseName', 'sqlDatabaseId', 'sqlCreateDate', 'sqlState', 'acceptedAt'];
+  const minDateTicks = -621355968000000000n; // 0001-01-01T00:00:00Z, relative to Unix epoch
+  const maxDateTicks = 2534023007999999999n; // 9999-12-31T23:59:59.9999999Z
+  function validRegistrationName(value) {
+    return typeof value === 'string' && value.length <= 128 && /\P{White_Space}/u.test(value)
+      && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+  }
+  function validSqlCreateDate(value) {
+    if (typeof value !== 'string' || ![27, 28, 33].includes(value.length)) return false;
+    const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7})(?:Z|([+-])(\d{2}):(\d{2}))?$/.exec(value);
+    if (!match || match[0] !== value) return false;
+    const wall = historicalTime(match[1] + 'Z');
+    if (wall === null || wall <= minDateTicks) return false;
+    if (match[2] === undefined) return true;
+    const hours = Number(match[3]), minutes = Number(match[4]);
+    if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)
+      || (match[2] === '-' && hours === 0 && minutes === 0)) return false;
+    const offset = BigInt(hours * 60 + minutes) * 600000000n;
+    const utc = match[2] === '+' ? wall - offset : wall + offset;
+    return utc >= minDateTicks && utc <= maxDateTicks;
+  }
+  function hasRegistrationFlags(value) {
+    return registrationFlagNames.every(key => value[key] === registrationFlags[key]);
+  }
+  function validateRegistrationEvidence(value, operation, id) {
+    if (!exactKeys(value, ['operationId', 'evidenceRecorded', 'historicalEvidence', ...registrationFlagNames])
+      || value.operationId !== id || value.operationId !== operation.operationId
+      || !hasRegistrationFlags(value) || typeof value.evidenceRecorded !== 'boolean') return false;
+    if (!value.evidenceRecorded) return value.historicalEvidence === null;
+    const history = value.historicalEvidence;
+    if (!exactKeys(history, [...registrationFields, ...registrationFlagNames]) || !hasRegistrationFlags(history)
+      || !registrationIds.every(key => hasGuid(history[key]))
+      || !registrationMatches.every(key => history[key] === operation[key])
+      || history.racObservationId.toLowerCase() === history.sqlObservationId.toLowerCase()
+      || history.registrationProfileId !== 'rac-registration-8.3.22.2557-v1'
+      || !validRegistrationName(history.infobaseName) || history.infobaseName !== operation.infobaseName
+      || !validRegistrationName(history.databaseName) || history.databaseName !== operation.sqlDbName
+      || typeof history.sqlServer !== 'string' || history.sqlServer.length < 1 || history.sqlServer.length > 255
+      || history.sqlServer.startsWith('-') || /[^!-~]/.test(history.sqlServer)
+      || !Number.isSafeInteger(history.fencingToken) || history.fencingToken <= 0
+      || !Number.isInteger(history.sqlDatabaseId) || history.sqlDatabaseId < 1 || history.sqlDatabaseId > 2147483647
+      || history.sqlState !== 'ONLINE' || !validSqlCreateDate(history.sqlCreateDate)) return false;
+    const accepted = historicalTime(history.acceptedAt);
+    return accepted !== null && accepted > minDateTicks;
+  }
+  function renderRegistrationEvidence(value) {
+    ui['registration-message'].textContent = value.evidenceRecorded
+      ? 'В снимке есть сохранённые исторические свидетельства регистрации.'
+      : 'В снимке нет сохранённых свидетельств регистрации. Это не доказывает, что физической регистрации не было.';
+    const rows = [['operationId', value.operationId]];
+    if (value.evidenceRecorded) {
+      for (const key of registrationFields) {
+        if (key !== 'operationId') rows.push([key, value.historicalEvidence[key]]);
+      }
+    }
+    const fragment = document.createDocumentFragment();
+    for (const [label, value] of [...rows, ...Object.entries(registrationFlags)]) {
+      const dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = label; dd.textContent = String(value); fragment.append(dt, dd);
+    }
+    ui['registration-values'].replaceChildren(fragment); ui['registration-evidence'].hidden = false;
+  }
+  async function loadRegistrationEvidence(id, operation, version, request) {
+    if (version !== generation) return;
+    ui['registration-evidence'].hidden = false; ui['registration-message'].textContent = 'Загрузка исторических свидетельств регистрации…';
+    try {
+      const response = await fetch('/api/admin/target-creation-operations/' + id + '/registration-evidence', {
+        method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: request.signal
+      });
+      if (version !== generation) return;
+      if (response.status === 401 || response.status === 403) {
+        clear(); ui.message.textContent = errors[response.status];
+        ui['session-link'].hidden = response.status !== 401; return;
+      }
+      if (!response.ok || response.status !== 200) throw new Error('Registration evidence unavailable');
+      const value = await response.json();
+      if (version !== generation) return;
+      if (!validateRegistrationEvidence(value, operation, id)) throw new Error('Invalid registration evidence');
+      renderRegistrationEvidence(value);
+    } catch (error) {
+      if (version !== generation) return;
+      clearRegistrationEvidence(); ui['registration-evidence'].hidden = false;
+      ui['registration-message'].textContent = 'Исторические свидетельства регистрации недоступны. Отсутствие записи не установлено; повторите поиск.';
+    }
+  }
   const errors = {
     400: 'Некорректный идентификатор операции.',
     401: 'Сеанс завершён. Войдите через существующую страницу Stage.',
@@ -197,6 +298,7 @@
       render(value); ui.message.textContent = 'Показаны только метаданные журнала. Выполнение не разрешено.';
       await loadAudit(id, version, request);
       await loadEvidence(id, value, version, request);
+      await loadRegistrationEvidence(id, value, version, request);
     } catch (error) {
       if (version !== generation) return;
       ui.result.hidden = true; ui.values.replaceChildren();
