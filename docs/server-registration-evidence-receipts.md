@@ -36,4 +36,6 @@ Receipt всегда inert: Executable/OwnershipEstablished/RestoreAllowed/Retry
 
 Первый real SQL CI ffc360d выполнил suite и выявил одну test-only expectation: crossed operation относится другому agent, поэтому current auth корректно возвращает401 AgentUnauthorized, а не409 structural mismatch. Expected401 теперь задан для agent и operation; остальные четыре chain cases остаются409. Production guard не изменялся; review подтвердил auth-first смысл. Повторный локальный Release/Node прошёл; clean SQL rerun фиксируется отдельно.
 
-Перед ownership/restore promotion всё ещё нужно отдельное решение о physical endpoint trust и независимом SQL incarnation evidence; этот receipt gate не подменяет их.
+## Решение по назначению
+
+Исторические свидетельства регистрации и подтверждения их доставки используются **только для диагностики**. Они не являются входом для решений о владении, снятии карантина, повторе CREATE, разрешении restore, освобождении резерва или разблокировке заданий. Успешная доставка и совпадение RAC/SQL-метаданных этого не меняют: они не подтверждают физический эндпоинт или непрерывность инкарнации SQL-базы. Механизм перехода от диагностических записей к полномочиям не входит в этот контур.
