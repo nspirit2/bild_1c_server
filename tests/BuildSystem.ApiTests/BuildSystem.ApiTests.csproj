@@ -10,6 +10,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all" />
     <ProjectReference Include="../../src/Server/BuildSystem.Api/BuildSystem.Api.csproj" />
     <ProjectReference Include="../../src/Agent/BuildSystem.Agent/BuildSystem.Agent.csproj" />
+    <Compile Include="../BuildSystem.AgentTests/TargetRegistrationEvidenceDeliverySeed.cs" Link="TargetRegistrationEvidenceDeliverySeed.cs" />
   </ItemGroup>
 </Project>
 <!-- end -->
