@@ -184,7 +184,8 @@ test('list refuses unconfirmed cancellation and contradictory marker without dis
   const raw = { ...item(env1), requestId: env2, jobState: 'Cancelled', environmentState: 'Cancelled',
     reservationState: 'Released', unsettled: false };
   for (const row of [raw, { ...raw, cancellationCode: 'CancelledBeforeFirstLease', unsettled: true },
-    { ...item(env1), cancellationCode: 'CancelledBeforeFirstLease' }]) {
+    { ...item(env1), cancellationCode: 'CancelledBeforeFirstLease' },
+    { ...item(env1), jobState: 'cAnCeLlEd ' }, { ...item(env1), reservationState: 'rELEAsed  ' }]) {
     const nodes = harness(async route => route === '/api/auth/me' ? ok({ name: 'operator' }) :
       ok({ items: [row], nextCursor: 'bad-page' }));
     await flush();
@@ -519,6 +520,14 @@ test('incomplete or contradictory cancellation never shows released quota or not
     assert.equal(nodes.get('detail-values').children.length, 0);
     assert.doesNotMatch(nodes.get('detail-message').textContent, /квота заказа.*освобождена/);
     assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+  }
+});
+
+test('alternate-case or padded cancellation metadata is not rendered as ordinary detail', async () => {
+  for (const changes of [{ requestState: 'cAnCeLlEd ' }, { reservationState: 'rELEAsed  ' }]) {
+    const { nodes } = await cleanupHarness(() => denied(404), () => ok(retainedDetail(changes)));
+    assert.equal(nodes.get('detail-values').children.length, 0);
+    assert.match(nodes.get('detail-message').textContent, /Недостаточно согласованных метаданных/);
   }
 });
 

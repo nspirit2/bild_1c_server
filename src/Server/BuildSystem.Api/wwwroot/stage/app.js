@@ -403,6 +403,9 @@
     const td = document.createElement('td'); td.textContent = value;
     if (className) td.className = className; row.append(td); return td;
   }
+  const cancellationLike = (state, expected) => typeof state === 'string' && state.replace(/ +$/, '').toLowerCase() === expected;
+  const cancellationStates = value => [value.jobState, value.environmentState, value.requestState]
+    .some(state => cancellationLike(state, 'cancelled')) || cancellationLike(value.reservationState, 'released');
   function isCancelledListRow(item) {
     return item.cancellationCode === 'CancelledBeforeFirstLease' &&
       item.jobState === 'Cancelled' && item.environmentState === 'Cancelled' &&
@@ -448,8 +451,7 @@
       if (op.version !== generation) return;
       if (!Array.isArray(page?.items) || page.items.length > 25 || page.items.some(item => !item || typeof item !== 'object') ||
           !(page.nextCursor == null || (typeof page.nextCursor === 'string' && page.nextCursor.length <= 512))) throw new Error('Invalid list response');
-      if (page.items.some(item => (filter === 'Cancelled' || item.cancellationCode != null || item.jobState === 'Cancelled' ||
-          item.environmentState === 'Cancelled' || item.reservationState === 'Released') && !isCancelledListRow(item)))
+      if (page.items.some(item => (filter === 'Cancelled' || item.cancellationCode != null || cancellationStates(item)) && !isCancelledListRow(item)))
         throw new Error('Invalid cancellation list row');
       nextCursor = page.nextCursor || null; renderList(page.items);
       ui['empty-list'].hidden = page.items.length !== 0; ui.observed.textContent = 'Наблюдение сервера: ' + date(page.observedAt);
@@ -582,8 +584,7 @@
       cancelled = isConfirmedCancellation(value);
       if (expectsCancellation && (!cancelled || value.stagingBytes !== expected.stagingBytes))
         throw new Error('Cancellation detail does not match list');
-      if (!cancelled && (value.reconciliationCode === 'CancelledBeforeFirstLease' || value.reservationState === 'Released' ||
-          [value.jobState, value.environmentState, value.requestState].includes('Cancelled'))) {
+      if (!cancelled && (value.reconciliationCode === 'CancelledBeforeFirstLease' || cancellationStates(value))) {
         ui['detail-message'].textContent = 'Недостаточно согласованных метаданных: не считать ресурсы свободными.';
         return;
       }
