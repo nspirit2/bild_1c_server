@@ -185,6 +185,89 @@ public sealed class SqlPendingArchiveCancellationTests
         Assert.Equal((409, "StageStatusInconsistent"), (rejected.StatusCode, rejected.Code));
         Assert.Empty(await db.PendingArchiveCancellations.ToListAsync(Ct));
         Assert.Equal(rowVersion, (await db.TestEnvironments.AsNoTracking().SingleAsync(Ct)).RowVersion);
+
+        await AssertReplacementBlockedAsync(db, seed);
+        Assert.Equal(rowVersion, (await db.TestEnvironments.AsNoTracking().SingleAsync(Ct)).RowVersion);
+    }
+
+    [SqlServerFact]
+    public async Task Cancellation_receipt_does_not_release_quota_when_state_or_reserved_bytes_drift()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        await new SqlPendingArchiveCancellations(db, enabled: true)
+            .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct);
+
+        var environment = await db.TestEnvironments.SingleAsync(Ct);
+        environment.HasUnsettledProvisioningOperation = true;
+        await db.SaveChangesAsync(Ct);
+        await AssertReplacementBlockedAsync(db, seed);
+
+        environment = await db.TestEnvironments.SingleAsync(Ct);
+        environment.HasUnsettledProvisioningOperation = false;
+        var reservation = await db.EnvironmentReservations.SingleAsync(Ct);
+        reservation.ReservedBytes++;
+        await db.SaveChangesAsync(Ct);
+        await AssertReplacementBlockedAsync(db, seed);
+
+        reservation = await db.EnvironmentReservations.SingleAsync(Ct);
+        reservation.ReservedBytes = ReservedBytes;
+        await db.SaveChangesAsync(Ct);
+        var replacement = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "replacement", seed.Request(), Ct);
+        Assert.NotEqual(seed.Order.EnvironmentId, replacement.EnvironmentId);
+        Assert.Equal(1, await db.PendingArchiveCancellations.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
+    public async Task Unproven_release_does_not_free_shared_root_staging_for_another_owner_and_pool()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var otherProjectId = Guid.NewGuid();
+        var otherPoolId = Guid.NewGuid();
+        db.Projects.Add(new Project { Id = otherProjectId, Name = "other-project", IsolationPolicyId = "isolated", PreparationProfileVersion = "v1" });
+        db.ProjectMemberships.Add(new ProjectMembership { UserId = seed.OtherMember.UserId, ProjectId = otherProjectId });
+        db.ArchiveRootProjects.Add(new ArchiveRootProject { RootId = seed.Root, ProjectId = otherProjectId });
+        db.EnvironmentPools.Add(new EnvironmentPool { Id = otherPoolId, Enabled = true, ClusterId = Guid.NewGuid(),
+            SqlServerId = Guid.NewGuid(), AgentScopeId = seed.Agent, IsolationPolicyId = "isolated", CapacityBytes = ReservedBytes,
+            MaxEnvironmentBytes = ReservedBytes, MaxStagingBytes = ArchiveBytes, MaxConcurrentProvisioning = 1,
+            SupportsDt = true, IsolationVerified = true, ScheduledJobsSuppressionVerified = true, ResourceLimitVerified = true });
+        db.ProjectPools.Add(new ProjectPool { ProjectId = otherProjectId, PoolId = otherPoolId, Enabled = true });
+        db.EnvironmentQuotas.Add(new EnvironmentQuota { SubjectId = seed.OtherMember.UserId, MaxActiveEnvironments = 1,
+            MaxConcurrentProvisioning = 1, MaxStorageBytes = ReservedBytes, MaxTtlDays = 30 });
+        (await db.EnvironmentReservations.SingleAsync(Ct)).State = "Released";
+        await db.SaveChangesAsync(Ct);
+
+        var otherRequest = new CreateEnvironmentRequest(otherProjectId, "other", "archive", new ArchiveSource(seed.Version), 7);
+        var orders = new SqlEnvironmentOrders(db);
+        var blocked = await Assert.ThrowsAsync<RequestRejectedException>(() => orders.CreateAsync(seed.OtherMember, "other", otherRequest, Ct));
+        Assert.Equal((409, "QuotaExceeded"), (blocked.StatusCode, blocked.Code));
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+
+        (await db.EnvironmentReservations.SingleAsync(Ct)).State = "Held";
+        await db.SaveChangesAsync(Ct);
+        await new SqlPendingArchiveCancellations(db, enabled: true)
+            .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct);
+        (await db.EnvironmentReservations.SingleAsync(Ct)).StagingBytes = 0;
+        await db.SaveChangesAsync(Ct);
+        blocked = await Assert.ThrowsAsync<RequestRejectedException>(() => orders.CreateAsync(seed.OtherMember, "other", otherRequest, Ct));
+        Assert.Equal((409, "QuotaExceeded"), (blocked.StatusCode, blocked.Code));
+
+        (await db.EnvironmentReservations.SingleAsync(Ct)).StagingBytes = ArchiveBytes;
+        await db.SaveChangesAsync(Ct);
+        var replacement = await orders.CreateAsync(seed.OtherMember, "other", otherRequest, Ct);
+        Assert.Equal(otherPoolId, (await db.TestEnvironments.SingleAsync(x => x.Id == replacement.EnvironmentId, Ct)).PoolId);
+    }
+
+    private static async Task AssertReplacementBlockedAsync(BuildSystemDbContext db, Seed seed)
+    {
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "replacement", seed.Request(), Ct));
+        Assert.Equal((409, "QuotaExceeded"), (rejected.StatusCode, rejected.Code));
+        Assert.Equal(1, await db.EnvironmentRequests.CountAsync(Ct));
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
     }
 
     [SqlServerFact]

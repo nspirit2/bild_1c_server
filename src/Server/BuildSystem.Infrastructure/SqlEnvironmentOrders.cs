@@ -54,25 +54,41 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 throw Reject(409, "PoolNotReady");
             var limits = await db.EnvironmentQuotas.SingleOrDefaultAsync(x => x.SubjectId == actor.UserId, ct)
                 ?? throw Reject(409, "QuotaNotConfigured");
-            var rows = await (from e in db.TestEnvironments join r in db.EnvironmentReservations on e.ReservationId equals r.Id
-                              where e.OwnerId == actor.UserId || e.PoolId == poolId
-                              select new { e.State, e.HasUnsettledProvisioningOperation, Reservation = r,
-                                  VerifiedCancellation = e.State == "Cancelled" && e.ExpiresAt == null && r.State == "Released" &&
-                                      e.OwnerId == r.OwnerId && e.PoolId == r.PoolId &&
-                                      (from c in db.PendingArchiveCancellations
-                                       join q in db.EnvironmentRequests on c.RequestId equals q.Id
-                                       join j in db.EnvironmentJobs on c.JobId equals j.Id
-                                       join v in db.DiskArchiveVersions on q.ArchiveVersionId equals v.Id
-                                       join a in db.DiskArchives on v.ArchiveId equals a.Id
-                                       where c.RootId == a.RootId && c.EnvironmentId == e.Id && c.RequestId == e.RequestId && c.ReservationId == r.Id &&
-                                           c.PoolId == r.PoolId && q.OwnerId == e.OwnerId && q.ProjectId == e.ProjectId &&
-                                           q.EnvironmentId == e.Id && q.JobId == j.Id && j.EnvironmentId == e.Id &&
-                                           j.RequestId == q.Id && q.State == "Cancelled" && j.State == "Cancelled" &&
-                                           j.Kind == "ProvisionArchive"
-                                       select c.EnvironmentId).Any() }).ToListAsync(ct);
-            var snapshot = rows.Select(x => new EnvironmentQuotaEntry(x.Reservation.Id, x.Reservation.OwnerId, x.Reservation.PoolId,
-                x.Reservation.ReservedBytes, Enum.Parse<EnvironmentState>(x.State), x.HasUnsettledProvisioningOperation,
-                x.VerifiedCancellation)).ToArray();
+            // ProvenJobIds validates the receipt against the current environment, request, job, reservation,
+            // pool and source root. Use that same receipt's reservation when applying the accounting exemption.
+            var provenCancellations = from cancellation in db.PendingArchiveCancellations
+                                      join jobId in StageCancellationProof.ProvenJobIds(db) on cancellation.JobId equals jobId
+                                      select cancellation;
+            var rows = await (from r in db.EnvironmentReservations
+                              join environment in db.TestEnvironments on r.Id equals environment.ReservationId into environments
+                              from e in environments.DefaultIfEmpty()
+                              where r.OwnerId == actor.UserId || r.PoolId == poolId || e.OwnerId == actor.UserId || e.PoolId == poolId ||
+                                  db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id && c.PoolId == poolId)
+                              select new
+                              {
+                                  Reservation = r,
+                                  Environment = e,
+                                  VerifiedCancellation = provenCancellations.Any(c => c.ReservationId == r.Id &&
+                                      c.EnvironmentId == e.Id && c.RequestId == e.RequestId && c.PoolId == r.PoolId),
+                                  HasCancellationReceipt = db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id ||
+                                      c.EnvironmentId == e.Id || c.RequestId == e.RequestId ||
+                                      db.EnvironmentRequests.Any(q => q.Id == e.RequestId && q.JobId == c.JobId))
+                              }).ToListAsync(ct);
+            var snapshot = new List<EnvironmentQuotaEntry>(rows.Count);
+            foreach (var row in rows)
+            {
+                var r = row.Reservation;
+                var e = row.Environment;
+                // Unproven terminal metadata must neither release a quota slot nor cause a domain-policy exception.
+                if (e is null || e.OwnerId != r.OwnerId || e.PoolId != r.PoolId || r.Id == Guid.Empty ||
+                    r.OwnerId == Guid.Empty || r.PoolId == Guid.Empty || r.ReservedBytes <= 0 ||
+                    !Enum.TryParse<EnvironmentState>(e.State, out var state) || state.ToString() != e.State ||
+                    (state == EnvironmentState.Deleted && e.HasUnsettledProvisioningOperation) ||
+                    (!row.VerifiedCancellation && (state == EnvironmentState.Cancelled || row.HasCancellationReceipt || IsReleased(r.State))))
+                    throw Reject(409, "QuotaExceeded");
+                snapshot.Add(new EnvironmentQuotaEntry(r.Id, r.OwnerId, r.PoolId, r.ReservedBytes, state,
+                    e.HasUnsettledProvisioningOperation, row.VerifiedCancellation));
+            }
             var reservationId = Guid.NewGuid();
             var name = "bs_test_" + reservationId.ToString("N");
             var proposed = new BuildSystem.Domain.EnvironmentReservation(reservationId, actor.UserId, poolId, source.Version.EstimatedDbBytes,
@@ -81,19 +97,30 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 new EnvironmentQuotaLimits(limits.MaxActiveEnvironments, limits.MaxConcurrentProvisioning, limits.MaxStorageBytes, TimeSpan.FromDays(limits.MaxTtlDays)),
                 new PoolBudget(pool.Enabled, pool.CapacityBytes, pool.MaxEnvironmentBytes, pool.MaxConcurrentProvisioning), snapshot);
             if (!decision.Allowed) throw Reject(409, "QuotaExceeded");
-            // Staging allocations remain held even after a failed job until explicit safe cleanup.
-            var heldStaging = await db.EnvironmentReservations.Where(x => x.PoolId == poolId && x.State != "Released" &&
-                !db.StagingAllocationReleases.Any(release => release.ReservationId == x.Id)).Select(x => x.StagingBytes).ToListAsync(ct);
-            var rootStaging = await (from r in db.EnvironmentReservations
-                                     join e in db.TestEnvironments on r.Id equals e.ReservationId
+            // The separate cleanup ledger still releases staging only. A bare Released state never does.
+            var heldStaging = db.EnvironmentReservations.Where(r =>
+                !db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id));
+            var poolStaging = await heldStaging.Where(r => r.PoolId == poolId &&
+                !provenCancellations.Any(c => c.ReservationId == r.Id && c.PoolId == poolId))
+                .Select(r => r.StagingBytes).ToListAsync(ct);
+            var rootId = source.Root.Id;
+            var reservationsOnRoot = from e in db.TestEnvironments
                                      join q in db.EnvironmentRequests on e.RequestId equals q.Id
                                      join v in db.DiskArchiveVersions on q.ArchiveVersionId equals v.Id
                                      join a in db.DiskArchives on v.ArchiveId equals a.Id
-                                     where a.RootId == source.Root.Id && r.State != "Released" &&
-                                          !db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id)
-                                     select r.StagingBytes).ToListAsync(ct);
-            if (heldStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > pool.MaxStagingBytes ||
-                rootStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > source.Root.MaxStagingBytes)
+                                     where a.RootId == rootId
+                                     select e.ReservationId;
+            var rootStaging = await heldStaging.Where(r =>
+                (reservationsOnRoot.Contains(r.Id) ||
+                    db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId)) &&
+                !provenCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId))
+                .Select(r => new { r.StagingBytes, r.State,
+                    HasCancellationReceipt = db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id) }).ToListAsync(ct);
+            // A root may include reservations outside the owner/pool snapshot. Reject cancellation drift
+            // there too: its recorded staging amount may itself have drifted down.
+            if (rootStaging.Any(x => x.HasCancellationReceipt || x.StagingBytes < 0 || IsReleased(x.State)) ||
+                poolStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > pool.MaxStagingBytes ||
+                rootStaging.Sum(x => (decimal)x.StagingBytes) + source.Version.SizeBytes > source.Root.MaxStagingBytes)
                 throw Reject(409, "QuotaExceeded");
             var now = DateTimeOffset.UtcNow;
             var receipt = new OrderReceipt(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
@@ -163,6 +190,8 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
 
     public async Task<EnvironmentView?> GetEnvironmentAsync(Actor actor, Guid id, CancellationToken ct) =>
         await Visible(actor).Where(x => x.Id == id).Select(x => new EnvironmentView(x.Id, x.ProjectId, x.DisplayName, x.State, x.ExpiresAt)).SingleOrDefaultAsync(ct);
+
+    private static bool IsReleased(string state) => string.Equals(state.TrimEnd(), "Released", StringComparison.OrdinalIgnoreCase);
 
     private static RequestRejectedException Reject(int status, string code) => new(status, code);
 }

@@ -30,7 +30,9 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             if (job.Kind != "ProvisionArchive") { await tx.CommitAsync(ct); return null; }
             var cancellations = await db.PendingArchiveCancellations.AsNoTracking().Where(c => c.EnvironmentId == env.Id ||
                 c.RequestId == request.Id || c.JobId == job.Id || c.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
-            if (cancellations.Count != 0 || env.State == "Cancelled" || request.State == "Cancelled" || job.State == "Cancelled")
+            if (cancellations.Count != 0 || SqlStageStatus.CancellationLike(env.State, "Cancelled") ||
+                SqlStageStatus.CancellationLike(request.State, "Cancelled") || SqlStageStatus.CancellationLike(job.State, "Cancelled") ||
+                SqlStageStatus.CancellationLike(reservation.State, "Released"))
             {
                 if (cancellations.Count != 1) throw Inconsistent();
                 await SqlStageStatus.RequireCancellationProofAsync(db, env, request, job, reservation,

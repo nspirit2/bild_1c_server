@@ -88,7 +88,7 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
             throw new RequestRejectedException(409, inconsistentCode);
     }
 
-    private static bool CancellationLike(string state, string value) =>
+    internal static bool CancellationLike(string state, string value) =>
         string.Equals(state.TrimEnd(' '), value, StringComparison.OrdinalIgnoreCase);
 
     private static string Classify(EnvironmentJob job, EnvironmentRecord environment, EnvironmentRequest request,

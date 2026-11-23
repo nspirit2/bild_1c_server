@@ -39,13 +39,16 @@ public sealed partial class SqlAgentControl
             if (existing.ExpiresAt <= await StageNowAsync(ct)) throw Reject(409, "StaleLease");
             return new StageLeaseGrant(existing.JobId, existing.FencingToken, existing.ExpiresAt, "ArchiveStageOnly", plan);
         }
-        // A lease row is a permanent history marker: no automatic reassignment or fence reuse.
+        // Lease history and cancellation receipts both rule out a first lease. Filter before
+        // selecting the earliest job so reverted cancellation metadata cannot block the queue.
         var candidate = await (from j in db.EnvironmentJobs
                                join e in db.TestEnvironments on j.EnvironmentId equals e.Id
                                join r in db.EnvironmentReservations on e.ReservationId equals r.Id
                                where (j.Kind == "ProvisionArchive" || j.Kind == "ObserveArchiveStage") && j.State == "Pending" &&
                                    e.PoolId == agent.PoolId && r.PoolId == agent.PoolId && r.State == "Held" &&
-                                   !db.AgentLeases.Any(l => l.JobId == j.Id)
+                                   !db.AgentLeases.Any(l => l.JobId == j.Id) &&
+                                   !db.PendingArchiveCancellations.Any(c => c.JobId == j.Id || c.EnvironmentId == e.Id ||
+                                       c.RequestId == j.RequestId || c.RequestId == e.RequestId || c.ReservationId == r.Id)
                                orderby j.CreatedAt, j.Id select (Guid?)j.Id).FirstOrDefaultAsync(ct);
         if (candidate is null) return null;
         var stagePlan = await CompileStagePlanAsync(agent, candidate.Value, "Pending", ct);
@@ -97,6 +100,8 @@ public sealed partial class SqlAgentControl
         if (sourceRoot is null) throw Reject(409, "StageIntentMismatch");
         await StageLockAsync("BuildSystem:root:" + sourceRoot.Value.ToString("N"), ct);
         await StageLockAsync("BuildSystem:pool:" + agent.PoolId.ToString("N"), ct);
+        // Any matching order anchor is a veto, even if the receipt no longer agrees with
+        // the mutable metadata. Apply it to first grants, active replays and heartbeats.
         var i = await (from j in db.EnvironmentJobs
                        join q in db.EnvironmentRequests on j.RequestId equals q.Id
                        join e in db.TestEnvironments on j.EnvironmentId equals e.Id
@@ -105,7 +110,9 @@ public sealed partial class SqlAgentControl
                        join a in db.DiskArchives on v.ArchiveId equals a.Id
                        join root in db.ArchiveRoots on a.RootId equals root.Id
                        join pool in db.EnvironmentPools on e.PoolId equals pool.Id
-                       where j.Id == jobId select new { j, q, e, r, v, a, root, pool }).SingleOrDefaultAsync(ct);
+                       where j.Id == jobId && !db.PendingArchiveCancellations.Any(c => c.JobId == j.Id ||
+                           c.EnvironmentId == e.Id || c.RequestId == j.RequestId || c.RequestId == e.RequestId || c.ReservationId == r.Id)
+                       select new { j, q, e, r, v, a, root, pool }).SingleOrDefaultAsync(ct);
         if (i is null || !StageAdmission.IsStageJob(i.j) || i.j.State != state ||
             i.q.JobId != i.j.Id || i.q.EnvironmentId != i.e.Id || i.e.RequestId != i.q.Id ||
             i.j.EnvironmentId != i.e.Id || i.q.OwnerId != i.e.OwnerId || i.q.OwnerId != i.r.OwnerId ||

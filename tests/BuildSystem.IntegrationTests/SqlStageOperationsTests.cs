@@ -216,7 +216,41 @@ public sealed class SqlStageOperationsTests
             Assert.Null(one.CancellationCode); Assert.Null(two.CancellationCode);
         }
         Assert.Empty((await service.ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items);
+        foreach (var order in new[] { retainedReceipt, missingReceipt, releasedOnly })
+        {
+            var cleanupError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+                new SqlCleanupStatus(db).GetAsync(seed.Admin, order.EnvironmentId, Ct));
+            Assert.Equal((409, "CleanupStatusInconsistent"), (cleanupError.StatusCode, cleanupError.Code));
+        }
         Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Scheduler_skips_oldest_order_with_a_cancellation_receipt_after_state_drift()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var order = seed.Owned[0];
+        var receipt = await CancelAsync(db, seed.Owner, order);
+        var oldest = DateTimeOffset.UnixEpoch;
+        await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.State, "Pending").SetProperty(x => x.CreatedAt, oldest));
+        await db.EnvironmentRequests.Where(x => x.Id == order.RequestId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"));
+        await db.TestEnvironments.Where(x => x.Id == order.EnvironmentId).ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.State, "Requested").SetProperty(x => x.HasUnsettledProvisioningOperation, true));
+        await db.EnvironmentReservations.Where(x => x.Id == receipt.ReservationId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Held"));
+
+        var control = new SqlAgentControl(db);
+        const string name = "stage-agent";
+        var enrollment = await control.CreateEnrollmentAsync(seed.Admin, new CreateEnrollment(seed.Agent, name, seed.Pool), Ct);
+        await control.RegisterAsync(new RegisterAgent(seed.Agent, enrollment.EnrollmentId, enrollment.Token, name), Ct);
+        var credential = await control.ApproveAsync(seed.Admin, seed.Agent, Ct);
+        var grant = Assert.IsType<StageLeaseGrant>(await new SqlArchiveStageControl(db, new ArchiveStageOptions { Enabled = true })
+            .PollAsync(credential.Token, Ct));
+        Assert.Contains(grant.JobId, seed.Owned.Skip(1).Concat(seed.Other).Select(x => x.JobId));
+        Assert.False(await db.AgentLeases.AnyAsync(x => x.JobId == order.JobId, Ct));
+        Assert.False(await db.AuditEvents.AnyAsync(x => x.Action == "ArchiveStageLeased" && x.TargetId == order.JobId, Ct));
     }
 
     [SqlServerFact]

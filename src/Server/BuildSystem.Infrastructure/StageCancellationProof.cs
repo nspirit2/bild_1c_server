@@ -27,7 +27,8 @@ internal static class StageCancellationProof
         WHERE q.[EnvironmentId] = e.[Id] AND j.[EnvironmentId] = e.[Id] AND j.[RequestId] = q.[Id]
           AND q.[OwnerId] = e.[OwnerId] AND q.[OwnerId] = r.[OwnerId] AND q.[ProjectId] = e.[ProjectId]
           AND c.[PoolId] = e.[PoolId] AND r.[PoolId] = e.[PoolId] AND c.[RootId] = a.[RootId]
-          AND e.[HasUnsettledProvisioningOperation] = 0 AND e.[ExpiresAt] IS NULL AND r.[StagingBytes] > 0
+          AND e.[HasUnsettledProvisioningOperation] = 0 AND e.[ExpiresAt] IS NULL
+          AND r.[StagingBytes] > 0 AND r.[ReservedBytes] > 0
           AND c.[ActorId] <> '00000000-0000-0000-0000-000000000000'
           AND DATEPART(TZOFFSET, c.[CancelledAt]) = 0 AND c.[CancelledAt] > '0001-01-01T00:00:00+00:00'
           AND j.[Kind] COLLATE Latin1_General_100_BIN2 = N'ProvisionArchive' AND DATALENGTH(j.[Kind]) = DATALENGTH(N'ProvisionArchive')
@@ -56,14 +57,15 @@ internal static class StageCancellationProof
               OR p.[key] COLLATE Latin1_General_100_BIN2 LIKE N'%[^a-zA-Z0-9_]%' OR DATALENGTH(p.[key]) = 0)
           AND NOT EXISTS (SELECT 1 FROM OPENJSON(s.[Json]) AS p
             GROUP BY UPPER(p.[key] COLLATE Latin1_General_100_BIN2), DATALENGTH(p.[key]) HAVING COUNT_BIG(*) > 1)
-          AND 6 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
+          AND 7 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
             CROSS APPLY (VALUES
                 (N'reservationId', CONVERT(nvarchar(36), r.[Id]), 1),
                 (N'poolId', CONVERT(nvarchar(36), r.[PoolId]), 1),
                 (N'sourceRootId', CONVERT(nvarchar(36), a.[RootId]), 1),
                 (N'sourceArchiveId', CONVERT(nvarchar(36), a.[Id]), 1),
                 (N'archiveVersionId', CONVERT(nvarchar(36), v.[Id]), 1),
-                (N'stagingBytes', CONVERT(nvarchar(36), r.[StagingBytes]), 2)
+                (N'stagingBytes', CONVERT(nvarchar(36), r.[StagingBytes]), 2),
+                (N'reservedBytes', CONVERT(nvarchar(36), r.[ReservedBytes]), 2)
             ) AS pin([Key], [Value], [Type])
             WHERE p.[key] COLLATE Latin1_General_100_BIN2 = pin.[Key] AND DATALENGTH(p.[key]) = DATALENGTH(pin.[Key])
               AND p.[type] = pin.[Type] AND DATALENGTH(p.[value]) = DATALENGTH(pin.[Value])
