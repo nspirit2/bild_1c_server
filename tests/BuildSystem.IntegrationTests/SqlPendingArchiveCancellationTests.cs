@@ -4,6 +4,7 @@ using BuildSystem.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace BuildSystem.IntegrationTests;
@@ -22,7 +23,7 @@ public sealed class SqlPendingArchiveCancellationTests
         public PendingArchiveCancellationRequest Cancellation() => new(Order.JobId);
     }
 
-    private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql)
+    private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql, int poolSlots = 1)
     {
         await sql.ApplyMigrationsAsync();
         var owner = new Actor(Guid.NewGuid(), false);
@@ -38,14 +39,14 @@ public sealed class SqlPendingArchiveCancellationTests
         db.ProjectMemberships.AddRange(new ProjectMembership { UserId = owner.UserId, ProjectId = project },
             new ProjectMembership { UserId = other.UserId, ProjectId = project });
         db.ArchiveRoots.Add(new ArchiveRoot { Id = root, Enabled = true, AgentScopeId = agent,
-            IsolationPolicyId = "isolated", MaxArchiveBytes = ArchiveBytes, MaxStagingBytes = ArchiveBytes });
+            IsolationPolicyId = "isolated", MaxArchiveBytes = ArchiveBytes, MaxStagingBytes = poolSlots * ArchiveBytes });
         db.ArchiveRootProjects.Add(new ArchiveRootProject { RootId = root, ProjectId = project });
         db.DiskArchives.Add(new DiskArchive { Id = archive, RootId = root, RelativePath = "sample.dt" });
         db.DiskArchiveVersions.Add(new DiskArchiveVersion { Id = version, ArchiveId = archive,
             Sha256 = new string('A', 64), SizeBytes = ArchiveBytes, Format = "dt", State = "Ready", EstimatedDbBytes = ReservedBytes });
         db.EnvironmentPools.Add(new EnvironmentPool { Id = pool, Enabled = true, ClusterId = Guid.NewGuid(),
-            SqlServerId = Guid.NewGuid(), AgentScopeId = agent, IsolationPolicyId = "isolated", CapacityBytes = ReservedBytes,
-            MaxEnvironmentBytes = ReservedBytes, MaxStagingBytes = ArchiveBytes, MaxConcurrentProvisioning = 1,
+            SqlServerId = Guid.NewGuid(), AgentScopeId = agent, IsolationPolicyId = "isolated", CapacityBytes = poolSlots * ReservedBytes,
+            MaxEnvironmentBytes = ReservedBytes, MaxStagingBytes = poolSlots * ArchiveBytes, MaxConcurrentProvisioning = poolSlots,
             SupportsDt = true, SupportsBak = true, IsolationVerified = true, ScheduledJobsSuppressionVerified = true, ResourceLimitVerified = true });
         db.ProjectPools.Add(new ProjectPool { ProjectId = project, PoolId = pool, Enabled = true });
         db.EnvironmentQuotas.Add(new EnvironmentQuota { SubjectId = owner.UserId, MaxActiveEnvironments = 1,
@@ -231,6 +232,96 @@ public sealed class SqlPendingArchiveCancellationTests
     }
 
     [SqlServerFact]
+    public async Task Committed_cancel_prevents_first_lease_for_an_enrolled_agent()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var credential = await EnrollAsync(sql, seed);
+        await using (var db = sql.NewContext())
+            await new SqlPendingArchiveCancellations(db, enabled: true)
+                .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct);
+
+        Assert.Null(await PollAsync(sql, credential));
+        await using var check = sql.NewContext();
+        await AssertCancelledAsync(check, seed, seed.Owner);
+    }
+
+    [SqlServerFact]
+    public async Task Committed_first_lease_prevents_cancel_and_keeps_the_grant_replayable()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var credential = await EnrollAsync(sql, seed);
+        var grant = Assert.IsType<StageLeaseGrant>(await PollAsync(sql, credential));
+        Assert.Equal(seed.Order.JobId, grant.JobId);
+        await using (var db = sql.NewContext())
+            AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlPendingArchiveCancellations(db, enabled: true)
+                .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct)));
+
+        Assert.Equal(grant, await PollAsync(sql, credential));
+        await using var check = sql.NewContext();
+        await AssertUncancelledAsync(check, seed, "Leased");
+        var lease = await check.AgentLeases.SingleAsync(Ct);
+        Assert.Equal((seed.Order.JobId, seed.Agent, grant.FencingToken, "Active"),
+            (lease.JobId, lease.AgentId, lease.FencingToken, lease.State));
+        Assert.Equal(0, await check.AuditEvents.CountAsync(x => x.Action == "PendingArchiveCancelled", Ct));
+    }
+
+    private sealed class FailAfterSave : SaveChangesInterceptor
+    {
+        public int? WrittenEntries { get; private set; }
+
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            WrittenEntries = result;
+            throw new InvalidOperationException("Injected failure after SQL writes and before cancellation commit.");
+        }
+    }
+
+    [SqlServerFact]
+    public async Task Failure_after_save_rolls_back_cancellation_and_preserves_an_unrelated_order()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, poolSlots: 2);
+        Seed unrelated;
+        await using (var db = sql.NewContext())
+        {
+            db.EnvironmentQuotas.Add(new EnvironmentQuota { SubjectId = seed.OtherMember.UserId, MaxActiveEnvironments = 1,
+                MaxConcurrentProvisioning = 1, MaxStorageBytes = ReservedBytes, MaxTtlDays = 30 });
+            await db.SaveChangesAsync(Ct);
+            var order = await new SqlEnvironmentOrders(db).CreateAsync(seed.OtherMember, "unrelated", seed.Request(), Ct);
+            var environment = await db.TestEnvironments.SingleAsync(e => e.Id == order.EnvironmentId, Ct);
+            var job = await db.EnvironmentJobs.SingleAsync(j => j.Id == order.JobId, Ct);
+            unrelated = seed with { Owner = seed.OtherMember, Order = order, Reservation = environment.ReservationId,
+                Snapshot = job.SnapshotJson, RowVersion = environment.RowVersion };
+        }
+
+        var failure = new FailAfterSave();
+        var options = new DbContextOptionsBuilder<BuildSystemDbContext>()
+            .UseSqlServer(sql.ConnectionString, options => options.EnableRetryOnFailure(3, TimeSpan.FromSeconds(5), new[] { 51001 }))
+            .AddInterceptors(failure).Options;
+        await using (var db = new BuildSystemDbContext(options))
+        {
+            var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() => new SqlPendingArchiveCancellations(db, enabled: true)
+                .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct));
+            Assert.Equal("Injected failure after SQL writes and before cancellation commit.", rejected.Message);
+            Assert.Equal<int?>(6, failure.WrittenEntries); // Four state changes, one receipt, one audit.
+        }
+
+        await using var check = sql.NewContext();
+        await AssertUncancelledAsync(check, seed, "Pending");
+        await AssertUncancelledAsync(check, unrelated, "Pending");
+        Assert.Equal(2, await check.EnvironmentRequests.CountAsync(Ct));
+        Assert.Equal(2, await check.EnvironmentJobs.CountAsync(Ct));
+        Assert.Equal(2, await check.TestEnvironments.CountAsync(Ct));
+        Assert.Equal(2, await check.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(2, await check.AuditEvents.CountAsync(Ct));
+        Assert.Equal(2, await check.AuditEvents.CountAsync(x => x.Action == "EnvironmentOrderAccepted", Ct));
+        Assert.Equal(0, await check.AgentLeases.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Completed_lease_history_blocks_cancel_even_if_the_order_looks_pending_again()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
@@ -302,11 +393,15 @@ public sealed class SqlPendingArchiveCancellationTests
 
     private static async Task AssertUncancelledAsync(BuildSystemDbContext db, Seed seed, string jobState)
     {
-        var job = await db.EnvironmentJobs.AsNoTracking().SingleAsync(Ct);
+        var job = await db.EnvironmentJobs.AsNoTracking().SingleAsync(j => j.Id == seed.Order.JobId, Ct);
         Assert.Equal((seed.Order.JobId, "ProvisionArchive", jobState, seed.Snapshot), (job.Id, job.Kind, job.State, job.SnapshotJson));
-        Assert.Equal("Pending", (await db.EnvironmentRequests.AsNoTracking().SingleAsync(Ct)).State);
-        Assert.Equal("Held", (await db.EnvironmentReservations.AsNoTracking().SingleAsync(Ct)).State);
-        var environment = await db.TestEnvironments.AsNoTracking().SingleAsync(Ct);
+        var request = await db.EnvironmentRequests.AsNoTracking().SingleAsync(q => q.Id == seed.Order.RequestId, Ct);
+        Assert.Equal((seed.Owner.UserId, seed.Order.EnvironmentId, seed.Order.JobId, "Pending"),
+            (request.OwnerId, request.EnvironmentId, request.JobId, request.State));
+        var reservation = await db.EnvironmentReservations.AsNoTracking().SingleAsync(r => r.Id == seed.Reservation, Ct);
+        Assert.Equal((seed.Owner.UserId, seed.Pool, "Held", ReservedBytes, ArchiveBytes),
+            (reservation.OwnerId, reservation.PoolId, reservation.State, reservation.ReservedBytes, reservation.StagingBytes));
+        var environment = await db.TestEnvironments.AsNoTracking().SingleAsync(e => e.Id == seed.Order.EnvironmentId, Ct);
         Assert.Equal("Requested", environment.State);
         Assert.True(environment.HasUnsettledProvisioningOperation);
         Assert.Null(environment.ExpiresAt);

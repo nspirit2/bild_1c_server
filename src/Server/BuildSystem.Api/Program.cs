@@ -80,6 +80,7 @@ builder.Services.AddScoped<ITargetCreationOperationReads>(services => new SqlTar
     }));
 builder.Services.AddSingleton(new ArchiveStageOptions { Enabled = builder.Configuration.GetValue<bool>("ArchiveStage:Enabled") });
 builder.Services.AddSingleton(new StageRetirementOptions { Enabled = builder.Configuration.GetValue<bool>("StageRetirement:Enabled") });
+builder.Services.AddPendingArchiveCancellationEndpoints();
 // Canonical identity assertions are operator-owned configuration, never HTTP input.
 // Bind eagerly and strictly: malformed dictionary keys/values must fail startup, not disappear.
 builder.Services.AddSingleton(services =>
@@ -373,6 +374,7 @@ app.MapTargetCreationExecutionClaimEndpoints();
 app.MapTargetRegistrationEvidenceEndpoints();
 app.MapTargetCredentials();
 app.MapTargetCreationDiagnostics();
+app.MapPendingArchiveCancellationEndpoints();
 app.MapTargetCreationDiagnosticsUi();
 app.MapTargetCredentialsUi();
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => Results.Ok(new
