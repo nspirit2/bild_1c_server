@@ -348,6 +348,48 @@ public sealed class SqlStageOperationsTests
     }
 
     [SqlServerFact]
+    public async Task Missing_duplicate_or_mismatched_cancellation_audit_blocks_confirmation_and_replay()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var order = seed.Owned[0];
+        var audits = db.AuditEvents.Where(x => x.TargetId == order.EnvironmentId && x.Action == "PendingArchiveCancelled");
+        db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Owner.UserId, TargetId = order.EnvironmentId,
+            CreatedAt = DateTimeOffset.UtcNow, Action = "PendingArchiveCancelled" });
+        await db.SaveChangesAsync(Ct);
+        await AssertUnconfirmedAsync();
+        await audits.ExecuteDeleteAsync(Ct);
+        var receipt = await CancelAsync(db, seed.Owner, order);
+        var original = await audits.AsNoTracking().SingleAsync(Ct);
+        await audits.ExecuteUpdateAsync(s => s.SetProperty(x => x.ActorId, seed.Admin.UserId), Ct);
+        await AssertUnconfirmedAsync();
+        await audits.ExecuteUpdateAsync(s => s.SetProperty(x => x.ActorId, original.ActorId), Ct);
+        var duplicate = new AuditEvent { Id = Guid.NewGuid(), ActorId = original.ActorId, TargetId = original.TargetId,
+            CreatedAt = original.CreatedAt, Action = original.Action };
+        db.AuditEvents.Add(duplicate);
+        await db.SaveChangesAsync(Ct);
+        await AssertUnconfirmedAsync();
+        await audits.ExecuteDeleteAsync(Ct);
+        await AssertUnconfirmedAsync();
+        db.ChangeTracker.Clear();
+        db.AuditEvents.Add(original);
+        await db.SaveChangesAsync(Ct);
+        Assert.Equal(receipt, await CancelAsync(db, seed.Owner, order));
+        Assert.Equal(order.JobId, Assert.Single((await new SqlStageOperations(db)
+            .ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items).JobId);
+        return;
+
+        async Task AssertUnconfirmedAsync()
+        {
+            var before = await DurableStateAsync(sql);
+            Assert.Empty((await new SqlStageOperations(db).ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items);
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => CancelAsync(db, seed.Owner, order));
+            Assert.Equal((409, "PendingArchiveCancellationMismatch"), (error.StatusCode, error.Code));
+            Assert.Equal(before, await DurableStateAsync(sql));
+        }
+    }
+
+    [SqlServerFact]
     public async Task Invalid_limits_states_and_cursors_are_rejected_as_bad_requests()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

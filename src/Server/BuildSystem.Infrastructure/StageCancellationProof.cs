@@ -41,6 +41,13 @@ internal static class StageCancellationProof
           AND NOT EXISTS (SELECT 1 FROM [EnvironmentRequests] AS other
             WHERE other.[Id] <> q.[Id] AND (other.[JobId] = j.[Id] OR other.[EnvironmentId] = e.[Id]))
           AND NOT EXISTS (SELECT 1 FROM [EnvironmentJobs] AS other WHERE other.[Id] <> j.[Id] AND other.[EnvironmentId] = e.[Id])
+          AND 1 = (SELECT COUNT_BIG(*) FROM [AuditEvents] AS au
+            WHERE au.[TargetId] = e.[Id] AND au.[Action] = N'PendingArchiveCancelled')
+          AND EXISTS (SELECT 1 FROM [AuditEvents] AS au WHERE au.[TargetId] = e.[Id]
+            AND au.[Action] COLLATE Latin1_General_100_BIN2 = N'PendingArchiveCancelled'
+            AND DATALENGTH(au.[Action]) = DATALENGTH(N'PendingArchiveCancelled')
+            AND au.[ActorId] = c.[ActorId] AND au.[CreatedAt] = c.[CancelledAt]
+            AND DATEPART(TZOFFSET, au.[CreatedAt]) = 0)
           AND NOT EXISTS (SELECT 1 FROM [AgentLeases] AS l WHERE l.[JobId] = j.[Id])
           AND NOT EXISTS (SELECT 1 FROM [AgentEvents] AS ev WHERE ev.[JobId] = j.[Id])
           AND NOT EXISTS (SELECT 1 FROM [AuditEvents] AS au WHERE au.[TargetId] = j.[Id] AND au.[Action] = N'ArchiveStageLeased')

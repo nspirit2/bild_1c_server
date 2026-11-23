@@ -87,7 +87,8 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             if (prior is null)
             {
                 if (i.q.State != "Pending" || i.j.State != "Pending" || i.e.State != "Requested" ||
-                    i.r.State != "Held" || !i.e.HasUnsettledProvisioningOperation) throw Mismatch();
+                    i.r.State != "Held" || !i.e.HasUnsettledProvisioningOperation ||
+                    await db.AuditEvents.AnyAsync(a => a.TargetId == environmentId && a.Action == AuditAction, ct)) throw Mismatch();
             }
             else if (prior.EnvironmentId != environmentId || prior.RequestId != requestId || prior.JobId != jobId ||
                 prior.ReservationId != reservationId || prior.RootId != i.root.Id || prior.PoolId != i.pool.Id ||
@@ -98,6 +99,7 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             if (await HasPriorAuthorityAsync(environmentId, requestId, jobId, reservationId, ct)) throw Mismatch();
             if (prior is not null)
             {
+                if (!await StageCancellationProof.ProvenJobIds(db).AnyAsync(id => id == jobId, ct)) throw Mismatch();
                 await tx.CommitAsync(ct);
                 return Receipt(prior);
             }
