@@ -12,7 +12,7 @@ public sealed class SqlStageOperationsTests
     private static readonly CancellationToken Ct = CancellationToken.None;
     private static readonly string Hash = new('A', 64);
     private sealed record Seed(Actor Admin, Actor Owner, Actor Foreign, Guid Project, Guid Root,
-        Guid Pool, Guid Agent, IReadOnlyList<OrderReceipt> Owned, IReadOnlyList<OrderReceipt> Other, OrderReceipt Probe);
+        Guid Pool, Guid Agent, Guid Version, IReadOnlyList<OrderReceipt> Owned, IReadOnlyList<OrderReceipt> Other, OrderReceipt Probe);
 
     private static async Task<Seed> PrepareAsync(SqlServerTestDatabase sql)
     {
@@ -53,7 +53,7 @@ public sealed class SqlStageOperationsTests
             new CreateEnvironmentRequest(project, "probe", "archive", new ArchiveSource(version), 7), Ct);
         // Fixture-only kind substitution tests list exclusion, not probe scheduling or provisioning execution.
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [EnvironmentJobs] SET [Kind]='ControlPlaneProbe' WHERE [Id]={probe.JobId}");
-        return new(admin, owner, foreign, project, root, pool, agent, owned, others, probe);
+        return new(admin, owner, foreign, project, root, pool, agent, version, owned, others, probe);
     }
 
     private static async Task<string> DurableStateAsync(SqlServerTestDatabase sql)
@@ -251,6 +251,53 @@ public sealed class SqlStageOperationsTests
         Assert.Contains(grant.JobId, seed.Owned.Skip(1).Concat(seed.Other).Select(x => x.JobId));
         Assert.False(await db.AgentLeases.AnyAsync(x => x.JobId == order.JobId, Ct));
         Assert.False(await db.AuditEvents.AnyAsync(x => x.Action == "ArchiveStageLeased" && x.TargetId == order.JobId, Ct));
+    }
+
+    [SqlServerFact]
+    public async Task Cancellation_receipt_blocks_stage_writes_even_with_an_apparently_active_lease()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var order = seed.Owned[0];
+        var receipt = await CancelAsync(db, seed.Owner, order);
+        await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Leased"));
+        await db.EnvironmentRequests.Where(x => x.Id == order.RequestId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"));
+        await db.TestEnvironments.Where(x => x.Id == order.EnvironmentId).ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.State, "Requested").SetProperty(x => x.HasUnsettledProvisioningOperation, true));
+        await db.EnvironmentReservations.Where(x => x.Id == receipt.ReservationId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Held"));
+        var control = new SqlAgentControl(db);
+        const string name = "stage-agent";
+        var enrollment = await control.CreateEnrollmentAsync(seed.Admin, new CreateEnrollment(seed.Agent, name, seed.Pool), Ct);
+        await control.RegisterAsync(new RegisterAgent(seed.Agent, enrollment.EnrollmentId, enrollment.Token, name), Ct);
+        var credential = await control.ApproveAsync(seed.Admin, seed.Agent, Ct);
+        var now = DateTimeOffset.UtcNow;
+        db.AgentLeases.Add(new AgentLease { JobId = order.JobId, AgentId = seed.Agent, FencingToken = 1,
+            State = "Active", ExpiresAt = now.AddHours(1) });
+        await db.SaveChangesAsync(Ct);
+        var artifactId = Guid.NewGuid();
+        var stage = new SqlArchiveStageControl(db, new ArchiveStageOptions { Enabled = true });
+        var before = await DurableStateAsync(sql);
+        await AssertConflictAsync("StageIntentMismatch", () => stage.PollAsync(credential.Token, Ct));
+        await AssertConflictAsync("StageIntentMismatch", () => stage.HeartbeatAsync(credential.Token, new(order.JobId, 1), Ct));
+        await AssertConflictAsync("ArtifactIntentMismatch", () => new SqlArtifactReceipts(db).ReportAsync(credential.Token,
+            new(order.JobId, 1, receipt.ReservationId, seed.Version, artifactId, Hash, 10, "dt"), Ct));
+        Assert.Equal(before, await DurableStateAsync(sql));
+
+        db.StagedArtifacts.Add(new StagedArtifact { ArtifactId = artifactId, JobId = order.JobId, AgentId = seed.Agent,
+            FencingToken = 1, ReservationId = receipt.ReservationId, ArchiveVersionId = seed.Version,
+            Sha256 = Hash, SizeBytes = 10, Format = "dt", State = "ContentVerified", CreatedAt = now });
+        await db.SaveChangesAsync(Ct);
+        before = await DurableStateAsync(sql);
+        await AssertConflictAsync("StageCompletionMismatch", () => new SqlStageCompletion(db, new ArchiveStageOptions { Enabled = true })
+            .CompleteAsync(credential.Token, new(order.JobId, 1, artifactId), Ct));
+        Assert.Equal(before, await DurableStateAsync(sql));
+
+        static async Task AssertConflictAsync(string code, Func<Task> action)
+        {
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(action);
+            Assert.Equal((409, code), (error.StatusCode, error.Code));
+        }
     }
 
     [SqlServerFact]

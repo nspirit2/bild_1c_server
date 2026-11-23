@@ -44,7 +44,9 @@ public sealed partial class SqlAgentControl
                            join root in db.ArchiveRoots on a.RootId equals root.Id
                            join pool in db.EnvironmentPools on e.PoolId equals pool.Id
                            where artifact.ArtifactId == request.ArtifactId
-                           select new { artifact, lease, job, q, e, r, v, a, root, pool }).SingleOrDefaultAsync(ct);
+                           where !db.PendingArchiveCancellations.Any(c => c.JobId == job.Id || c.EnvironmentId == e.Id ||
+                                c.RequestId == q.Id || c.RequestId == e.RequestId || c.ReservationId == r.Id)
+                            select new { artifact, lease, job, q, e, r, v, a, root, pool }).SingleOrDefaultAsync(ct);
             if (i is null || i.artifact.JobId != request.JobId || i.artifact.AgentId != agent.Id ||
                 i.artifact.FencingToken != request.FencingToken || i.artifact.State != "ContentVerified" ||
                 i.lease.JobId != request.JobId || i.lease.AgentId != agent.Id || i.lease.FencingToken != request.FencingToken ||

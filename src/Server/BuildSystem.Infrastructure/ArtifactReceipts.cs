@@ -48,7 +48,9 @@ public sealed class SqlArtifactReceipts(BuildSystemDbContext db) : IArtifactRece
                                     join archive in db.DiskArchives on version.ArchiveId equals archive.Id
                                     join root in db.ArchiveRoots on archive.RootId equals root.Id
                                     join pool in db.EnvironmentPools on environment.PoolId equals pool.Id
-                                    where job.Id == report.JobId
+                                    where job.Id == report.JobId && !db.PendingArchiveCancellations.Any(c => c.JobId == job.Id ||
+                                         c.EnvironmentId == environment.Id || c.RequestId == request.Id ||
+                                         c.RequestId == environment.RequestId || c.ReservationId == reservation.Id)
                                     select new { job, request, environment, reservation, version, archive, root, pool }).SingleOrDefaultAsync(ct);
                 if (intent is null || !StageAdmission.IsStageJob(intent.job) || intent.job.State != "Leased" ||
                     intent.job.RequestId != intent.request.Id || intent.request.JobId != intent.job.Id ||
