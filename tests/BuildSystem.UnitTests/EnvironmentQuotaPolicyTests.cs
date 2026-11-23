@@ -37,9 +37,20 @@ public sealed class EnvironmentQuotaPolicyTests
     }
 
     [Fact]
-    public void OnlyDeletedReleasesQuota()
+    public void DeletedAndVerifiedSettledCancellationDoNotHoldQuota()
     {
-        Assert.True(Decide([Entry(EnvironmentState.Deleted, 2000), Entry(EnvironmentState.Deleted, 2000)]).Allowed);
+        var cancelled = Entry(EnvironmentState.Cancelled, 2000) with { HasVerifiedPreLeaseCancellation = true };
+        Assert.True(Decide([Entry(EnvironmentState.Deleted, 2000), cancelled]).Allowed);
+    }
+
+    [Fact]
+    public void CancellationCannotSilentlyUndercountUnverifiedOrUnsettledRows()
+    {
+        var cancelled = Entry(EnvironmentState.Cancelled, 2000);
+        var verified = cancelled with { HasVerifiedPreLeaseCancellation = true };
+        foreach (var row in new[] { cancelled, verified with { HasUnsettledProvisioningOperation = true },
+                     verified with { State = EnvironmentState.Requested } })
+            Assert.Equal("InvalidSnapshot", Assert.Throws<DomainRuleException>(() => Decide([row])).Code);
     }
 
     [Theory]

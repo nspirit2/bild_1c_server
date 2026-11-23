@@ -58,6 +58,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ChangeTracker.DetectChanges();
         GuardCreationPermits();
         GuardCreationExecutionClaims();
+        GuardPendingArchiveCancellations();
         if (ChangeTracker.Entries<TargetRegistrationEvidenceRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Target registration evidence receipts are immutable.");
         GuardTargetCredentials();
@@ -159,6 +160,7 @@ public sealed partial class BuildSystemDbContext(DbContextOptions<BuildSystemDbC
         ConfigureStageCleanupModel(b);
         ConfigureStageCleanupResultModel(b);
         ConfigureStagingAllocationReleaseModel(b);
+        ConfigurePendingArchiveCancellationModel(b);
         b.Entity<ProjectMembership>().HasKey(x => new { x.UserId, x.ProjectId });
         b.Entity<ArchiveRootProject>().HasKey(x => new { x.RootId, x.ProjectId });
         b.Entity<ProjectPool>().HasKey(x => new { x.ProjectId, x.PoolId });

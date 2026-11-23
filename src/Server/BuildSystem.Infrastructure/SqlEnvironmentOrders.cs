@@ -56,9 +56,23 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 ?? throw Reject(409, "QuotaNotConfigured");
             var rows = await (from e in db.TestEnvironments join r in db.EnvironmentReservations on e.ReservationId equals r.Id
                               where e.OwnerId == actor.UserId || e.PoolId == poolId
-                              select new { e.State, e.HasUnsettledProvisioningOperation, Reservation = r }).ToListAsync(ct);
+                              select new { e.State, e.HasUnsettledProvisioningOperation, Reservation = r,
+                                  VerifiedCancellation = e.State == "Cancelled" && e.ExpiresAt == null && r.State == "Released" &&
+                                      e.OwnerId == r.OwnerId && e.PoolId == r.PoolId &&
+                                      (from c in db.PendingArchiveCancellations
+                                       join q in db.EnvironmentRequests on c.RequestId equals q.Id
+                                       join j in db.EnvironmentJobs on c.JobId equals j.Id
+                                       join v in db.DiskArchiveVersions on q.ArchiveVersionId equals v.Id
+                                       join a in db.DiskArchives on v.ArchiveId equals a.Id
+                                       where c.RootId == a.RootId && c.EnvironmentId == e.Id && c.RequestId == e.RequestId && c.ReservationId == r.Id &&
+                                           c.PoolId == r.PoolId && q.OwnerId == e.OwnerId && q.ProjectId == e.ProjectId &&
+                                           q.EnvironmentId == e.Id && q.JobId == j.Id && j.EnvironmentId == e.Id &&
+                                           j.RequestId == q.Id && q.State == "Cancelled" && j.State == "Cancelled" &&
+                                           j.Kind == "ProvisionArchive"
+                                       select c.EnvironmentId).Any() }).ToListAsync(ct);
             var snapshot = rows.Select(x => new EnvironmentQuotaEntry(x.Reservation.Id, x.Reservation.OwnerId, x.Reservation.PoolId,
-                x.Reservation.ReservedBytes, Enum.Parse<EnvironmentState>(x.State), x.HasUnsettledProvisioningOperation)).ToArray();
+                x.Reservation.ReservedBytes, Enum.Parse<EnvironmentState>(x.State), x.HasUnsettledProvisioningOperation,
+                x.VerifiedCancellation)).ToArray();
             var reservationId = Guid.NewGuid();
             var name = "bs_test_" + reservationId.ToString("N");
             var proposed = new BuildSystem.Domain.EnvironmentReservation(reservationId, actor.UserId, poolId, source.Version.EstimatedDbBytes,

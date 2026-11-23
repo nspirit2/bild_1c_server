@@ -938,6 +938,60 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.ToTable("EnvironmentReservations");
                 });
 
+            modelBuilder.Entity("BuildSystem.Infrastructure.PendingArchiveCancellationRecord", b =>
+                {
+                    b.Property<Guid>("EnvironmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CancelledAt")
+                        .HasPrecision(7)
+                        .HasColumnType("datetimeoffset(7)");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PoolId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RootId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("EnvironmentId");
+
+                    b.HasIndex("JobId")
+                        .IsUnique();
+
+                    b.HasIndex("PoolId");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.HasIndex("ReservationId")
+                        .IsUnique();
+
+                    b.HasIndex("RootId");
+
+                    b.ToTable("PendingArchiveCancellations", null, t =>
+                        {
+                            t.HasTrigger("TR_PendingArchiveCancellations_AppendOnly");
+
+                            t.HasCheckConstraint("CK_PendingArchiveCancellations_CancelledAt", "DATEPART(TZOFFSET, [CancelledAt]) = 0 AND [CancelledAt] > '0001-01-01T00:00:00+00:00'");
+
+                            t.HasCheckConstraint("CK_PendingArchiveCancellations_Ids", "[EnvironmentId] <> '00000000-0000-0000-0000-000000000000'\nAND [RequestId] <> '00000000-0000-0000-0000-000000000000'\nAND [JobId] <> '00000000-0000-0000-0000-000000000000'\nAND [ReservationId] <> '00000000-0000-0000-0000-000000000000'\nAND [RootId] <> '00000000-0000-0000-0000-000000000000'\nAND [PoolId] <> '00000000-0000-0000-0000-000000000000'\nAND [ActorId] <> '00000000-0000-0000-0000-000000000000'");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("BuildSystem.Infrastructure.Project", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1878,6 +1932,45 @@ namespace BuildSystem.Infrastructure.Migrations
                     b.HasOne("BuildSystem.Infrastructure.EnvironmentPool", null)
                         .WithMany()
                         .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildSystem.Infrastructure.PendingArchiveCancellationRecord", b =>
+                {
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvironmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentJob", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentPool", null)
+                        .WithMany()
+                        .HasForeignKey("PoolId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.EnvironmentReservation", null)
+                        .WithMany()
+                        .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildSystem.Infrastructure.ArchiveRoot", null)
+                        .WithMany()
+                        .HasForeignKey("RootId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

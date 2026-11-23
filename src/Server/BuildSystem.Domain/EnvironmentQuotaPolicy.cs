@@ -8,7 +8,8 @@ public sealed record PoolBudget(bool Enabled, long CapacityBytes, long MaxEnviro
 
 /// <summary>Snapshot row for every environment, not only active jobs or successful resources.</summary>
 public sealed record EnvironmentQuotaEntry(Guid ReservationId, Guid OwnerId, Guid PoolId,
-    long ReservedBytes, EnvironmentState State, bool HasUnsettledProvisioningOperation = false);
+    long ReservedBytes, EnvironmentState State, bool HasUnsettledProvisioningOperation = false,
+    bool HasVerifiedPreLeaseCancellation = false);
 
 /// <summary>
 /// Pure policy, NOT a reservation service. Snapshot must include all rows for the owner across pools
@@ -37,11 +38,14 @@ public static class EnvironmentQuotaPolicy
         Guard.Require(snapshot.Select(x => x.ReservationId).Distinct().Count() == snapshot.Count &&
             snapshot.All(x => x.ReservationId != Guid.Empty && x.OwnerId != Guid.Empty &&
                 x.PoolId != Guid.Empty && x.ReservedBytes > 0 && Enum.IsDefined(x.State) &&
-                !(x.State == EnvironmentState.Deleted && x.HasUnsettledProvisioningOperation)),
+                !(x.State == EnvironmentState.Deleted && x.HasUnsettledProvisioningOperation) &&
+                 (x.State == EnvironmentState.Cancelled
+                     ? x.HasVerifiedPreLeaseCancellation && !x.HasUnsettledProvisioningOperation
+                     : !x.HasVerifiedPreLeaseCancellation)),
             "InvalidSnapshot", "Quota snapshot must have unique, valid reservation rows.");
         Guard.Require(snapshot.All(x => x.ReservationId != proposed.Id),
             "ReservationAlreadyPresent", "Existing reservations are not new admission requests.");
-        var retained = snapshot.Where(x => x.State != EnvironmentState.Deleted).ToArray();
+        var retained = snapshot.Where(x => x.State is not (EnvironmentState.Deleted or EnvironmentState.Cancelled)).ToArray();
         var owner = retained.Where(x => x.OwnerId == proposed.OwnerId).ToArray();
         var targetPool = retained.Where(x => x.PoolId == proposed.PoolId).ToArray();
         if (owner.Length >= limits.MaxActiveEnvironments) return QuotaDecision.Reject("EnvironmentCountExceeded");

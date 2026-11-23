@@ -2,7 +2,7 @@ namespace BuildSystem.Domain;
 
 public enum EnvironmentState
 {
-    Requested, Provisioning, Preparing, Ready, Failed, Expired, Deleting, Deleted, NeedsAttention
+    Requested, Provisioning, Preparing, Ready, Failed, Expired, Deleting, Deleted, NeedsAttention, Cancelled
 }
 
 public enum EnvironmentKind { Empty, Restored }
