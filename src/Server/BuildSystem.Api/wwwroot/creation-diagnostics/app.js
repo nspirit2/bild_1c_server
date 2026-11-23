@@ -278,7 +278,9 @@
     409: 'Диагностика журнала недоступна: функция отключена или запрос отклонён.'
   };
   ui['lookup-form'].addEventListener('submit', async event => {
-    event.preventDefault(); clear();
+    event.preventDefault();
+    if (document.hidden) { clearPage(); return; }
+    clear();
     const id = ui['operation-id'].value.toLowerCase();
     if (!hasGuid(id)) { ui.message.textContent = 'Введите непустой UUID строго в формате 8-4-4-4-12, без пробелов и скобок.'; return; }
     const version = generation, request = new AbortController(); controller = request;
@@ -310,9 +312,13 @@
   });
   ui['operation-id'].addEventListener('input', () => { clear(); ui.message.textContent = 'Введите идентификатор и выполните поиск.'; });
   // Do not retain administrator metadata on navigation, BFCache restore or while this tab is hidden.
-  addEventListener('pagehide', clear);
-  addEventListener('pageshow', clear);
+  function clearPage() {
+    clear();
+    ui['operation-id'].value = '';
+  }
+  addEventListener('pagehide', clearPage);
+  addEventListener('pageshow', clearPage);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clear(); ui.message.textContent = 'Результат очищен. Для актуальных данных повторите поиск.'; }
+    if (document.hidden) { clearPage(); ui.message.textContent = 'Результат очищен. Введите идентификатор для нового поиска.'; }
   });
 })();

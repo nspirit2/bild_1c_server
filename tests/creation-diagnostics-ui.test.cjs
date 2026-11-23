@@ -478,13 +478,33 @@ test('leaving or restoring the page clears the prior lookup status and login pro
   await h.submit(id);
   assert.match(h.nodes.get('message').textContent, /Показаны только/);
   h.events.pagehide();
+  assert.equal(h.nodes.get('operation-id').value, '');
   assert.match(h.nodes.get('message').textContent, /^Введите идентификатор/);
   result = denied(401);
   await h.submit(id);
   assert.equal(h.nodes.get('session-link').hidden, false);
   h.events.pageshow();
+  assert.equal(h.nodes.get('operation-id').value, '');
   assert.equal(h.nodes.get('session-link').hidden, true);
   assert.match(h.nodes.get('message').textContent, /^Введите идентификатор/);
+});
+
+test('hiding clears the identifier and suppresses lookups until the tab is visible', async () => {
+  const h = harness(async () => ok(receipt()));
+  await h.submit(id);
+  const sent = h.requests.length;
+  h.document.hidden = true;
+  h.documentEvents.visibilitychange();
+  assert.equal(h.nodes.get('operation-id').value, '');
+  assert.equal(h.nodes.get('result').hidden, true);
+  await h.submit(second);
+  assert.equal(h.requests.length, sent);
+  assert.equal(h.nodes.get('operation-id').value, '');
+  h.document.hidden = false;
+  h.documentEvents.visibilitychange();
+  assert.equal(h.requests.length, sent);
+  await h.submit(id);
+  assert.equal(h.nodes.get('result').hidden, false);
 });
 
 test('resources require administrator authorization and forbid native form submission', () => {
