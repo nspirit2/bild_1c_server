@@ -459,6 +459,17 @@
       ['Intent записан', date(value.requestedAt)], ['Состояние restore intent', 'AwaitingTrustedTarget'],
       ['Выполнение restore', 'Невозможно'], ['Удержание restore intent', restoreHoldExplanation]];
   }
+  function isConfirmedCancellation(value) {
+    const observed = value.observedAt;
+    return value.reconciliationCode === 'CancelledBeforeFirstLease' &&
+      [value.environmentId, value.requestId, value.jobId].every(hasGuid) &&
+      [value.jobState, value.environmentState, value.requestState].every(state => state === 'Cancelled') &&
+      value.reservationState === 'Released' && value.unsettled === false &&
+      Number.isSafeInteger(value.stagingBytes) && value.stagingBytes > 0 &&
+      [value.artifactId, value.artifactState, value.leaseState, value.leaseExpiresAt, value.restoreIntent].every(field => field === null) &&
+      typeof observed === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$/.test(observed) &&
+      Number.isFinite(Date.parse(observed)) && new Date(observed).toISOString().slice(0, 19) === observed.slice(0, 19);
+  }
   function renderRetention(value) {
     const validDate = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
     const absentArtifact = value.artifactId === null && value.artifactState === null;
@@ -499,12 +510,12 @@
     ui['detail-retention-reasons'].replaceChildren(fragment); ui['detail-retention'].hidden = false;
   }
   const cleanupStates = { None:'Нет retirement intent', IntentRequested:'Intent запрошен', Authorized:'Разрешение записано', DeletedReported:'Удаление сообщено агентом', StagingReleased:'Staging allocation освобождена' };
-  async function loadCleanup(id, version, session, signal, expected = null) {
+  async function loadCleanup(id, version, session, signal, expected, cancellationConfirmed) {
     ui['cleanup-values'].replaceChildren(); ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
     const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
     try {
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/cleanup-status', signal);
-      if (!current()) return;
+      if (!current() || cancellationConfirmed()) return;
       const nullableId = v => v === null || hasGuid(v);
       const amounts = ['reservedStagingBytes','heldStagingBytes','releasedStagingBytes'];
       if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() || !hasGuid(value.jobId) ||
@@ -533,8 +544,9 @@
       ui['cleanup-message'].textContent = 'Исторические метаданные и логический учёт. Сообщение агента не доказывает отсутствие файла сейчас. Это не Ready; квоты БД и окружения не освобождаются.';
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
-      ui['cleanup-values'].replaceChildren();
       if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      if (cancellationConfirmed()) return;
+      ui['cleanup-values'].replaceChildren();
       ui['cleanup-message'].textContent = error instanceof ApiError && error.status === 404
         ? 'Учёт cleanup недоступен: endpoint отсутствует в этой версии или нет доступа. Состояние неизвестно; не считать staging свободным.'
         : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
@@ -544,27 +556,44 @@
     if (!authenticated || busy || !guid.test(id)) return;
     closeDetail(); historyStage = !!expected; selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
+    let cancelled = false;
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
-    void loadCleanup(id, version, session, detailController.signal, expected);
+    void loadCleanup(id, version, session, detailController.signal, expected, () => cancelled);
     try {
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
       if (version !== detailGeneration || session !== generation || !authenticated) return;
       if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() ||
           (expected && (!hasGuid(value.requestId) || !hasGuid(value.jobId) || value.requestId.toLowerCase() !== expected.requestId.toLowerCase() || value.jobId.toLowerCase() !== expected.jobId.toLowerCase()))) throw new Error('Invalid detail response');
+      cancelled = isConfirmedCancellation(value);
+      if (!cancelled && (value.reconciliationCode === 'CancelledBeforeFirstLease' || value.reservationState === 'Released' ||
+          [value.jobState, value.environmentState, value.requestState].includes('Cancelled'))) {
+        ui['detail-message'].textContent = 'Недостаточно согласованных метаданных: не считать ресурсы свободными.';
+        return;
+      }
       const restoreEntries = restoreIntentEntries(value.restoreIntent);
+      const cancelledState = 'Отменено';
       const entries = [
         ['Окружение', text(value.environmentId)], ['Запрос', text(value.requestId)], ['Задание', text(value.jobId)],
-        ['Состояние задания', stateText(value.jobState)], ['Состояние окружения', stateText(value.environmentState)],
-        ['Состояние запроса', stateText(value.requestState)], ['Reservation', stateText(value.reservationState)],
+        ['Состояние задания', cancelled ? cancelledState : stateText(value.jobState)], ['Состояние окружения', cancelled ? cancelledState : stateText(value.environmentState)],
+        ['Состояние запроса', cancelled ? cancelledState : stateText(value.requestState)], ['Reservation', cancelled ? 'Резерв освобождён' : stateText(value.reservationState)],
         ['Исторический staging-резерв', bytes(value.stagingBytes)], ['Provisioning не завершён', value.unsettled === true ? 'Да' : value.unsettled === false ? 'Нет' : '—'],
         ['Артефакт', text(value.artifactId)], ['Квитанция артефакта', stateText(value.artifactState)],
         ['Lease', stateText(value.leaseState)], ['Срок lease', date(value.leaseExpiresAt)],
-        ['Оценка состояния stage', stateText(value.reconciliationCode)], ['Наблюдение сервера', date(value.observedAt)],
+        ['Оценка состояния stage', cancelled ? 'Отменено до первой выдачи агенту (lease)' : stateText(value.reconciliationCode)], ['Наблюдение сервера', date(value.observedAt)],
         ...restoreEntries
       ];
       const fragment = document.createDocumentFragment();
       for (const [label, content] of entries) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd); }
-      ui['detail-values'].replaceChildren(fragment); renderRetention(value); ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
+      ui['detail-values'].replaceChildren(fragment);
+      if (cancelled) {
+        // Clear an earlier cleanup observation and prevent a later one from replacing this explanation.
+        ui['cleanup-values'].replaceChildren();
+        ui['cleanup-message'].textContent = 'Cleanup не применим: stage-артефакт не зарегистрирован. Это не освобождение по ledger cleanup и не подтверждение удаления файлов.';
+        ui['detail-message'].textContent = 'Сервер подтвердил отмену до первой выдачи агенту. Логическая квота заказа (окружение, БД и staging) освобождена. Значение staging в деталях — исторический резерв, не физическое свободное место. Это не Ready и не подтверждение удаления файлов.';
+      } else {
+        renderRetention(value);
+        ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
+      }
     } catch (error) {
       if (version !== detailGeneration || session !== generation || error.name === 'AbortError') return;
       if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }

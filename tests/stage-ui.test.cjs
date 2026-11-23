@@ -397,20 +397,78 @@ test('cleanup hold prevents apparent eligibility without adding actions',async()
   assert.equal(calls.some(x=>x.options?.method==='POST'),false);assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length,0);
 });
 const cleanupText = nodes => nodes.get('cleanup-values').querySelectorAll('dd').map(x => x.textContent).join('\n');
-async function cleanupHarness(respond) {
+async function cleanupHarness(respond, stage = route => ok(retainedDetail({environmentId:route.includes(env2)?env2:env1}))) {
   const calls = [];
   const nodes = harness(async (route, options) => {
     calls.push({route,options});
     if (route === '/api/auth/me') return ok({name:'operator'});
     if (route.startsWith('/api/stage-operations')) return ok({items:[item(env1),item(env2)],nextCursor:null});
     if (route.endsWith('/cleanup-status')) return respond(route,options);
-    if (route.endsWith('/stage-status')) return ok(retainedDetail({environmentId:route.includes(env2)?env2:env1}));
+    if (route.endsWith('/stage-status')) return stage(route,options);
     if (route === '/api/auth/csrf') return ok({token:'test'});
     if (route === '/api/auth/logout') return ok(null);
     throw new Error('Unexpected route');
   });
   await flush(); buttons(nodes)[0].listeners.click(); await flush(); return {nodes,calls};
 }
+const cancelledDetail = changes => retainedDetail({ jobState:'Cancelled', environmentState:'Cancelled', requestState:'Cancelled',
+  reservationState:'Released', unsettled:false, artifactId:null, artifactState:null, leaseState:null, leaseExpiresAt:null,
+  restoreIntent:null, reconciliationCode:'CancelledBeforeFirstLease', observedAt:'2026-01-01T00:01:00.1234567+00:00', ...changes });
+const assertCancellation = nodes => {
+  assert.match(nodes.get('detail-message').textContent, /квота заказа \(окружение, БД и staging\) освобождена/);
+  assert.match(nodes.get('detail-message').textContent, /не физическое свободное место.*не Ready.*не подтверждение удаления файлов/);
+  const fields = nodes.get('detail-values').querySelectorAll('dd').map(x => x.textContent);
+  assert.equal(fields.filter(x => x === 'Отменено').length, 3);
+  assert.ok(fields.includes('Отменено до первой выдачи агенту (lease)'));
+  assert.equal(nodes.get('detail-retention').hidden, true);
+  assert.equal(cleanupText(nodes), '');
+  assert.match(nodes.get('cleanup-message').textContent, /Cleanup не применим/);
+};
+
+test('coherent cancellation replaces earlier cleanup and adds no writes or controls', async () => {
+  const stage = deferred();
+  const { nodes, calls } = await cleanupHarness(() => ok(cleanupDetail()), () => stage.promise);
+  assert.match(cleanupText(nodes), /Staging allocation освобождена/);
+  stage.resolve(ok(cancelledDetail())); await flush();
+  assertCancellation(nodes);
+  assert.equal(nodes.get('detail-values').querySelectorAll('button').length, 0);
+  assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length, 0);
+  assert.ok(calls.every(call => (call.options.method || 'GET') === 'GET'));
+});
+
+test('late cleanup success or failure cannot replace confirmed cancellation', async () => {
+  for (const response of [ok(cleanupDetail()), denied(404), denied(503)]) {
+    const late = deferred();
+    const { nodes } = await cleanupHarness(() => late.promise, () => ok(cancelledDetail()));
+    assertCancellation(nodes);
+    late.resolve(response); await flush();
+    assertCancellation(nodes);
+  }
+});
+
+test('incomplete or contradictory cancellation never shows released quota or not-applicable cleanup', async () => {
+  for (const changes of [{ reconciliationCode:'Inconsistent' }, { jobState:'Pending' }, { environmentState:'Requested' },
+    { requestState:'Pending' }, { reservationState:'Held' }, { unsettled:true }, { stagingBytes:0 }, { stagingBytes:'65536' },
+    { artifactId:env2 }, { artifactState:'ContentVerified' }, { leaseState:'Active' }, { leaseExpiresAt:'2026-01-01T00:00:00Z' },
+    { restoreIntent:restoreStatus() }, { restoreIntent:undefined }, { environmentId:env2 }, { requestId:'invalid' }, { jobId:null },
+    { observedAt:'2026' }, { observedAt:'2026-02-30T00:01:00Z' }]) {
+    const { nodes } = await cleanupHarness(() => denied(404), () => ok(cancelledDetail(changes)));
+    assert.equal(nodes.get('detail-values').children.length, 0);
+    assert.doesNotMatch(nodes.get('detail-message').textContent, /квота заказа.*освобождена/);
+    assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+  }
+});
+
+test('stale cancellation cannot override a newer selection’s cleanup', async () => {
+  const late = deferred();
+  const { nodes } = await cleanupHarness(route => route.includes(env1) ? denied(404) : ok(cleanupDetail({environmentId:env2})),
+    route => route.includes(env1) ? late.promise : ok(retainedDetail({environmentId:env2})));
+  buttons(nodes)[1].listeners.click(); await flush();
+  late.resolve(ok(cancelledDetail())); await flush();
+  assert.match(cleanupText(nodes), /Staging allocation освобождена/);
+  assert.doesNotMatch(nodes.get('detail-message').textContent, /Сервер подтвердил отмену/);
+});
+
 test('cleanup renders only allowlisted metadata as text and never offers mutation',async()=>{
   const hostile = '<img src=x onerror=bad>';
   const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({sourcePath:hostile,token:hostile,snapshot:hostile})));
