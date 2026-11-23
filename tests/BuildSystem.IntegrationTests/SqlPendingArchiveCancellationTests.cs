@@ -1,10 +1,17 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text.Json;
 using BuildSystem.Application;
 using BuildSystem.Contracts;
 using BuildSystem.Infrastructure;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace BuildSystem.IntegrationTests;
@@ -386,6 +393,145 @@ public sealed class SqlPendingArchiveCancellationTests
         AssertMismatch(await RejectAsync(seed.Administrator, seed.Order.EnvironmentId, wrongJob));
         Assert.Equal(first, await cancellation.CancelAsync(seed.Administrator, seed.Order.EnvironmentId, seed.Cancellation(), Ct));
         await AssertCancelledAsync(db, seed, seed.Administrator);
+    }
+
+    [SqlServerFact]
+    public async Task Owner_cookie_requires_csrf_and_current_membership_to_cancel_or_replay()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        using var factory = new CancellationCookieFactory(sql);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = true
+        });
+        await LoginOwnerAsync(factory, client, seed.Owner);
+
+        var route = $"/api/test-environments/{seed.Order.EnvironmentId:D}/pending-archive-cancellations";
+        var before = await CancellationStateAsync(sql);
+        using (var missing = await client.PostAsJsonAsync(route, seed.Cancellation(), Ct))
+            await AssertErrorAsync(missing, HttpStatusCode.BadRequest, "InvalidCsrfToken");
+        Assert.Equal(before, await CancellationStateAsync(sql));
+        await using (var db = sql.NewContext())
+            await AssertUncancelledAsync(db, seed, "Pending");
+
+        client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", await CsrfAsync(client));
+        using var first = await client.PostAsJsonAsync(route, seed.Cancellation(), Ct);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var body = await first.Content.ReadAsStringAsync(Ct);
+        using var json = JsonDocument.Parse(body);
+        var receipt = json.RootElement;
+        await using (var db = sql.NewContext())
+        {
+            var persisted = await AssertCancelledAsync(db, seed, seed.Owner);
+            Assert.Equal(persisted.EnvironmentId, receipt.GetProperty("environmentId").GetGuid());
+            Assert.Equal(persisted.JobId, receipt.GetProperty("jobId").GetGuid());
+            Assert.Equal("CancelledBeforeFirstLease", receipt.GetProperty("code").GetString());
+            Assert.Equal(persisted.CancelledAt, receipt.GetProperty("cancelledAt").GetDateTimeOffset());
+            Assert.Equal(2, await db.AuditEvents.CountAsync(Ct));
+        }
+        var cancelled = await CancellationStateAsync(sql);
+        using var replay = await client.PostAsJsonAsync(route, seed.Cancellation(), Ct);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(body, await replay.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(cancelled, await CancellationStateAsync(sql));
+
+        await using (var db = sql.NewContext())
+        {
+            db.ProjectMemberships.Remove(await db.ProjectMemberships.SingleAsync(
+                m => m.UserId == seed.Owner.UserId && m.ProjectId == seed.Project, Ct));
+            await db.SaveChangesAsync(Ct);
+        }
+        // Same authenticated cookie, valid token and request: the existing receipt must no longer be visible.
+        using var revoked = await client.PostAsJsonAsync(route, seed.Cancellation(), Ct);
+        await AssertErrorAsync(revoked, HttpStatusCode.NotFound, "PendingArchiveCancellationNotFound");
+        Assert.Equal(cancelled, await CancellationStateAsync(sql));
+    }
+
+    private sealed class CancellationCookieFactory(SqlServerTestDatabase sql) : WebApplicationFactory<global::Program>
+    {
+        private const string KeysPrefix = "bs-cancel-cookie-keys-";
+        private readonly DirectoryInfo keys = Directory.CreateTempSubdirectory(KeysPrefix);
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            // Configure only; Identity, antiforgery, the endpoint and its SQL service remain real.
+            builder.UseEnvironment("Testing");
+            builder.UseContentRoot(AppContext.BaseDirectory);
+            builder.UseSetting("ConnectionStrings:BuildSystem", sql.ConnectionString);
+            builder.UseSetting("Security:DataProtectionDirectory", keys.FullName);
+            builder.UseSetting("PendingArchiveCancellation:Enabled", "true");
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            try { base.Dispose(disposing); }
+            finally
+            {
+                if (disposing)
+                {
+                    var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+                    if (keys.Parent?.FullName != temp || !keys.Name.StartsWith(KeysPrefix, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Unexpected fixture key cleanup path.");
+                    if (Directory.Exists(keys.FullName)) keys.Delete(recursive: true);
+                }
+            }
+        }
+    }
+
+    private static async Task LoginOwnerAsync(CancellationCookieFactory factory, HttpClient client, Actor owner)
+    {
+        var password = "Fixture-Aa1!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<BuildSystemUser>>();
+            var roles = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+            if (!await roles.RoleExistsAsync("Developer"))
+                Assert.True((await roles.CreateAsync(new IdentityRole<Guid>("Developer"))).Succeeded);
+            var user = await users.FindByIdAsync(owner.UserId.ToString());
+            Assert.NotNull(user);
+            Assert.True((await users.SetEmailAsync(user, "owner@fixture.invalid")).Succeeded);
+            Assert.True((await users.AddPasswordAsync(user, password)).Succeeded);
+            Assert.True((await users.AddToRoleAsync(user, "Developer")).Succeeded);
+        }
+
+        client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", await CsrfAsync(client));
+        using var login = await client.PostAsJsonAsync("/api/auth/login", new { userName = "owner", password }, Ct);
+        client.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+        Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
+        var principal = await client.GetFromJsonAsync<JsonElement>("/api/auth/me", Ct);
+        Assert.Equal(owner.UserId, principal.GetProperty("id").GetGuid());
+        Assert.Contains("Developer", principal.GetProperty("roles").EnumerateArray().Select(role => role.GetString()));
+    }
+
+    private sealed record CsrfResponse(string Token);
+
+    private static async Task<string> CsrfAsync(HttpClient client)
+    {
+        var response = await client.GetFromJsonAsync<CsrfResponse>("/api/auth/csrf", Ct);
+        Assert.NotNull(response);
+        return response.Token;
+    }
+
+    private static async Task AssertErrorAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    {
+        Assert.Equal(status, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(code, body.GetProperty("code").GetString());
+    }
+
+    private static async Task<string> CancellationStateAsync(SqlServerTestDatabase sql)
+    {
+        await using var db = sql.NewContext();
+        return JsonSerializer.Serialize(new
+        {
+            Environment = await db.TestEnvironments.AsNoTracking().SingleAsync(Ct),
+            Request = await db.EnvironmentRequests.AsNoTracking().SingleAsync(Ct),
+            Job = await db.EnvironmentJobs.AsNoTracking().SingleAsync(Ct),
+            Reservation = await db.EnvironmentReservations.AsNoTracking().SingleAsync(Ct),
+            Receipts = await db.PendingArchiveCancellations.AsNoTracking().OrderBy(r => r.EnvironmentId).ToArrayAsync(Ct),
+            Audits = await db.AuditEvents.AsNoTracking().OrderBy(a => a.Id).ToArrayAsync(Ct)
+        });
     }
 
     private static void AssertMismatch(RequestRejectedException rejection) =>
