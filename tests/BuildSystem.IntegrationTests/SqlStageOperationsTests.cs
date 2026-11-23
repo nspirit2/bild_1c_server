@@ -274,7 +274,21 @@ public sealed class SqlStageOperationsTests
         node["stagingBytes"] = 10;
         node["sourceArchiveId"] = Guid.NewGuid();
         var wrongSource = node.ToJsonString();
-        foreach (var corrupt in new[] { "{bad", "[]", snapshot[..^1] + ",\"STAGINGBYTES\":10}", wrongType, wrongSource })
+        var corruptions = new List<string> { "{bad", "[]", snapshot[..^1] + ",\"STAGINGBYTES\":10}", wrongType, wrongSource };
+        foreach (var (key, invalid) in new (string Key, System.Text.Json.Nodes.JsonNode? Invalid)[]
+        {
+            ("admissionMode", "archive-stage-only"), ("admissionMode", "ARCHIVE"), ("stageOnly", true),
+            ("executable", true), ("executable", "false"), ("scheduledJobsMustRemainBlocked", false),
+            ("automaticDeletionEnabled", true), ("automaticDeletionGraceDays", 7)
+        })
+        {
+            var changed = System.Text.Json.Nodes.JsonNode.Parse(snapshot)!.AsObject();
+            changed[key] = invalid;
+            corruptions.Add(changed.ToJsonString());
+            changed.Remove(key);
+            corruptions.Add(changed.ToJsonString());
+        }
+        foreach (var corrupt in corruptions)
         {
             await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SnapshotJson, corrupt));
             await AssertHiddenAsync();

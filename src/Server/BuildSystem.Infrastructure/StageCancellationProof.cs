@@ -57,7 +57,7 @@ internal static class StageCancellationProof
               OR p.[key] COLLATE Latin1_General_100_BIN2 LIKE N'%[^a-zA-Z0-9_]%' OR DATALENGTH(p.[key]) = 0)
           AND NOT EXISTS (SELECT 1 FROM OPENJSON(s.[Json]) AS p
             GROUP BY UPPER(p.[key] COLLATE Latin1_General_100_BIN2), DATALENGTH(p.[key]) HAVING COUNT_BIG(*) > 1)
-          AND 7 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
+          AND 13 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
             CROSS APPLY (VALUES
                 (N'reservationId', CONVERT(nvarchar(36), r.[Id]), 1),
                 (N'poolId', CONVERT(nvarchar(36), r.[PoolId]), 1),
@@ -65,10 +65,18 @@ internal static class StageCancellationProof
                 (N'sourceArchiveId', CONVERT(nvarchar(36), a.[Id]), 1),
                 (N'archiveVersionId', CONVERT(nvarchar(36), v.[Id]), 1),
                 (N'stagingBytes', CONVERT(nvarchar(36), r.[StagingBytes]), 2),
-                (N'reservedBytes', CONVERT(nvarchar(36), r.[ReservedBytes]), 2)
+                (N'reservedBytes', CONVERT(nvarchar(36), r.[ReservedBytes]), 2),
+                 (N'admissionMode', N'archive', 1),
+                 (N'stageOnly', N'false', 3),
+                 (N'executable', N'false', 3),
+                 (N'scheduledJobsMustRemainBlocked', N'true', 3),
+                 (N'automaticDeletionEnabled', N'false', 3),
+                 (N'automaticDeletionGraceDays', NULL, 0)
             ) AS pin([Key], [Value], [Type])
             WHERE p.[key] COLLATE Latin1_General_100_BIN2 = pin.[Key] AND DATALENGTH(p.[key]) = DATALENGTH(pin.[Key])
-              AND p.[type] = pin.[Type] AND DATALENGTH(p.[value]) = DATALENGTH(pin.[Value])
-              AND LOWER(p.[value] COLLATE Latin1_General_100_BIN2) = LOWER(pin.[Value] COLLATE Latin1_General_100_BIN2))
+              AND p.[type] = pin.[Type] AND ((pin.[Type] = 0 AND p.[value] IS NULL) OR
+                 (DATALENGTH(p.[value]) = DATALENGTH(pin.[Value]) AND
+                  LOWER(p.[value] COLLATE Latin1_General_100_BIN2) = LOWER(pin.[Value] COLLATE Latin1_General_100_BIN2)
+                  AND (pin.[Key] <> N'admissionMode' OR p.[value] COLLATE Latin1_General_100_BIN2 = pin.[Value]))))
         """);
 }
