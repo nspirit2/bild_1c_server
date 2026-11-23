@@ -21,7 +21,7 @@ public sealed class SqlEnvironmentOrderSummary(BuildSystemDbContext db) : IEnvir
                         m.UserId == actor.UserId && m.ProjectId == e.ProjectId))))
                 .Select(e => new
                 {
-                    e.Id, e.ProjectId, e.OwnerId, e.RequestId,
+                    e.Id, e.ProjectId, e.OwnerId, e.RequestId, e.ReservationId,
                     DisplayName = EF.Functions.DataLength(e.DisplayName) > 240 ? "" : e.DisplayName,
                     State = EF.Functions.DataLength(e.State) > 128 ? "" : e.State
                 }).SingleOrDefaultAsync(ct);
@@ -51,6 +51,16 @@ public sealed class SqlEnvironmentOrderSummary(BuildSystemDbContext db) : IEnvir
                 }).SingleOrDefaultAsync(ct);
             if (job is null || job.Id == Guid.Empty || job.RequestId != request.Id || job.EnvironmentId != environment.Id ||
                 job.Kind is not ("ProvisionArchive" or "ObserveArchiveStage")) throw Inconsistent();
+            var reservationState = await db.EnvironmentReservations.AsNoTracking()
+                .Where(r => r.Id == environment.ReservationId).Select(r => r.State).SingleOrDefaultAsync(ct);
+            if (reservationState is null) throw Inconsistent();
+            var receiptExists = await db.PendingArchiveCancellations.AsNoTracking().AnyAsync(c =>
+                c.EnvironmentId == environment.Id || c.RequestId == request.Id || c.JobId == job.Id ||
+                c.ReservationId == environment.ReservationId, ct);
+            if ((receiptExists || SqlStageStatus.CancellationLike(environment.State, "Cancelled") ||
+                SqlStageStatus.CancellationLike(request.State, "Cancelled") || SqlStageStatus.CancellationLike(job.State, "Cancelled") ||
+                SqlStageStatus.CancellationLike(reservationState, "Released")) &&
+                !await StageCancellationProof.ProvenJobIds(db).AnyAsync(id => id == job.Id, ct)) throw Inconsistent();
             // An archived version is historical identity, not renewed source permission/readiness.
             var source = await db.DiskArchiveVersions.AsNoTracking().Where(v => v.Id == request.ArchiveVersionId)
                 .Select(v => new { v.Id,

@@ -64,6 +64,7 @@ public sealed class EnvironmentOrderSummaryTests
             Reservations = await db.EnvironmentReservations.AsNoTracking().OrderBy(x => x.Id).ToListAsync(),
             Leases = await db.AgentLeases.AsNoTracking().OrderBy(x => x.JobId).ToListAsync(),
             Artifacts = await db.StagedArtifacts.AsNoTracking().OrderBy(x => x.ArtifactId).ToListAsync(),
+            Cancellations = await db.PendingArchiveCancellations.AsNoTracking().OrderBy(x => x.EnvironmentId).ToListAsync(),
             Audits = await db.AuditEvents.AsNoTracking().OrderBy(x => x.Id).ToListAsync()
         });
     }
@@ -121,6 +122,46 @@ public sealed class EnvironmentOrderSummaryTests
         Assert.Null(await ReadAsync(sql, seed.Owner, seed.Provision.EnvironmentId));
         Assert.NotNull(await ReadAsync(sql, seed.Admin, seed.Provision.EnvironmentId));
         Assert.Equal(before, await StateAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Historical_cancellation_requires_the_durable_proof_without_changing_visibility()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var order = seed.Provision;
+        var environments = db.TestEnvironments.Where(x => x.Id == order.EnvironmentId);
+        var reservationId = await environments.Select(x => x.ReservationId).SingleAsync(Ct);
+        var reservations = db.EnvironmentReservations.Where(x => x.Id == reservationId);
+        await reservations.ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Released"), Ct);
+        await AssertConflictAsync();
+        await reservations.ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Held"), Ct);
+        await new SqlPendingArchiveCancellations(db, enabled: true)
+            .CancelAsync(seed.Owner, order.EnvironmentId, new(order.JobId), Ct);
+        await db.Projects.Where(x => x.Id == seed.Project).ExecuteUpdateAsync(s => s.SetProperty(x => x.Enabled, false), Ct);
+        var before = await StateAsync(sql);
+        var view = Assert.IsType<EnvironmentOrderSummaryView>(await ReadAsync(sql, seed.Owner, order.EnvironmentId));
+        Assert.Equal(("Cancelled", "Cancelled", "Cancelled"), (view.EnvironmentState, view.RequestState, view.JobState));
+        Assert.Equal(view, await ReadAsync(sql, seed.Admin, order.EnvironmentId));
+        Assert.Null(await ReadAsync(sql, seed.Foreign, order.EnvironmentId));
+        Assert.Equal(before, await StateAsync(sql));
+
+        await environments.ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Requested")
+            .SetProperty(x => x.HasUnsettledProvisioningOperation, true), Ct);
+        await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"), Ct);
+        await db.EnvironmentRequests.Where(x => x.Id == order.RequestId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"), Ct);
+        await reservations.ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Held"), Ct);
+        await AssertConflictAsync();
+        return;
+
+        async Task AssertConflictAsync()
+        {
+            var state = await StateAsync(sql);
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed.Owner, order.EnvironmentId));
+            Assert.Equal((409, "EnvironmentOrderSummaryInconsistent"), (error.StatusCode, error.Code));
+            Assert.Null(await ReadAsync(sql, seed.Foreign, order.EnvironmentId));
+            Assert.Equal(state, await StateAsync(sql));
+        }
     }
 
     [SqlServerFact]
