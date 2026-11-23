@@ -29,6 +29,12 @@ internal static class StageCancellationProof
           AND c.[PoolId] = e.[PoolId] AND r.[PoolId] = e.[PoolId] AND c.[RootId] = a.[RootId]
           AND e.[HasUnsettledProvisioningOperation] = 0 AND e.[ExpiresAt] IS NULL
           AND r.[StagingBytes] > 0 AND r.[ReservedBytes] > 0
+          AND q.[TtlDays] BETWEEN 1 AND 36500
+          AND r.[SqlServerId] <> '00000000-0000-0000-0000-000000000000'
+          AND r.[ClusterId] <> '00000000-0000-0000-0000-000000000000'
+          AND DATALENGTH(r.[SqlDbName]) = 80 AND DATALENGTH(r.[InfobaseName]) = 80
+          AND r.[SqlDbName] COLLATE Latin1_General_100_BIN2 = N'bs_test_' + LOWER(REPLACE(CONVERT(nvarchar(36), r.[Id]), N'-', N''))
+          AND r.[InfobaseName] COLLATE Latin1_General_100_BIN2 = r.[SqlDbName] COLLATE Latin1_General_100_BIN2
           AND v.[SizeBytes] = r.[StagingBytes] AND v.[EstimatedDbBytes] = r.[ReservedBytes]
           AND v.[Format] COLLATE Latin1_General_100_BIN2 IN (N'dt', N'bak')
           AND DATALENGTH(v.[Format]) = DATALENGTH(RTRIM(v.[Format]))
@@ -68,7 +74,7 @@ internal static class StageCancellationProof
               OR p.[key] COLLATE Latin1_General_100_BIN2 LIKE N'%[^a-zA-Z0-9_]%' OR DATALENGTH(p.[key]) = 0)
           AND NOT EXISTS (SELECT 1 FROM OPENJSON(s.[Json]) AS p
             GROUP BY UPPER(p.[key] COLLATE Latin1_General_100_BIN2), DATALENGTH(p.[key]) HAVING COUNT_BIG(*) > 1)
-          AND 16 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
+          AND 21 = (SELECT COUNT_BIG(*) FROM OPENJSON(s.[Json]) AS p
             CROSS APPLY (VALUES
                 (N'reservationId', CONVERT(nvarchar(36), r.[Id]), 1),
                 (N'poolId', CONVERT(nvarchar(36), r.[PoolId]), 1),
@@ -80,6 +86,11 @@ internal static class StageCancellationProof
                 (N'SizeBytes', CONVERT(nvarchar(36), v.[SizeBytes]), 2),
                 (N'Format', v.[Format], 1),
                 (N'Sha256', v.[Sha256], 1),
+                (N'SqlServerId', CONVERT(nvarchar(36), r.[SqlServerId]), 1),
+                (N'ClusterId', CONVERT(nvarchar(36), r.[ClusterId]), 1),
+                (N'sqlDbName', r.[SqlDbName], 1),
+                (N'infobaseName', r.[InfobaseName], 1),
+                (N'TtlDays', CONVERT(nvarchar(36), q.[TtlDays]), 2),
                  (N'admissionMode', N'archive', 1),
                  (N'stageOnly', N'false', 3),
                  (N'executable', N'false', 3),
@@ -91,7 +102,7 @@ internal static class StageCancellationProof
               AND p.[type] = pin.[Type] AND ((pin.[Type] = 0 AND p.[value] IS NULL) OR
                  (DATALENGTH(p.[value]) = DATALENGTH(pin.[Value]) AND
                   LOWER(p.[value] COLLATE Latin1_General_100_BIN2) = LOWER(pin.[Value] COLLATE Latin1_General_100_BIN2)
-                  AND (pin.[Key] COLLATE Latin1_General_100_BIN2 NOT IN (N'admissionMode', N'Format', N'Sha256')
+                  AND (pin.[Key] COLLATE Latin1_General_100_BIN2 NOT IN (N'admissionMode', N'Format', N'Sha256', N'sqlDbName', N'infobaseName')
                         OR p.[value] COLLATE Latin1_General_100_BIN2 = pin.[Value]))))
         """);
 }

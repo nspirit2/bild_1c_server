@@ -341,6 +341,25 @@ public sealed class SqlStageOperationsTests
             await AssertHiddenAsync();
         }
         await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SnapshotJson, snapshot));
+        var reservationId = await db.TestEnvironments.Where(e => e.Id == order.EnvironmentId).Select(e => e.ReservationId).SingleAsync(Ct);
+        var reservation = db.EnvironmentReservations.Where(x => x.Id == reservationId);
+        var original = await reservation.AsNoTracking().SingleAsync(Ct);
+        await reservation.ExecuteUpdateAsync(s => s.SetProperty(x => x.SqlServerId, Guid.NewGuid()), Ct);
+        await AssertHiddenAsync();
+        await reservation.ExecuteUpdateAsync(s => s.SetProperty(x => x.SqlServerId, original.SqlServerId)
+            .SetProperty(x => x.ClusterId, Guid.NewGuid()), Ct);
+        await AssertHiddenAsync();
+        await reservation.ExecuteUpdateAsync(s => s.SetProperty(x => x.ClusterId, original.ClusterId)
+            .SetProperty(x => x.SqlDbName, original.SqlDbName.ToUpperInvariant()), Ct);
+        await AssertHiddenAsync();
+        await reservation.ExecuteUpdateAsync(s => s.SetProperty(x => x.SqlDbName, original.SqlDbName)
+            .SetProperty(x => x.InfobaseName, "different-infobase"), Ct);
+        await AssertHiddenAsync();
+        await reservation.ExecuteUpdateAsync(s => s.SetProperty(x => x.InfobaseName, original.InfobaseName), Ct);
+        var requests = db.EnvironmentRequests.Where(x => x.Id == order.RequestId);
+        await requests.ExecuteUpdateAsync(s => s.SetProperty(x => x.TtlDays, 8), Ct);
+        await AssertHiddenAsync();
+        await requests.ExecuteUpdateAsync(s => s.SetProperty(x => x.TtlDays, 7), Ct);
         var versions = db.DiskArchiveVersions.Where(x => x.Id == seed.Version);
         await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.SizeBytes, 11), Ct);
         await AssertHiddenAsync();
