@@ -341,6 +341,17 @@ public sealed class SqlStageOperationsTests
             await AssertHiddenAsync();
         }
         await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SnapshotJson, snapshot));
+        var versions = db.DiskArchiveVersions.Where(x => x.Id == seed.Version);
+        await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.SizeBytes, 11), Ct);
+        await AssertHiddenAsync();
+        await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.SizeBytes, 10).SetProperty(x => x.EstimatedDbBytes, 101), Ct);
+        await AssertHiddenAsync();
+        await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.EstimatedDbBytes, 100).SetProperty(x => x.Format, "bak"), Ct);
+        await AssertHiddenAsync();
+        await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.Format, "dt").SetProperty(x => x.Sha256, new string('B', 64)), Ct);
+        await AssertHiddenAsync();
+        await versions.ExecuteUpdateAsync(s => s.SetProperty(x => x.Sha256, Hash).SetProperty(x => x.State, "Unavailable"), Ct);
+        Assert.Equal(order.JobId, Assert.Single((await service.ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items).JobId);
         db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), Action = "ArchiveStageLeased", ActorId = seed.Agent,
             TargetId = order.JobId, CreatedAt = DateTimeOffset.UtcNow });
         await db.SaveChangesAsync();
