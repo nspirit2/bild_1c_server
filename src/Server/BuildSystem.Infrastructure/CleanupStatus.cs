@@ -28,6 +28,17 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
                 request.OwnerId != env.OwnerId || request.ProjectId != env.ProjectId || reservation.OwnerId != env.OwnerId || reservation.PoolId != env.PoolId || reservation.StagingBytes < 0)
                 throw Inconsistent();
             if (job.Kind != "ProvisionArchive") { await tx.CommitAsync(ct); return null; }
+            var cancellations = await db.PendingArchiveCancellations.AsNoTracking().Where(c => c.EnvironmentId == env.Id ||
+                c.RequestId == request.Id || c.JobId == job.Id || c.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
+            if (cancellations.Count != 0 || env.State == "Cancelled" || request.State == "Cancelled" || job.State == "Cancelled")
+            {
+                if (cancellations.Count != 1) throw Inconsistent();
+                await SqlStageStatus.RequireCancellationProofAsync(db, env, request, job, reservation,
+                    cancellations[0], "CleanupStatusInconsistent", ct);
+                // No staging artifact was dispatched; this is not a cleanup-ledger release.
+                await tx.CommitAsync(ct);
+                return null;
+            }
             var lease = await db.AgentLeases.AsNoTracking().SingleOrDefaultAsync(l => l.JobId == job.Id, ct);
             var artifacts = await db.StagedArtifacts.AsNoTracking().Where(a => a.JobId == job.Id || a.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
             if (artifacts.Count > 1) throw Inconsistent();

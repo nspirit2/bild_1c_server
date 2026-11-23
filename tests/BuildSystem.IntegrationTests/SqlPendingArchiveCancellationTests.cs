@@ -107,9 +107,25 @@ public sealed class SqlPendingArchiveCancellationTests
         DateTimeOffset cancelledAt;
         await using (var check = sql.NewContext())
         {
-            var receipt = await AssertCancelledAsync(check, seed, seed.Owner);
-            terminalVersion = (await check.TestEnvironments.SingleAsync(Ct)).RowVersion;
+            terminalVersion = (await check.TestEnvironments.AsNoTracking().SingleAsync(Ct)).RowVersion;
             Assert.False(seed.RowVersion.SequenceEqual(terminalVersion));
+            var statusReader = new SqlStageStatus(check);
+            var status = Assert.IsType<StageStatusView>(await statusReader.GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+            Assert.Equal((seed.Order.EnvironmentId, seed.Order.RequestId, seed.Order.JobId), (status.EnvironmentId, status.RequestId, status.JobId));
+            Assert.Equal(("Cancelled", "Cancelled", "Cancelled", "Released", "CancelledBeforeFirstLease"),
+                (status.EnvironmentState, status.RequestState, status.JobState, status.ReservationState, status.ReconciliationCode));
+            Assert.False(status.Unsettled);
+            Assert.Equal(ArchiveBytes, status.StagingBytes);
+            Assert.Null(status.ArtifactId);
+            Assert.Null(status.ArtifactState);
+            Assert.Null(status.LeaseState);
+            Assert.Null(status.LeaseExpiresAt);
+            Assert.Null(status.RestoreIntent);
+            Assert.Null(await statusReader.GetAsync(seed.OtherMember, seed.Order.EnvironmentId, Ct));
+            Assert.Null(await new SqlCleanupStatus(check).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+            Assert.Equal(terminalVersion, (await check.TestEnvironments.AsNoTracking().SingleAsync(Ct)).RowVersion);
+            var receipt = await AssertCancelledAsync(check, seed, seed.Owner);
+            Assert.True(status.ObservedAt >= receipt.CancelledAt);
             Assert.Equal(new PendingArchiveCancellationReceipt(receipt.EnvironmentId, receipt.RequestId, receipt.JobId,
                 receipt.ReservationId, receipt.RootId, receipt.PoolId, receipt.ActorId, receipt.CancelledAt), first);
             cancelledAt = receipt.CancelledAt;
@@ -139,6 +155,28 @@ public sealed class SqlPendingArchiveCancellationTests
         Assert.NotEqual(seed.Reservation, environment.ReservationId);
         Assert.Equal("Held", (await replayDb.EnvironmentReservations.SingleAsync(x => x.Id == environment.ReservationId, Ct)).State);
         Assert.Equal(1, await replayDb.PendingArchiveCancellations.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
+    public async Task Stage_status_rejects_cancelled_metadata_without_a_durable_receipt()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var environment = await db.TestEnvironments.SingleAsync(Ct);
+        environment.State = "Cancelled";
+        environment.HasUnsettledProvisioningOperation = false;
+        (await db.EnvironmentRequests.SingleAsync(Ct)).State = "Cancelled";
+        (await db.EnvironmentJobs.SingleAsync(Ct)).State = "Cancelled";
+        (await db.EnvironmentReservations.SingleAsync(Ct)).State = "Released";
+        await db.SaveChangesAsync(Ct);
+        var rowVersion = environment.RowVersion.ToArray();
+
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlStageStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal((409, "StageStatusInconsistent"), (rejected.StatusCode, rejected.Code));
+        Assert.Empty(await db.PendingArchiveCancellations.ToListAsync(Ct));
+        Assert.Equal(rowVersion, (await db.TestEnvironments.AsNoTracking().SingleAsync(Ct)).RowVersion);
     }
 
     [SqlServerFact]
