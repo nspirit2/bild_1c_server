@@ -130,6 +130,44 @@ test('filter clears cursor history and late prior-filter response is ignored', a
   assert.equal(calls.find(c => c.route.includes('cursor=page-one')).options.signal.aborted, true);
 });
 
+test('cancelled filter shows only confirmed cancellation and labels historical staging', async () => {
+  const calls = [];
+  const cancelled = { ...item(env1), requestId: env2, jobState: 'Cancelled', environmentState: 'Cancelled',
+    reservationState: 'Released', unsettled: false, cancellationCode: 'CancelledBeforeFirstLease' };
+  const nodes = harness(async (route, options) => {
+    calls.push({ route, options });
+    if (route === '/api/auth/me') return ok({ name: 'operator' });
+    if (route.includes('state=Cancelled')) return ok({ items: [cancelled], nextCursor: null });
+    if (route.endsWith('/cleanup-status')) return denied(404);
+    if (route.endsWith('/stage-status')) return ok({ ...cancelled, requestId: env1 });
+    return ok({ items: [], nextCursor: 'prior-page' });
+  });
+  await flush();
+  nodes.get('state-filter').value = 'Cancelled';
+  nodes.get('state-filter').listeners.change(); await flush();
+  assert.equal(calls.at(-1).route, '/api/stage-operations?limit=25&state=Cancelled');
+  const row = nodes.get('operations-body').querySelectorAll('tr')[0];
+  assert.equal(row.children[1].children[0].textContent, 'Отменено до первой выдачи');
+  assert.equal(row.children[2].textContent, 'Логический резерв освобождён');
+  assert.match(row.children[2].children[0].textContent, /^Исторический staging-резерв:/);
+  buttons(nodes)[0].listeners.click(); await flush();
+  assert.equal(nodes.get('detail-values').children.length, 0);
+  assert.equal(calls.some(c => c.options.method === 'POST'), false);
+});
+
+test('list refuses unconfirmed cancellation and contradictory marker without displaying quota', async () => {
+  const raw = { ...item(env1), requestId: env2, jobState: 'Cancelled', environmentState: 'Cancelled',
+    reservationState: 'Released', unsettled: false };
+  for (const row of [raw, { ...raw, cancellationCode: 'CancelledBeforeFirstLease', unsettled: true },
+    { ...item(env1), cancellationCode: 'CancelledBeforeFirstLease' }]) {
+    const nodes = harness(async route => route === '/api/auth/me' ? ok({ name: 'operator' }) :
+      ok({ items: [row], nextCursor: 'bad-page' }));
+    await flush();
+    assert.equal(nodes.get('operations-body').querySelectorAll('tr').length, 0);
+    assert.equal(nodes.get('next').disabled, true);
+  }
+});
+
 test('next and previous use opaque cursor and do not invent offset or query values', async () => {
   const calls = [];
   const nodes = harness(async route => {

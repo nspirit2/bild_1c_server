@@ -67,6 +67,7 @@ public sealed class SqlStageOperationsTests
             Reservations = await db.EnvironmentReservations.AsNoTracking().OrderBy(x => x.Id).ToListAsync(),
             Leases = await db.AgentLeases.AsNoTracking().OrderBy(x => x.JobId).ToListAsync(),
             Artifacts = await db.StagedArtifacts.AsNoTracking().OrderBy(x => x.ArtifactId).ToListAsync(),
+            Cancellations = await db.PendingArchiveCancellations.AsNoTracking().OrderBy(x => x.EnvironmentId).ToListAsync(),
             Audits = await db.AuditEvents.AsNoTracking().OrderBy(x => x.Id).ToListAsync()
         });
     }
@@ -139,6 +140,116 @@ public sealed class SqlStageOperationsTests
             Assert.NotEqual(default, page.ObservedAt);
         }
         Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    private static Task<PendingArchiveCancellationReceipt> CancelAsync(BuildSystemDbContext db, Actor owner, OrderReceipt order) =>
+        new SqlPendingArchiveCancellations(db, enabled: true).CancelAsync(owner, order.EnvironmentId, new(order.JobId), Ct);
+
+    [SqlServerFact]
+    public async Task Proven_cancellations_are_owner_scoped_marked_and_keyset_paginated()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        await using (var setup = sql.NewContext())
+        {
+            await CancelAsync(setup, seed.Owner, seed.Owned[0]);
+            await CancelAsync(setup, seed.Foreign, seed.Other[0]);
+            var tied = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            await setup.EnvironmentJobs.ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedAt, tied));
+        }
+        var before = await DurableStateAsync(sql);
+        await using var db = sql.NewContext(); var service = new SqlStageOperations(db);
+        var ownerView = Assert.Single((await service.ListAsync(seed.Owner, new(State: "Cancelled"), Ct)).Items);
+        Assert.Equal(seed.Owned[0].JobId, ownerView.JobId);
+        Assert.Equal(seed.Other[0].JobId, Assert.Single((await service.ListAsync(seed.Foreign, new(State: "Cancelled"), Ct)).Items).JobId);
+        Assert.Equal("Cancelled", ownerView.JobState);
+        Assert.Equal("Cancelled", ownerView.EnvironmentState);
+        Assert.Equal("Released", ownerView.ReservationState);
+        Assert.False(ownerView.Unsettled);
+        Assert.Equal(10, ownerView.StagingBytes);
+        var status = Assert.IsType<StageStatusView>(await new SqlStageStatus(db).GetAsync(seed.Owner, ownerView.EnvironmentId, Ct));
+        Assert.Equal("CancelledBeforeFirstLease", status.ReconciliationCode);
+        Assert.Equal(status.ReconciliationCode, ownerView.CancellationCode);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(ownerView));
+        Assert.Equal(ownerView.CancellationCode, json.RootElement.GetProperty("cancellationCode").GetString());
+        Assert.Equal(10, json.RootElement.EnumerateObject().Count());
+        var expected = new[] { seed.Owned[0].JobId, seed.Other[0].JobId }.OrderByDescending(id => id.ToString("D"), StringComparer.Ordinal).ToArray();
+        var first = await service.ListAsync(seed.Admin, new(1, State: "Cancelled"), Ct);
+        Assert.Equal(expected[0], Assert.Single(first.Items).JobId); Assert.NotNull(first.NextCursor);
+        var second = await service.ListAsync(seed.Admin, new(1, first.NextCursor, "Cancelled"), Ct);
+        Assert.Equal(expected[1], Assert.Single(second.Items).JobId); Assert.Null(second.NextCursor);
+        await Assert.ThrowsAsync<RequestRejectedException>(() => service.ListAsync(seed.Admin, new(1, first.NextCursor), Ct));
+        var all = await service.ListAsync(seed.Admin, new(), Ct);
+        Assert.Equal(5, all.Items.Count);
+        Assert.Equal(2, all.Items.Count(x => x.CancellationCode is not null));
+        Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Cancellation_like_contradictions_are_filtered_before_limit_and_cursor()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var retainedReceipt = seed.Owned[0]; var missingReceipt = seed.Owned[1]; var releasedOnly = seed.Owned[2];
+        await using (var setup = sql.NewContext())
+        {
+            var receipt = await CancelAsync(setup, seed.Owner, retainedReceipt);
+            await setup.EnvironmentJobs.Where(x => x.Id == receipt.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"));
+            await setup.EnvironmentRequests.Where(x => x.Id == receipt.RequestId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Pending"));
+            await setup.TestEnvironments.Where(x => x.Id == receipt.EnvironmentId).ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.State, "Requested").SetProperty(x => x.HasUnsettledProvisioningOperation, true));
+            await setup.EnvironmentReservations.Where(x => x.Id == receipt.ReservationId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Held"));
+            await setup.EnvironmentRequests.Where(x => x.Id == missingReceipt.RequestId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "cAnCeLlEd "));
+            var reservationId = await setup.TestEnvironments.Where(x => x.Id == releasedOnly.EnvironmentId).Select(x => x.ReservationId).SingleAsync();
+            await setup.EnvironmentReservations.Where(x => x.Id == reservationId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Released"));
+            var newest = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            await setup.EnvironmentJobs.Where(x => x.Id == retainedReceipt.JobId || x.Id == missingReceipt.JobId || x.Id == releasedOnly.JobId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedAt, newest));
+        }
+        var before = await DurableStateAsync(sql);
+        await using var db = sql.NewContext(); var service = new SqlStageOperations(db);
+        foreach (var state in new string?[] { null, "Pending" })
+        {
+            var first = await service.ListAsync(seed.Admin, new(1, State: state), Ct);
+            var one = Assert.Single(first.Items); Assert.NotNull(first.NextCursor);
+            var second = await service.ListAsync(seed.Admin, new(1, first.NextCursor, state), Ct);
+            var two = Assert.Single(second.Items); Assert.Null(second.NextCursor);
+            Assert.Equal(seed.Other.Select(x => x.JobId).Order(), new[] { one.JobId, two.JobId }.Order());
+            Assert.Null(one.CancellationCode); Assert.Null(two.CancellationCode);
+        }
+        Assert.Empty((await service.ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items);
+        Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
+    public async Task Snapshot_and_authority_drift_are_not_recognized_by_list_or_detail()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var order = seed.Owned[0];
+        await using var db = sql.NewContext(); var service = new SqlStageOperations(db);
+        await CancelAsync(db, seed.Owner, order);
+        var snapshot = await db.EnvironmentJobs.Where(x => x.Id == order.JobId).Select(x => x.SnapshotJson).SingleAsync();
+        async Task AssertHiddenAsync()
+        {
+            Assert.DoesNotContain((await service.ListAsync(seed.Admin, new(), Ct)).Items, x => x.JobId == order.JobId);
+            Assert.Empty((await service.ListAsync(seed.Admin, new(State: "Cancelled"), Ct)).Items);
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageStatus(db).GetAsync(seed.Admin, order.EnvironmentId, Ct));
+            Assert.Equal(409, error.StatusCode);
+        }
+        var node = System.Text.Json.Nodes.JsonNode.Parse(snapshot)!.AsObject();
+        node["stagingBytes"] = "10";
+        var wrongType = node.ToJsonString();
+        node["stagingBytes"] = 10;
+        node["sourceArchiveId"] = Guid.NewGuid();
+        var wrongSource = node.ToJsonString();
+        foreach (var corrupt in new[] { "{bad", "[]", snapshot[..^1] + ",\"STAGINGBYTES\":10}", wrongType, wrongSource })
+        {
+            await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SnapshotJson, corrupt));
+            await AssertHiddenAsync();
+        }
+        await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SnapshotJson, snapshot));
+        db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), Action = "ArchiveStageLeased", ActorId = seed.Agent,
+            TargetId = order.JobId, CreatedAt = DateTimeOffset.UtcNow });
+        await db.SaveChangesAsync();
+        await AssertHiddenAsync();
     }
 
     [SqlServerFact]

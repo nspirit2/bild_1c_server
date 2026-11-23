@@ -1,5 +1,4 @@
 using System.Data;
-using System.Text.Json;
 using BuildSystem.Application;
 using Microsoft.EntityFrameworkCore;
 
@@ -44,8 +43,9 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
             var receipts = await db.PendingArchiveCancellations.AsNoTracking().Where(x => x.EnvironmentId == environment.Id ||
                 x.RequestId == request.Id || x.JobId == job.Id || x.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
             // A retained receipt also makes drift back to apparently pending metadata anomalous.
-            var cancellationLike = receipts.Count != 0 || environment.State == "Cancelled" ||
-                request.State == "Cancelled" || job.State == "Cancelled";
+            var cancellationLike = receipts.Count != 0 || CancellationLike(environment.State, "Cancelled") ||
+                CancellationLike(request.State, "Cancelled") || CancellationLike(job.State, "Cancelled") ||
+                CancellationLike(reservation.State, "Released");
             if (cancellationLike)
             {
                 if (receipts.Count != 1) throw Inconsistent();
@@ -67,7 +67,7 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
             var restoreIntent = cancellationLike ? null : await RestoreIntentStatus.ReadAsync(db, environment, request, job, reservation,
                 lease, artifact, "StageStatusInconsistent", ct);
             var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
-            var code = cancellationLike ? "CancelledBeforeFirstLease" : Classify(job, environment, request, reservation, lease, artifact, now);
+            var code = cancellationLike ? StageCancellationProof.Code : Classify(job, environment, request, reservation, lease, artifact, now);
             var result = new StageStatusView(environment.Id, request.Id, job.Id, job.State, environment.State,
                 request.State, reservation.State, reservation.StagingBytes, environment.HasUnsettledProvisioningOperation,
                 artifact?.ArtifactId, artifact?.State, lease?.State, lease?.ExpiresAt, code, now)
@@ -82,63 +82,14 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
         EnvironmentRequest request, EnvironmentJob job, EnvironmentReservation reservation,
         PendingArchiveCancellationRecord receipt, string inconsistentCode, CancellationToken ct)
     {
-        RequestRejectedException Inconsistent() => new(409, inconsistentCode);
-        var environmentId = environment.Id;
-        var requestId = request.Id;
-        var jobId = job.Id;
-        var reservationId = reservation.Id;
-        if (environment.State != "Cancelled" || request.State != "Cancelled" || job.State != "Cancelled" ||
-            reservation.State != "Released" || environment.HasUnsettledProvisioningOperation || environment.ExpiresAt is not null ||
-            receipt.EnvironmentId != environmentId || receipt.RequestId != requestId || receipt.JobId != jobId ||
-            receipt.ReservationId != reservationId || receipt.PoolId != environment.PoolId ||
-            receipt.ActorId == Guid.Empty || receipt.CancelledAt == default || receipt.CancelledAt.Offset != TimeSpan.Zero)
-            throw Inconsistent();
-
-        var source = await (from v in db.DiskArchiveVersions.AsNoTracking()
-                            join a in db.DiskArchives.AsNoTracking() on v.ArchiveId equals a.Id
-                            where v.Id == request.ArchiveVersionId
-                            select new { a.Id, a.RootId }).SingleOrDefaultAsync(ct);
-        if (source is null || receipt.RootId != source.RootId ||
-            !MatchesCancellationSnapshot(job, receipt, request.ArchiveVersionId, source.Id, reservation.StagingBytes))
-            throw Inconsistent();
-
-        // Check every order anchor, including on rows whose other pins could be inconsistent.
-        // Cleanup and target execution rows require an artifact, retirement or restore intent by FK.
-        if (await db.EnvironmentRequests.AnyAsync(x => x.Id != requestId && (x.JobId == jobId || x.EnvironmentId == environmentId), ct) ||
-            await db.EnvironmentJobs.AnyAsync(x => x.Id != jobId && x.EnvironmentId == environmentId, ct) ||
-            await db.AgentLeases.AnyAsync(x => x.JobId == jobId, ct) ||
-            await db.AgentEvents.AnyAsync(x => x.JobId == jobId, ct) ||
-            await db.AuditEvents.AnyAsync(x => x.TargetId == jobId && x.Action == "ArchiveStageLeased", ct) ||
-            await db.StagedArtifacts.AnyAsync(x => x.JobId == jobId || x.ReservationId == reservationId, ct) ||
-            await db.StageRetirementIntents.AnyAsync(x => x.EnvironmentId == environmentId || x.JobId == jobId || x.ReservationId == reservationId, ct) ||
-            await db.StagingAllocationReleases.AnyAsync(x => x.ReservationId == reservationId, ct) ||
-            await db.RestoreIntents.AnyAsync(x => x.EnvironmentId == environmentId || x.RequestId == requestId ||
-                x.StageJobId == jobId || x.ReservationId == reservationId, ct) ||
-            await db.TargetObservations.AnyAsync(x => x.EnvironmentId == environmentId || x.StageJobId == jobId || x.ReservationId == reservationId, ct))
-            throw Inconsistent();
+        if (receipt.EnvironmentId != environment.Id || receipt.RequestId != request.Id ||
+            receipt.JobId != job.Id || receipt.ReservationId != reservation.Id ||
+            !await StageCancellationProof.ProvenJobIds(db).AnyAsync(id => id == job.Id, ct))
+            throw new RequestRejectedException(409, inconsistentCode);
     }
 
-    private static bool MatchesCancellationSnapshot(EnvironmentJob job, PendingArchiveCancellationRecord receipt,
-        Guid versionId, Guid archiveId, long stagingBytes)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(job.SnapshotJson);
-            var snapshot = document.RootElement;
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            return snapshot.ValueKind == JsonValueKind.Object && snapshot.EnumerateObject().All(p => names.Add(p.Name)) &&
-                snapshot.GetProperty("reservationId").GetGuid() == receipt.ReservationId &&
-                snapshot.GetProperty("poolId").GetGuid() == receipt.PoolId &&
-                snapshot.GetProperty("sourceRootId").GetGuid() == receipt.RootId &&
-                snapshot.GetProperty("sourceArchiveId").GetGuid() == archiveId &&
-                snapshot.GetProperty("archiveVersionId").GetGuid() == versionId &&
-                stagingBytes > 0 && snapshot.GetProperty("stagingBytes").GetInt64() == stagingBytes;
-        }
-        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentException)
-        {
-            return false;
-        }
-    }
+    private static bool CancellationLike(string state, string value) =>
+        string.Equals(state.TrimEnd(' '), value, StringComparison.OrdinalIgnoreCase);
 
     private static string Classify(EnvironmentJob job, EnvironmentRecord environment, EnvironmentRequest request,
         EnvironmentReservation reservation, AgentLease? lease, StagedArtifact? artifact, DateTimeOffset now)

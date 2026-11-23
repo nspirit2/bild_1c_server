@@ -10,6 +10,7 @@ namespace BuildSystem.Infrastructure;
 public sealed class SqlStageOperations(BuildSystemDbContext db) : IStageOperations
 {
     private const string IdCollation = "Latin1_General_100_BIN2";
+    private const string CancellationLikeCollation = "Latin1_General_100_CI_AS";
     private static readonly JsonSerializerOptions CursorJson = new()
     { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private sealed record Position(int Version, long UtcTicks, Guid JobId, string? State, Guid ActorId, bool Administrator);
@@ -18,7 +19,7 @@ public sealed class SqlStageOperations(BuildSystemDbContext db) : IStageOperatio
     {
         if (actor is null || actor.UserId == Guid.Empty) throw new RequestRejectedException(403, "Forbidden");
         if (query is null || query.Limit is < 1 or > 100 ||
-            query.State is not (null or "Pending" or "Leased" or "StageCompleted" or "NeedsAttention")) throw InvalidQuery();
+            query.State is not (null or "Pending" or "Leased" or "StageCompleted" or "NeedsAttention" or "Cancelled")) throw InvalidQuery();
         var position = Decode(query.Cursor, actor, query.State);
         return db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
@@ -36,6 +37,20 @@ public sealed class SqlStageOperations(BuildSystemDbContext db) : IStageOperatio
                                db.ProjectMemberships.Any(m => m.UserId == actor.UserId && m.ProjectId == environment.ProjectId) &&
                                db.Projects.Any(p => p.Id == environment.ProjectId && p.Enabled)))
                        select new { job, request, environment, reservation };
+            var provenCancellations = StageCancellationProof.ProvenJobIds(db);
+            // A receipt on ANY operation anchor can expose drift back to apparently pending metadata.
+            // The proof itself uses exact case and length; this negative gate also catches case/padding variants.
+            if (query.State == "Cancelled")
+                rows = rows.Where(x => provenCancellations.Contains(x.job.Id));
+            else
+                rows = rows.Where(x =>
+                    (EF.Functions.Collate(x.job.State, CancellationLikeCollation) != "Cancelled" &&
+                     EF.Functions.Collate(x.request.State, CancellationLikeCollation) != "Cancelled" &&
+                     EF.Functions.Collate(x.environment.State, CancellationLikeCollation) != "Cancelled" &&
+                     EF.Functions.Collate(x.reservation.State, CancellationLikeCollation) != "Released" &&
+                     !db.PendingArchiveCancellations.Any(c => c.EnvironmentId == x.environment.Id ||
+                         c.RequestId == x.request.Id || c.JobId == x.job.Id || c.ReservationId == x.reservation.Id)) ||
+                    (query.State == null && provenCancellations.Contains(x.job.Id)));
             if (position is not null)
             {
                 var createdAt = new DateTimeOffset(position.UtcTicks, TimeSpan.Zero);
@@ -49,7 +64,9 @@ public sealed class SqlStageOperations(BuildSystemDbContext db) : IStageOperatio
                 .ThenByDescending(x => EF.Functions.Collate(x.job.Id.ToString().ToLower(), IdCollation))
                 .Select(x => new StageOperationView(x.environment.Id, x.request.Id, x.job.Id, x.job.State,
                     x.environment.State, x.reservation.State, x.reservation.StagingBytes,
-                    x.environment.HasUnsettledProvisioningOperation, x.job.CreatedAt))
+                    x.environment.HasUnsettledProvisioningOperation, x.job.CreatedAt)
+                { CancellationCode = EF.Functions.Collate(x.job.State, CancellationLikeCollation) == "Cancelled"
+                    ? StageCancellationProof.Code : null })
                 .Take(query.Limit + 1).ToListAsync(ct);
             var hasMore = items.Count > query.Limit;
             if (hasMore) items.RemoveAt(query.Limit);

@@ -10,7 +10,7 @@
     AwaitingStage: 'Ожидает stage', StageActive: 'Stage выполняется', ArtifactReported: 'Квитанция содержимого записана',
     LeaseExpired: 'Срок lease истёк', Inconsistent: 'Несогласованные состояния'
   };
-  const allowedFilters = new Set(['', 'Pending', 'Leased', 'StageCompleted', 'NeedsAttention']);
+  const allowedFilters = new Set(['', 'Pending', 'Leased', 'StageCompleted', 'NeedsAttention', 'Cancelled']);
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let generation = 0, detailGeneration = 0, controller = null, detailController = null;
   let authenticated = false, busy = false, history = [null], nextCursor = null, selected = null;
@@ -403,6 +403,13 @@
     const td = document.createElement('td'); td.textContent = value;
     if (className) td.className = className; row.append(td); return td;
   }
+  function isCancelledListRow(item) {
+    return item.cancellationCode === 'CancelledBeforeFirstLease' &&
+      item.jobState === 'Cancelled' && item.environmentState === 'Cancelled' &&
+      item.reservationState === 'Released' && item.unsettled === false &&
+      [item.environmentId, item.requestId, item.jobId].every(hasGuid) &&
+      Number.isSafeInteger(item.stagingBytes) && item.stagingBytes > 0;
+  }
   function renderList(items) {
     const fragment = document.createDocumentFragment();
     for (const item of items) {
@@ -412,14 +419,17 @@
       const job = document.createElement('small'); job.textContent = 'Задание: ' + text(item.jobId); identity.append(env, job);
       const status = cell(row, ''); const badge = document.createElement('span'); badge.className = 'badge';
       if (item.jobState === 'NeedsAttention') badge.classList.add('attention');
-      badge.textContent = stateText(item.jobState); status.append(badge);
-      const envState = document.createElement('small'); envState.textContent = 'Окружение: ' + stateText(item.environmentState); status.append(envState);
-      const resources = cell(row, stateText(item.reservationState)); const size = document.createElement('small'); size.textContent = bytes(item.stagingBytes); resources.append(size);
+      const cancelled = isCancelledListRow(item);
+      badge.textContent = cancelled ? 'Отменено до первой выдачи' : stateText(item.jobState); status.append(badge);
+      const envState = document.createElement('small'); envState.textContent = 'Окружение: ' + (cancelled ? 'Отменено' : stateText(item.environmentState)); status.append(envState);
+      const resources = cell(row, cancelled ? 'Логический резерв освобождён' : stateText(item.reservationState));
+      const size = document.createElement('small'); size.textContent = (cancelled ? 'Исторический staging-резерв: ' : '') + bytes(item.stagingBytes); resources.append(size);
       cell(row, date(item.createdAt));
       const action = cell(row, ''); const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary'; button.textContent = 'Подробнее';
       button.setAttribute('aria-controls', 'detail-panel'); button.setAttribute('aria-expanded', 'false');
       if (typeof item.environmentId === 'string' && guid.test(item.environmentId)) {
-        button.dataset.environment = item.environmentId; button.addEventListener('click', () => loadDetail(item.environmentId));
+        button.dataset.environment = item.environmentId;
+        button.addEventListener('click', () => loadDetail(item.environmentId, cancelled ? item : null));
       } else button.disabled = true;
       action.append(button); fragment.append(row);
     }
@@ -438,6 +448,9 @@
       if (op.version !== generation) return;
       if (!Array.isArray(page?.items) || page.items.length > 25 || page.items.some(item => !item || typeof item !== 'object') ||
           !(page.nextCursor == null || (typeof page.nextCursor === 'string' && page.nextCursor.length <= 512))) throw new Error('Invalid list response');
+      if (page.items.some(item => (filter === 'Cancelled' || item.cancellationCode != null || item.jobState === 'Cancelled' ||
+          item.environmentState === 'Cancelled' || item.reservationState === 'Released') && !isCancelledListRow(item)))
+        throw new Error('Invalid cancellation list row');
       nextCursor = page.nextCursor || null; renderList(page.items);
       ui['empty-list'].hidden = page.items.length !== 0; ui.observed.textContent = 'Наблюдение сервера: ' + date(page.observedAt);
       ui['page-number'].textContent = 'Страница ' + history.length;
@@ -552,9 +565,9 @@
         : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
     }
   }
-  async function loadDetail(id, expected = null) {
+  async function loadDetail(id, expected = null, fromHistory = false) {
     if (!authenticated || busy || !guid.test(id)) return;
-    closeDetail(); historyStage = !!expected; selected = id; markSelection();
+    closeDetail(); historyStage = fromHistory; selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
     let cancelled = false;
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
@@ -649,7 +662,7 @@
   ui['order-summary-load'].addEventListener('click', loadSummary);
   ui['order-stage-load'].addEventListener('click', () => {
     if (authenticated && orderSummary && orderSummary.environmentId === selectedEnvironment && orderSummary.jobKind === 'ProvisionArchive' && !ui['order-stage-load'].disabled)
-      loadDetail(orderSummary.environmentId, { requestId: orderSummary.requestId, jobId: orderSummary.jobId });
+      loadDetail(orderSummary.environmentId, { requestId: orderSummary.requestId, jobId: orderSummary.jobId }, true);
   });
   ui['environments-refresh'].addEventListener('click', () => loadEnvironments(true));
   ui['environment-previous'].addEventListener('click', () => {

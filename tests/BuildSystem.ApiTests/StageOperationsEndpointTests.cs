@@ -27,6 +27,17 @@ public sealed class StageOperationsFactory : ApiFactory
         public Task<StageOperationsPage> ListAsync(Actor actor, StageOperationsQuery query, CancellationToken ct)
         {
             if (actor.UserId != Guid.Parse("11111111-1111-1111-1111-111111111111")) throw new InvalidOperationException("Unexpected actor");
+            if (query == new StageOperationsQuery(25, null, "Cancelled"))
+            {
+                var row = new StageOperationView(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                    "Cancelled", "Cancelled", "Released", 100, false, DateTimeOffset.UnixEpoch)
+                { CancellationCode = "CancelledBeforeFirstLease" };
+                return Task.FromResult(new StageOperationsPage([row], null, DateTimeOffset.UnixEpoch));
+            }
+            if (query == new StageOperationsQuery(25, null, "Pending"))
+                return Task.FromResult(new StageOperationsPage([new StageOperationView(Guid.NewGuid(), Guid.NewGuid(),
+                    Guid.NewGuid(), "Pending", "Requested", "Held", 100, true, DateTimeOffset.UnixEpoch)],
+                    null, DateTimeOffset.UnixEpoch));
             if (query.Limit != 25 || query.Cursor is not null || query.State is not null)
             {
                 if (query != new StageOperationsQuery(2, "test-cursor", "Leased")) throw new InvalidOperationException("Unexpected query");
@@ -76,6 +87,31 @@ public sealed class StageOperationsEndpointTests : IClassFixture<StageOperations
         var error = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageOperations(db)
             .ListAsync(new Actor(Guid.NewGuid(), false), new StageOperationsQuery(limit, cursor, state), default));
         Assert.Equal(400, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task CancellationFilterReturnsOnlyThePublicConfirmationMarker()
+    {
+        using var client = Client(); client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        using var response = await client.GetAsync("/api/stage-operations?state=Cancelled");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        var row = Assert.Single(payload.GetProperty("items").EnumerateArray());
+        Assert.Equal("CancelledBeforeFirstLease", row.GetProperty("cancellationCode").GetString());
+        Assert.Equal(new[] { "cancellationCode", "createdAt", "environmentId", "environmentState", "jobId",
+            "jobState", "requestId", "reservationState", "stagingBytes", "unsettled" },
+            row.EnumerateObject().Select(x => x.Name).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task NonCancellationRowKeepsItsExistingWireShape()
+    {
+        using var client = Client(); client.DefaultRequestHeaders.Add("X-Test-User", "yes");
+        using var response = await client.GetAsync("/api/stage-operations?state=Pending");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        var row = Assert.Single(payload.GetProperty("items").EnumerateArray());
+        Assert.False(row.TryGetProperty("cancellationCode", out _));
     }
 
     [Fact]
