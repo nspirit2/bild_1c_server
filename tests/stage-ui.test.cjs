@@ -155,6 +155,31 @@ test('cancelled filter shows only confirmed cancellation and labels historical s
   assert.equal(calls.some(c => c.options.method === 'POST'), false);
 });
 
+test('cancelled row reads stage only and requires matching cancellation and historical bytes', async () => {
+  const row = { ...item(env1), requestId: env2, jobState: 'Cancelled', environmentState: 'Cancelled',
+    reservationState: 'Released', unsettled: false, cancellationCode: 'CancelledBeforeFirstLease' };
+  for (const [detail, accepted] of [[cancelledDetail({ stagingBytes: 10 }), true],
+    [cancelledDetail({ stagingBytes: 20 }), false], [retainedDetail({ stagingBytes: 10 }), false], [null, false]]) {
+    const calls = [];
+    const nodes = harness(async route => {
+      calls.push(route);
+      if (route === '/api/auth/me') return ok({ name: 'operator' });
+      if (route.startsWith('/api/stage-operations')) return ok({ items: [row], nextCursor: null });
+      if (route.endsWith('/stage-status')) return detail ? ok(detail) : denied(409);
+      throw new Error('Unexpected route');
+    });
+    await flush(); buttons(nodes)[0].listeners.click(); await flush();
+    assert.ok(calls.some(route => route.endsWith('/stage-status')));
+    assert.equal(calls.some(route => route.endsWith('/cleanup-status')), false);
+    if (accepted) assertCancellation(nodes);
+    else {
+      assert.equal(nodes.get('detail-values').children.length, 0);
+      assert.match(nodes.get('detail-message').textContent, /состояние неизвестно/);
+      assert.doesNotMatch(nodes.get('cleanup-message').textContent, /Cleanup не применим/);
+    }
+  }
+});
+
 test('list refuses unconfirmed cancellation and contradictory marker without displaying quota', async () => {
   const raw = { ...item(env1), requestId: env2, jobState: 'Cancelled', environmentState: 'Cancelled',
     reservationState: 'Released', unsettled: false };

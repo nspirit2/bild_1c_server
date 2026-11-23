@@ -570,14 +570,18 @@
     closeDetail(); historyStage = fromHistory; selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
     let cancelled = false;
+    const expectsCancellation = expected?.cancellationCode === 'CancelledBeforeFirstLease';
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
-    void loadCleanup(id, version, session, detailController.signal, expected, () => cancelled);
+    if (expectsCancellation) ui['cleanup-message'].textContent = 'Учёт cleanup не запрошен; проверяется подтверждение отмены.';
+    else void loadCleanup(id, version, session, detailController.signal, expected, () => cancelled);
     try {
       const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
       if (version !== detailGeneration || session !== generation || !authenticated) return;
       if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() ||
           (expected && (!hasGuid(value.requestId) || !hasGuid(value.jobId) || value.requestId.toLowerCase() !== expected.requestId.toLowerCase() || value.jobId.toLowerCase() !== expected.jobId.toLowerCase()))) throw new Error('Invalid detail response');
       cancelled = isConfirmedCancellation(value);
+      if (expectsCancellation && (!cancelled || value.stagingBytes !== expected.stagingBytes))
+        throw new Error('Cancellation detail does not match list');
       if (!cancelled && (value.reconciliationCode === 'CancelledBeforeFirstLease' || value.reservationState === 'Released' ||
           [value.jobState, value.environmentState, value.requestState].includes('Cancelled'))) {
         ui['detail-message'].textContent = 'Недостаточно согласованных метаданных: не считать ресурсы свободными.';
@@ -610,6 +614,7 @@
     } catch (error) {
       if (version !== detailGeneration || session !== generation || error.name === 'AbortError') return;
       if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      if (expectsCancellation) ui['cleanup-message'].textContent = 'Учёт cleanup не запрошен; детали не подтвердили отмену из списка.';
       ui['detail-message'].textContent = (expected ? 'Наблюдение stage недоступно; состояние неизвестно. Это не отсутствие удержаний. ' : '') + errorText(error);
     } finally { if (version === detailGeneration) ui['detail-panel'].setAttribute('aria-busy', 'false'); }
   }
