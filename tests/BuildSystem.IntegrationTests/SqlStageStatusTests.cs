@@ -172,6 +172,23 @@ public sealed class SqlStageStatusTests
     }
 
     [SqlServerFact]
+    public async Task Noncanonical_artifact_state_is_rejected_by_both_observations()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var report = await ReportAsync(sql, seed, await PollAsync(sql, seed));
+        await using var db = sql.NewContext();
+        Assert.Equal(1, await db.StagedArtifacts.Where(a => a.ArtifactId == report.ArtifactId)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, "contentverified"), Ct));
+        var before = await DurableStateAsync(sql);
+        var stage = await Assert.ThrowsAsync<RequestRejectedException>(() => StatusAsync(sql, seed));
+        Assert.Equal((409, "StageStatusInconsistent"), (stage.StatusCode, stage.Code));
+        var cleanup = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (cleanup.StatusCode, cleanup.Code));
+        Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
     public async Task Expired_active_read_reports_expiry_without_sweep_then_observes_control_plane_needs_attention()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

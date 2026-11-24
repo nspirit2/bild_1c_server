@@ -20,6 +20,7 @@ node --test tests/*.test.cjs
 | История отключённого проекта по-прежнему доступна владельцу с членством, но не подтверждает противоречивую отмену | [SQL-сценарии истории](../tests/BuildSystem.IntegrationTests/EnvironmentOrderSummaryTests.cs) |
 | При конфликте с квитанцией отмены сервер не выдаёт план или разрешение, не принимает отчёт агента и не подтверждает повтор списания; существующий журнал остаётся неизменным | [SQL-сценарии планов](../tests/BuildSystem.IntegrationTests/SqlStageRetirementPlanTests.cs), [SQL-сценарии учёта](../tests/BuildSystem.IntegrationTests/SqlStagingAllocationReleaseTests.cs) |
 | Конфликт квитанции с журналом staging блокирует новый заказ на общем корне даже из другого пула | [SQL-сценарии учёта](../tests/BuildSystem.IntegrationTests/SqlStagingAllocationReleaseTests.cs) |
+| Stage и cleanup отклоняют квитанцию артефакта с чужим заданием или неподтверждённым состоянием, не меняя данные | [SQL-сценарии stage-status](../tests/BuildSystem.IntegrationTests/SqlStageStatusTests.cs) |
 | Панель сверяет список с деталями и допускает показ учёта cleanup только при совпадении задания, артефакта, исторического объёма и удержания restore; логический резерв не выдаётся за свободное место | [Браузерные сценарии stage](../tests/stage-ui.test.cjs) |
 
 ## Что нужно согласовать для проверки на стенде
