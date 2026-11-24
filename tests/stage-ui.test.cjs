@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../src/Server/BuildSystem.A
 class Element {
   constructor(tag = 'div') { this.tag = tag; this.children = []; this.listeners = {}; this.dataset = {}; this.hidden = false; this.value = ''; this.textContent = ''; this.classList = { add() {}, toggle() {} }; }
   addEventListener(name, handler) { this.listeners[name] = handler; }
-  setAttribute() {}
+  setAttribute(name, value) { (this.attributes ??= {})[name] = value; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   querySelectorAll(tag) { return this.children.flatMap(child => [ ...(child.tag === tag ? [child] : []), ...child.querySelectorAll(tag)]); }
@@ -638,6 +638,27 @@ test('refresh re-reads the selected stage before cleanup and ignores the old cle
   const count = calls.length;
   refresh.listeners.click(); await flush();
   assert.equal(calls.length, count);
+});
+
+test('stage and cleanup report loading independently across refresh and close', async () => {
+  const oldCleanup = deferred(), newCleanup = deferred(), newStage = deferred();
+  let stageReads = 0, cleanupReads = 0;
+  const {nodes} = await cleanupHarness(() => (++cleanupReads === 1 ? oldCleanup : newCleanup).promise,
+    () => ++stageReads === 1 ? ok(retainedDetail()) : newStage.promise);
+  const stageBusy = () => nodes.get('detail-panel').attributes['aria-busy'];
+  const cleanupBusy = () => nodes.get('cleanup-panel').attributes['aria-busy'];
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['false', 'true']);
+  nodes.get('refresh-detail').listeners.click(); await flush();
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['true', 'false']);
+  newStage.resolve(ok(retainedDetail())); await flush();
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['false', 'true']);
+  oldCleanup.resolve(ok(cleanupDetail())); await flush();
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['false', 'true']);
+  nodes.get('close-detail').listeners.click();
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['false', 'false']);
+  newCleanup.resolve(ok(cleanupDetail())); await flush();
+  assert.equal(cleanupText(nodes), '');
+  assert.deepEqual([stageBusy(), cleanupBusy()], ['false', 'false']);
 });
 
 test('ordinary cleanup 403 keeps stage visible and 401 clears protected details', async () => {

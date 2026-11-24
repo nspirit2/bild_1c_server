@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','refresh-detail','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed','order-summary-load','order-summary-status','order-summary-values','order-stage-load'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-panel','cleanup-message','cleanup-values','refresh-detail','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed','order-summary-load','order-summary-status','order-summary-values','order-stage-load'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -253,6 +253,8 @@
     refreshDetail = null; ui['refresh-detail'].disabled = true;
     detailGeneration++; detailController?.abort(); detailController = null;
     selected = null; ui['detail-panel'].hidden = true; ui['detail-values'].replaceChildren();
+    ui['detail-panel'].setAttribute('aria-busy', 'false');
+    ui['cleanup-panel'].setAttribute('aria-busy', 'false');
     ui['detail-retention'].hidden = true; ui['detail-retention-reasons'].replaceChildren();
     ui['detail-message'].textContent = ''; ui['cleanup-message'].textContent = ''; ui['cleanup-values'].replaceChildren(); markSelection();
   }
@@ -545,6 +547,7 @@
   }
   const cleanupStates = { None:'Нет retirement intent', IntentRequested:'Intent запрошен', Authorized:'Разрешение записано', DeletedReported:'Удаление сообщено агентом', StagingReleased:'Staging allocation освобождена' };
   async function loadCleanup(base, stage, current, signal, fromHistory) {
+    ui['cleanup-panel'].setAttribute('aria-busy', 'true');
     ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
     try {
       const value = await request(base + '/cleanup-status', signal);
@@ -588,7 +591,7 @@
       ui['cleanup-message'].textContent = error instanceof ApiError && error.status === 404
         ? 'Учёт cleanup недоступен: endpoint отсутствует в этой версии или нет доступа. Состояние неизвестно; не считать staging свободным.'
         : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
-    }
+    } finally { if (current()) ui['cleanup-panel'].setAttribute('aria-busy', 'false'); }
   }
   async function loadDetail(id, expected, fromHistory = false) {
     if (!authenticated || busy || !hasGuid(id)) return;
