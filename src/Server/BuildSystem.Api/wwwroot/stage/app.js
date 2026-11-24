@@ -560,13 +560,17 @@
           value.heldStagingBytes + value.releasedStagingBytes !== value.reservedStagingBytes ||
           !validDate(value.observedAt)) throw new Error('Invalid or mismatched cleanup response');
       const step = ['None','IntentRequested','Authorized','DeletedReported','StagingReleased'].indexOf(value.cleanupState);
-      // Cleanup may have advanced between reads; require a fresh stage observation before showing it.
       if (['retirementId','authorizationId','resultId','releaseId'].some((k, index) => (index < step) !== hasGuid(value[k])) ||
-          (step > 0 && (!hasGuid(value.artifactId) || stage.reconciliationCode !== 'StageCompleted')) ||
+          (step > 0 && !hasGuid(value.artifactId)) ||
           (step < 4 && value.releasedStagingBytes !== 0) ||
           (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0)) ||
           (value.restoreIntentHold && (step !== 0 || !hasGuid(value.artifactId) || value.heldStagingBytes <= 0)))
         throw new Error('Inconsistent cleanup response');
+      // Cleanup may have advanced between reads. Do not publish its accounting against older stage evidence.
+      if (step > 0 && stage.reconciliationCode !== 'StageCompleted') {
+        ui['cleanup-message'].textContent = 'Сведения stage не подтверждают завершение задания. Состояние неизвестно; не считать staging свободным. Нажмите «Обновить сведения».';
+        return;
+      }
       const entries = [['Состояние cleanup',cleanupStates[value.cleanupState]], ['Задание cleanup',text(value.jobId)],
         ['Артефакт cleanup',text(value.artifactId)], ['Retirement intent',text(value.retirementId)], ['Authorization',text(value.authorizationId)],
         ['Результат агента',text(value.resultId)], ['Staging release',text(value.releaseId)],

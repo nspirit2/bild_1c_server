@@ -601,11 +601,17 @@ test('cleanup rejects mismatched pins and never suppresses a valid stage observa
 test('cleanup accounting requires stage completion, not just a matching artifact', async () => {
   const stage = retainedDetail({jobState:'Leased', leaseState:'Active', leaseExpiresAt:'2026-01-01T00:03:00Z',
     reconciliationCode:'ArtifactReported'});
-  const {nodes,calls} = await cleanupHarness(() => ok(cleanupDetail()), () => ok(stage));
+  let stageReads = 0;
+  const {nodes,calls} = await cleanupHarness(() => ok(cleanupDetail()), () => ok(++stageReads === 1 ? stage : retainedDetail()));
   assert.ok(calls.some(call => call.route.endsWith('/cleanup-status')));
   assert.ok(nodes.get('detail-values').querySelectorAll('dd').some(node => node.textContent === 'Квитанция содержимого записана'));
   assert.equal(cleanupText(nodes), '');
-  assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+  assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно.*Обновить сведения/);
+  assert.equal(stageReads, 1);
+  await nodes.get('refresh-detail').listeners.click(); await flush();
+  assert.equal(stageReads, 2);
+  assert.match(cleanupText(nodes), /Staging allocation освобождена/);
+  assert.doesNotMatch(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
 });
 
 test('refresh re-reads the selected stage before cleanup and ignores the old cleanup body', async () => {
