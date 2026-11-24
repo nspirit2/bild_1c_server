@@ -151,6 +151,13 @@ public sealed class SqlPendingArchiveCancellationTests
         var replay = await new SqlPendingArchiveCancellations(replayDb, enabled: true)
             .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct);
         Assert.Equal(first, replay);
+        var disabled = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlPendingArchiveCancellations(replayDb)
+            .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct));
+        Assert.Equal((409, "PendingArchiveCancellationDisabled"), (disabled.StatusCode, disabled.Code));
+        var retainedStatus = Assert.IsType<StageStatusView>(await new SqlStageStatus(replayDb)
+            .GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal("CancelledBeforeFirstLease", retainedStatus.ReconciliationCode);
+        Assert.Null(await new SqlCleanupStatus(replayDb).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
         Assert.Equal(cancelledAt, (await AssertCancelledAsync(replayDb, seed, seed.Owner)).CancelledAt);
         Assert.Equal(terminalVersion, (await replayDb.TestEnvironments.SingleAsync(Ct)).RowVersion);
 
