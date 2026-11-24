@@ -42,7 +42,16 @@ test('stage lease comparison preserves SQL fractional precision and timezone off
     assert.equal(retentionText(nodes).includes('Квота не освобождена'), coherent, `${code} ${expires}`);
   }
 });
-test('retention malformed conflicting and unknown tuples fall back without completion claims',async()=>{for(const overrides of [{unsettled:false},{artifactId:null},{stagingBytes:'65536'},{leaseState:'Active'},{reconciliationCode:'<script>'},{requestState:undefined}]){const {nodes}=await retentionHarness(retainedDetail(overrides));assert.equal(retentionText(nodes),'Недостаточно согласованных метаданных: не считать ресурсы свободными.');}});
+test('retention malformed conflicting and unknown tuples fall back without completion claims', async () => {
+  for (const overrides of [{unsettled:false}, {artifactId:null}, {stagingBytes:'65536'}, {leaseState:'Active'},
+    {reconciliationCode:'<script>'}, {requestState:undefined}, {environmentState:'Ready'}]) {
+    const {nodes,calls} = await retentionHarness(retainedDetail(overrides));
+    assert.equal(retentionText(nodes), 'Недостаточно согласованных метаданных: не считать ресурсы свободными.');
+    assert.equal(nodes.get('detail-values').querySelectorAll('dd').length, 0);
+    assert.match(nodes.get('detail-message').textContent, /состояние неизвестно.*Обновить сведения/);
+    assert.equal(calls.some(call => call.route.endsWith('/cleanup-status')), false);
+  }
+});
 test('retention reads stage and cleanup detail endpoints and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`,`/api/test-environments/${env1}/cleanup-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
 test('retention stale detail after logout cannot restore explanation',async()=>{const pending=deferred();const {nodes}=await retentionHarness(pending);await nodes.get('logout').listeners.click();pending.resolve(ok(retainedDetail()));await flush();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');assert.equal(nodes.get('detail-panel').hidden,true);});
 

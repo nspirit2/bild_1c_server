@@ -619,6 +619,12 @@
         return;
       }
       const retention = cancelled ? null : stageRetention(value);
+      if (!cancelled && !retention) {
+        renderRetention(value, null);
+        ui['detail-message'].textContent = 'Наблюдение stage несогласованно; состояние неизвестно. Нажмите «Обновить сведения».';
+        ui['cleanup-message'].textContent = cleanupSkipped;
+        return;
+      }
       const restoreEntries = restoreIntentEntries(value.restoreIntent);
       if (restoreEntries.length && retention !== 'completed') throw new Error('Inconsistent stage restore intent');
       const cancelledState = 'Отменено';
@@ -641,8 +647,7 @@
       } else {
         renderRetention(value, retention);
         ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
-        if (retention) void loadCleanup(base, value, current, signal, fromHistory);
-        else ui['cleanup-message'].textContent = cleanupSkipped;
+        void loadCleanup(base, value, current, signal, fromHistory);
       }
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
