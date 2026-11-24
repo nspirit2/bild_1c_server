@@ -493,6 +493,11 @@
     const wallTime = value.slice(0, 19);
     return new Date(wallTime + 'Z').toISOString().slice(0, 19) === wallTime;
   };
+  // Date.parse truncates SQL datetimeoffset's seven fractional digits to milliseconds.
+  function compareInstants(left, right) {
+    const remainder = value => Number((/\.(\d+)/.exec(value)?.[1] ?? '').padEnd(7, '0').slice(3));
+    return Date.parse(left) - Date.parse(right) || remainder(left) - remainder(right);
+  }
   function stageRetention(value) {
     const absentArtifact = value.artifactId === null && value.artifactState === null;
     const verifiedArtifact = hasGuid(value.artifactId) && value.artifactState === 'ContentVerified';
@@ -505,9 +510,10 @@
     const active = common && value.jobState === 'Leased' && value.leaseState === 'Active' && validDate(value.leaseExpiresAt);
     const awaiting = common && value.reconciliationCode === 'AwaitingStage' && value.jobState === 'Pending' &&
       value.leaseState === null && value.leaseExpiresAt === null && absentArtifact;
-    const running = active && Date.parse(value.leaseExpiresAt) > Date.parse(value.observedAt) &&
+    const leaseOrder = active ? compareInstants(value.leaseExpiresAt, value.observedAt) : null;
+    const running = active && leaseOrder > 0 &&
       ((value.reconciliationCode === 'StageActive' && absentArtifact) || (value.reconciliationCode === 'ArtifactReported' && verifiedArtifact));
-    const expired = active && value.reconciliationCode === 'LeaseExpired' && Date.parse(value.leaseExpiresAt) <= Date.parse(value.observedAt) && (absentArtifact || verifiedArtifact);
+    const expired = active && value.reconciliationCode === 'LeaseExpired' && leaseOrder <= 0 && (absentArtifact || verifiedArtifact);
     const attention = hasGuid(value.environmentId) && hasGuid(value.requestId) && hasGuid(value.jobId) &&
       value.reconciliationCode === 'NeedsAttention' && Number.isSafeInteger(value.stagingBytes) && value.stagingBytes > 0 &&
       value.unsettled === true && value.reservationState === 'Held' && validDate(value.observedAt) &&

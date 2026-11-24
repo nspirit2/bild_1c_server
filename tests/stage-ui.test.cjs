@@ -27,6 +27,21 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 test('retention completed tuple explains retained quota without format or current file proof', async()=>{const {nodes}=await retentionHarness(retainedDetail());const t=retentionText(nodes);assert.equal(nodes.get('detail-retention').hidden,false);assert.match(t,/Копирование/);assert.match(t,/не подтверждает формат/);assert.match(t,/наличие файла сейчас/);assert.match(t,/provisioning в целом не завершён/);assert.match(t,/Квота не освобождена/);assert.equal(nodes.get('detail-values').children[0].children.length,30);});
 test('retention awaiting stage does not imply release or agent absence',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Pending',leaseState:null,leaseExpiresAt:null,artifactId:null,artifactState:null,reconciliationCode:'AwaitingStage'}));const t=retentionText(nodes);assert.match(t,/требуется проверка/);assert.match(t,/Квота не освобождена/);assert.doesNotMatch(t,/Лизинг stage завершён/);});
 test('retention expired lease is not order TTL or resource deletion',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Leased',leaseState:'Active',reconciliationCode:'LeaseExpired'}));const t=retentionText(nodes);assert.match(t,/TTL заказа не доказывает/);assert.match(t,/Автоочистки нет/);assert.match(t,/срок lease не является TTL/);});
+test('stage lease comparison preserves SQL fractional precision and timezone offsets', async () => {
+  const observedAt = '2026-11-24T09:00:00.1234567Z';
+  for (const [expires, code, coherent] of [
+    ['11:00:00.1234568+02:00','ArtifactReported',true],
+    ['11:00:00.1234568+02:00','LeaseExpired',false],
+    ['11:00:00.1234567+02:00','LeaseExpired',true],
+    ['11:00:00.1234566+02:00','ArtifactReported',false],
+    ['11:00:00.1234566+02:00','LeaseExpired',true]
+  ]) {
+    const {nodes,calls} = await retentionHarness(retainedDetail({ jobState:'Leased', leaseState:'Active',
+      observedAt, leaseExpiresAt:'2026-11-24T' + expires, reconciliationCode:code }));
+    assert.equal(calls.some(c => c.route.endsWith('/cleanup-status')), coherent, `${code} ${expires}`);
+    assert.equal(retentionText(nodes).includes('Квота не освобождена'), coherent, `${code} ${expires}`);
+  }
+});
 test('retention malformed conflicting and unknown tuples fall back without completion claims',async()=>{for(const overrides of [{unsettled:false},{artifactId:null},{stagingBytes:'65536'},{leaseState:'Active'},{reconciliationCode:'<script>'},{requestState:undefined}]){const {nodes}=await retentionHarness(retainedDetail(overrides));assert.equal(retentionText(nodes),'Недостаточно согласованных метаданных: не считать ресурсы свободными.');}});
 test('retention reads stage and cleanup detail endpoints and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`,`/api/test-environments/${env1}/cleanup-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
 test('retention stale detail after logout cannot restore explanation',async()=>{const pending=deferred();const {nodes}=await retentionHarness(pending);await nodes.get('logout').listeners.click();pending.resolve(ok(retainedDetail()));await flush();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');assert.equal(nodes.get('detail-panel').hidden,true);});
