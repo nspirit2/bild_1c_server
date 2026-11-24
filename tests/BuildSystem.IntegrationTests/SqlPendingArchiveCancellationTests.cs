@@ -428,8 +428,9 @@ public sealed class SqlPendingArchiveCancellationTests
         seed = seed with { Snapshot = snapshot };
         await using (var db = sql.NewContext())
         {
-            (await db.EnvironmentJobs.SingleAsync(Ct)).SnapshotJson = snapshot;
-            await db.SaveChangesAsync(Ct);
+            // Seed historical drift only in this disposable database; normal EF writes reject snapshot changes.
+            Assert.Equal(1, await db.EnvironmentJobs.Where(j => j.Id == seed.Order.JobId)
+                .ExecuteUpdateAsync(set => set.SetProperty(j => j.SnapshotJson, snapshot), Ct));
             AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() =>
                 new SqlPendingArchiveCancellations(db, enabled: true)
                     .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct)));
