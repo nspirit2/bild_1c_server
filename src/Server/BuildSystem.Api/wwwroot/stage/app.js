@@ -559,8 +559,9 @@
           value.heldStagingBytes + value.releasedStagingBytes !== value.reservedStagingBytes ||
           !validDate(value.observedAt)) throw new Error('Invalid or mismatched cleanup response');
       const step = ['None','IntentRequested','Authorized','DeletedReported','StagingReleased'].indexOf(value.cleanupState);
+      // Cleanup may have advanced between reads; require a fresh stage observation before showing it.
       if (['retirementId','authorizationId','resultId','releaseId'].some((k, index) => (index < step) !== hasGuid(value[k])) ||
-          (step > 0 && !hasGuid(value.artifactId)) ||
+          (step > 0 && (!hasGuid(value.artifactId) || stage.reconciliationCode !== 'StageCompleted')) ||
           (step < 4 && value.releasedStagingBytes !== 0) ||
           (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0)) ||
           (value.restoreIntentHold && (step !== 0 || !hasGuid(value.artifactId) || value.heldStagingBytes <= 0)))

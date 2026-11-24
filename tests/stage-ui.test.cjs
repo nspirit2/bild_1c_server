@@ -598,6 +598,16 @@ test('cleanup rejects mismatched pins and never suppresses a valid stage observa
   }
 });
 
+test('cleanup accounting requires stage completion, not just a matching artifact', async () => {
+  const stage = retainedDetail({jobState:'Leased', leaseState:'Active', leaseExpiresAt:'2026-01-01T00:03:00Z',
+    reconciliationCode:'ArtifactReported'});
+  const {nodes,calls} = await cleanupHarness(() => ok(cleanupDetail()), () => ok(stage));
+  assert.ok(calls.some(call => call.route.endsWith('/cleanup-status')));
+  assert.ok(nodes.get('detail-values').querySelectorAll('dd').some(node => node.textContent === 'Квитанция содержимого записана'));
+  assert.equal(cleanupText(nodes), '');
+  assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+});
+
 test('ordinary cleanup 403 keeps stage visible and 401 clears protected details', async () => {
   for (const status of [401,403]) {
     const { nodes } = await cleanupHarness(() => denied(status));
