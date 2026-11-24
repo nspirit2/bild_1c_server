@@ -67,7 +67,7 @@ public sealed class SqlServerTestDatabase : IAsyncDisposable
         }
     }
 
-    public static async Task<SqlServerTestDatabase> CreateAsync(CancellationToken cancellationToken = default)
+    public static async Task<SqlServerTestDatabase> CreateAsync(CancellationToken cancellationToken = default, bool caseSensitive = false)
     {
         if (!TryGetMasterConnectionString(out var master, out var reason))
             throw new InvalidOperationException(reason);
@@ -75,7 +75,7 @@ public sealed class SqlServerTestDatabase : IAsyncDisposable
         await using var connection = new SqlConnection(master);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE DATABASE [{database.DatabaseName}]";
+        command.CommandText = $"CREATE DATABASE [{database.DatabaseName}]" + (caseSensitive ? " COLLATE Latin1_General_100_CS_AS" : "");
         await command.ExecuteNonQueryAsync(cancellationToken);
         database._created = true;
         return database;

@@ -52,7 +52,7 @@ internal static class StageCancellationProof
             WHERE other.[Id] <> q.[Id] AND (other.[JobId] = j.[Id] OR other.[EnvironmentId] = e.[Id]))
           AND NOT EXISTS (SELECT 1 FROM [EnvironmentJobs] AS other WHERE other.[Id] <> j.[Id] AND other.[EnvironmentId] = e.[Id])
           AND 1 = (SELECT COUNT_BIG(*) FROM [AuditEvents] AS au
-            WHERE au.[TargetId] = e.[Id] AND au.[Action] = N'PendingArchiveCancelled')
+            WHERE au.[TargetId] = e.[Id] AND au.[Action] COLLATE Latin1_General_100_CI_AS = N'PendingArchiveCancelled')
           AND EXISTS (SELECT 1 FROM [AuditEvents] AS au WHERE au.[TargetId] = e.[Id]
             AND au.[Action] COLLATE Latin1_General_100_BIN2 = N'PendingArchiveCancelled'
             AND DATALENGTH(au.[Action]) = DATALENGTH(N'PendingArchiveCancelled')
@@ -60,7 +60,7 @@ internal static class StageCancellationProof
             AND DATEPART(TZOFFSET, au.[CreatedAt]) = 0)
           AND NOT EXISTS (SELECT 1 FROM [AgentLeases] AS l WHERE l.[JobId] = j.[Id])
           AND NOT EXISTS (SELECT 1 FROM [AgentEvents] AS ev WHERE ev.[JobId] = j.[Id])
-          AND NOT EXISTS (SELECT 1 FROM [AuditEvents] AS au WHERE au.[TargetId] = j.[Id] AND au.[Action] = N'ArchiveStageLeased')
+          AND NOT EXISTS (SELECT 1 FROM [AuditEvents] AS au WHERE au.[TargetId] = j.[Id] AND au.[Action] COLLATE Latin1_General_100_CI_AS = N'ArchiveStageLeased')
           AND NOT EXISTS (SELECT 1 FROM [StagedArtifacts] AS ar WHERE ar.[JobId] = j.[Id] OR ar.[ReservationId] = r.[Id])
           AND NOT EXISTS (SELECT 1 FROM [StageRetirementIntents] AS i
             WHERE i.[EnvironmentId] = e.[Id] OR i.[JobId] = j.[Id] OR i.[ReservationId] = r.[Id])

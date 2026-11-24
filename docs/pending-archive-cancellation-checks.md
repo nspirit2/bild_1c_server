@@ -15,7 +15,7 @@ node --test tests/*.test.cjs
 | Что проверять | Где искать |
 |---|---|
 | Отключённый флаг не меняет заказ; вход, CSRF, членство и точный повтор | [SQL-сценарии отмены](../tests/BuildSystem.IntegrationTests/SqlPendingArchiveCancellationTests.cs), [HTTP-контракт](../tests/BuildSystem.ApiTests/PendingArchiveCancellationApiTests.cs) |
-| Отмена и первая аренда не могут обе победить; ошибка до commit откатывает переход | [SQL-сценарии отмены](../tests/BuildSystem.IntegrationTests/SqlPendingArchiveCancellationTests.cs) |
+| Отмена и первая аренда не могут обе победить; ошибка до commit откатывает переход; неканионический регистр аудита выдачи или дубликата не обходит проверку в case-sensitive базе | [SQL-сценарии отмены](../tests/BuildSystem.IntegrationTests/SqlPendingArchiveCancellationTests.cs) |
 | Подтверждённые отмены видны в нужной области; противоречия исключены до пагинации; отчёты агента не возобновляют отменённый заказ | [SQL-сценарии списка и stage](../tests/BuildSystem.IntegrationTests/SqlStageOperationsTests.cs) |
 | История отключённого проекта по-прежнему доступна владельцу с членством, но не подтверждает противоречивую отмену | [SQL-сценарии истории](../tests/BuildSystem.IntegrationTests/EnvironmentOrderSummaryTests.cs) |
 | Панель сверяет список с деталями, не запускает отмену и не выдаёт логический резерв за свободное место | [Браузерные сценарии stage](../tests/stage-ui.test.cjs) |

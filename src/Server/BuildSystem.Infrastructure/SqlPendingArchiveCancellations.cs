@@ -88,7 +88,7 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             {
                 if (i.q.State != "Pending" || i.j.State != "Pending" || i.e.State != "Requested" ||
                     i.r.State != "Held" || !i.e.HasUnsettledProvisioningOperation ||
-                    await db.AuditEvents.AnyAsync(a => a.TargetId == environmentId && a.Action == AuditAction, ct)) throw Mismatch();
+                    await db.AuditEvents.AnyAsync(a => a.TargetId == environmentId && EF.Functions.Collate(a.Action, AuditMatchCollation) == AuditAction, ct)) throw Mismatch();
             }
             else if (prior.EnvironmentId != environmentId || prior.RequestId != requestId || prior.JobId != jobId ||
                 prior.ReservationId != reservationId || prior.RootId != i.root.Id || prior.PoolId != i.pool.Id ||
@@ -123,6 +123,8 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
         });
     }
 
+    private const string AuditMatchCollation = "Latin1_General_100_CI_AS";
+
     private async Task<bool> HasPriorAuthorityAsync(Guid environmentId, Guid requestId, Guid jobId, Guid reservationId,
         CancellationToken ct)
     {
@@ -138,7 +140,7 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             await db.RestoreIntents.AnyAsync(x => x.EnvironmentId == environmentId || x.RequestId == requestId ||
                 x.StageJobId == jobId || x.ReservationId == reservationId, ct) ||
             await db.TargetObservations.AnyAsync(x => x.EnvironmentId == environmentId || x.StageJobId == jobId || x.ReservationId == reservationId, ct) ||
-            await db.AuditEvents.AnyAsync(x => x.TargetId == jobId && x.Action == "ArchiveStageLeased", ct);
+            await db.AuditEvents.AnyAsync(x => x.TargetId == jobId && EF.Functions.Collate(x.Action, AuditMatchCollation) == "ArchiveStageLeased", ct);
     }
 
     private static bool SnapshotMatches(EnvironmentJob job, EnvironmentRequest request, EnvironmentReservation reservation,

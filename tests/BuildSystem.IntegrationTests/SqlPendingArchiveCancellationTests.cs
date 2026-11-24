@@ -441,6 +441,39 @@ public sealed class SqlPendingArchiveCancellationTests
     }
 
     [SqlServerFact]
+    public async Task Case_sensitive_database_still_vetoes_cancel_on_noncanonical_lease_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(caseSensitive: true);
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Agent, TargetId = seed.Order.JobId,
+            Action = "archivestageleased", CreatedAt = DateTimeOffset.UtcNow });
+        await db.SaveChangesAsync(Ct);
+        var cancellation = new SqlPendingArchiveCancellations(db, enabled: true);
+        AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            cancellation.CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct)));
+        await AssertUncancelledAsync(db, seed, "Pending");
+    }
+
+    [SqlServerFact]
+    public async Task Case_sensitive_database_does_not_prove_cancellation_with_noncanonical_duplicate_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(caseSensitive: true);
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var cancellation = new SqlPendingArchiveCancellations(db, enabled: true);
+        var receipt = await cancellation.CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct);
+        Assert.Equal(receipt, await cancellation.CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct));
+        db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = seed.Owner.UserId, TargetId = seed.Order.EnvironmentId,
+            Action = "pendingarchivecancelled", CreatedAt = receipt.CancelledAt });
+        await db.SaveChangesAsync(Ct);
+        AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            cancellation.CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct)));
+        await AssertReplacementBlockedAsync(db, seed);
+        Assert.Equal(1, await db.PendingArchiveCancellations.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cancellation_checks_current_visibility_and_expected_job_before_writing_or_replaying()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
