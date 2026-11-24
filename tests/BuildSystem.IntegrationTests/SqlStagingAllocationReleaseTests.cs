@@ -175,6 +175,30 @@ public sealed class SqlStagingAllocationReleaseTests
         await AssertRetainedAsync(sql, seed);
     }
     [SqlServerFact]
+    public async Task Conflicting_cancellation_rejects_exact_release_replay_and_preserves_existing_ledger()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var release = await ReleaseAsync(sql, seed);
+        Assert.Equal(release, await ReleaseAsync(sql, seed));
+        await using var db = sql.NewContext();
+        db.PendingArchiveCancellations.Add(new PendingArchiveCancellationRecord
+        {
+            EnvironmentId = seed.Order.EnvironmentId, RequestId = seed.Order.RequestId, JobId = seed.Order.JobId,
+            ReservationId = release.ReservationId, RootId = seed.Root, PoolId = seed.Pool,
+            ActorId = seed.Owner.UserId, CancelledAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+        Assert.Equal((409, "StagingReleaseMismatch"), (rejected.StatusCode, rejected.Code));
+        var ledger = await db.StagingAllocationReleases.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((release.ReleaseId, release.ResultId, release.ReservationId, release.ReleasedBytes, release.ReleasedAt),
+            (ledger.ReleaseId, ledger.ResultId, ledger.ReservationId, ledger.ReleasedBytes, ledger.ReleasedAt));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Conflicting_cancellation_after_cleanup_release_blocks_admission_on_shared_root()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
