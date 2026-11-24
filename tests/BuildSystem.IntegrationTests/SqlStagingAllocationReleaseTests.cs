@@ -175,6 +175,43 @@ public sealed class SqlStagingAllocationReleaseTests
         await AssertRetainedAsync(sql, seed);
     }
     [SqlServerFact]
+    public async Task Conflicting_cancellation_after_cleanup_release_blocks_admission_on_shared_root()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await ReleaseAsync(sql, seed);
+        await using var db = sql.NewContext();
+        var otherOwner = new Actor(Guid.NewGuid(), false);
+        var otherPool = Guid.NewGuid(); var otherProject = Guid.NewGuid();
+        db.Users.Add(new BuildSystemUser { Id = otherOwner.UserId, UserName = "other", NormalizedUserName = "OTHER" });
+        db.Projects.Add(new Project { Id = otherProject, Name = "shared-root", IsolationPolicyId = "isolated", PreparationProfileVersion = "v1" });
+        db.ProjectMemberships.Add(new ProjectMembership { UserId = otherOwner.UserId, ProjectId = otherProject });
+        db.ArchiveRootProjects.Add(new ArchiveRootProject { RootId = seed.Root, ProjectId = otherProject });
+        db.EnvironmentPools.Add(Pool(otherPool, seed.Credential.AgentId));
+        db.ProjectPools.Add(new ProjectPool { ProjectId = otherProject, PoolId = otherPool, Enabled = true });
+        db.EnvironmentQuotas.Add(new EnvironmentQuota { SubjectId = otherOwner.UserId, MaxActiveEnvironments = 5,
+            MaxConcurrentProvisioning = 5, MaxStorageBytes = 100000, MaxTtlDays = 30 });
+        await db.SaveChangesAsync(Ct);
+        var orders = new SqlEnvironmentOrders(db);
+        var request = new CreateEnvironmentRequest(otherProject, "shared root", "archive", new(seed.Version), 7);
+        var normal = await orders.CreateAsync(otherOwner, "before-conflict", request, Ct);
+        Assert.Equal(otherPool, (await db.TestEnvironments.SingleAsync(e => e.Id == normal.EnvironmentId, Ct)).PoolId);
+
+        var plan = seed.Authorization.Plan;
+        db.PendingArchiveCancellations.Add(new PendingArchiveCancellationRecord
+        {
+            EnvironmentId = plan.EnvironmentId, RequestId = seed.Order.RequestId, JobId = plan.JobId,
+            ReservationId = plan.ReservationId, RootId = seed.Root, PoolId = seed.Pool,
+            ActorId = seed.Owner.UserId, CancelledAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => orders.CreateAsync(otherOwner, "after-conflict", request, Ct));
+        Assert.Equal((409, "QuotaExceeded"), (rejected.StatusCode, rejected.Code));
+        Assert.Equal(2, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(1, await db.StagingAllocationReleases.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Root_and_pool_staging_admission_each_exclude_only_released_logical_allocation()
     {
         // Isolate both SQL sums: limiting only root catches a missing root predicate; limiting only pool catches a missing pool predicate.

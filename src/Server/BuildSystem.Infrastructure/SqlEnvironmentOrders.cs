@@ -110,17 +110,22 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                                      join a in db.DiskArchives on v.ArchiveId equals a.Id
                                      where a.RootId == rootId
                                      select e.ReservationId;
-            var rootStaging = await heldStaging.Where(r =>
+            var rootStaging = await db.EnvironmentReservations.Where(r =>
                 (reservationsOnRoot.Contains(r.Id) ||
-                    db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId)) &&
+                    db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId) ||
+                    db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id && release.RootId == rootId)) &&
                 !provenCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId))
                 .Select(r => new { r.StagingBytes, r.State,
-                    HasCancellationReceipt = db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id) }).ToListAsync(ct);
-            // A root may include reservations outside the owner/pool snapshot. Reject cancellation drift
-            // there too: its recorded staging amount may itself have drifted down.
-            if (rootStaging.Any(x => x.HasCancellationReceipt || x.StagingBytes < 0 || IsReleased(x.State)) ||
+                    HasRelease = db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id),
+                    HasCancellationReceipt = db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id ||
+                        db.TestEnvironments.Any(e => e.ReservationId == r.Id && (c.EnvironmentId == e.Id || c.RequestId == e.RequestId ||
+                            db.EnvironmentRequests.Any(q => q.Id == e.RequestId && q.JobId == c.JobId)))) }).ToListAsync(ct);
+            // Check cancellation conflicts before applying the cleanup ledger exclusion. A reservation
+            // on this root may be outside the owner/pool snapshot and already have a cleanup release.
+            var heldOnRoot = rootStaging.Where(x => !x.HasRelease).ToList();
+            if (rootStaging.Any(x => x.HasCancellationReceipt) || heldOnRoot.Any(x => x.StagingBytes < 0 || IsReleased(x.State)) ||
                 poolStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > pool.MaxStagingBytes ||
-                rootStaging.Sum(x => (decimal)x.StagingBytes) + source.Version.SizeBytes > source.Root.MaxStagingBytes)
+                heldOnRoot.Sum(x => (decimal)x.StagingBytes) + source.Version.SizeBytes > source.Root.MaxStagingBytes)
                 throw Reject(409, "QuotaExceeded");
             var now = DateTimeOffset.UtcNow;
             var receipt = new OrderReceipt(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
