@@ -52,10 +52,14 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
                 await RequireCancellationProofAsync(db, environment, request, job, reservation, receipts[0], "StageStatusInconsistent", ct);
             }
             var lease = cancellationLike ? null : await db.AgentLeases.AsNoTracking().SingleOrDefaultAsync(x => x.JobId == job.Id, ct);
-            var artifact = cancellationLike ? null : await db.StagedArtifacts.AsNoTracking().SingleOrDefaultAsync(x => x.JobId == job.Id, ct);
+            var artifacts = cancellationLike ? [] : await db.StagedArtifacts.AsNoTracking()
+                .Where(x => x.JobId == job.Id || x.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
+            if (artifacts.Count > 1) throw Inconsistent();
+            var artifact = artifacts.SingleOrDefault();
             if (artifact is not null)
             {
-                if (lease is null || artifact.AgentId != lease.AgentId || artifact.FencingToken != lease.FencingToken ||
+                if (lease is null || artifact.JobId != job.Id || artifact.State != "ContentVerified" ||
+                    artifact.AgentId != lease.AgentId || artifact.FencingToken != lease.FencingToken ||
                     artifact.ReservationId != reservation.Id || artifact.ArchiveVersionId != request.ArchiveVersionId ||
                     artifact.SizeBytes <= 0 || artifact.SizeBytes > reservation.StagingBytes)
                     throw Inconsistent();

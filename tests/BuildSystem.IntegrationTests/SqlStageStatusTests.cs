@@ -148,6 +148,26 @@ public sealed class SqlStageStatusTests
     }
 
     [SqlServerFact]
+    public async Task Reservation_artifact_for_another_job_is_not_reported_as_absent()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var grant = await PollAsync(sql, seed);
+        var report = await ReportAsync(sql, seed, grant);
+        await using (var db = sql.NewContext())
+        {
+            var other = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "other-status-order",
+                new CreateEnvironmentRequest(seed.Project, "other", "archive", new ArchiveSource(grant.Plan.ArchiveVersionId), 7), Ct);
+            // Simulate inconsistent receipt metadata in the disposable fixture only.
+            Assert.Equal(1, await db.StagedArtifacts.Where(a => a.ArtifactId == report.ArtifactId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.JobId, other.JobId), Ct));
+        }
+        var before = await DurableStateAsync(sql);
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => StatusAsync(sql, seed));
+        Assert.Equal((409, "StageStatusInconsistent"), (rejected.StatusCode, rejected.Code));
+        Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
     public async Task Expired_active_read_reports_expiry_without_sweep_then_observes_control_plane_needs_attention()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
