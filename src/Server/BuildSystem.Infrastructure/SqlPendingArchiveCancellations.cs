@@ -68,9 +68,7 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
                 i.q.EnvironmentId != i.e.Id || i.j.EnvironmentId != i.e.Id || i.j.RequestId != i.q.Id ||
                 i.q.OwnerId != i.e.OwnerId || i.q.OwnerId != i.r.OwnerId || i.q.ProjectId != i.e.ProjectId ||
                 i.r.PoolId != i.pool.Id || i.e.ExpiresAt is not null ||
-                new[] { i.q.Id, i.r.Id, i.v.Id, i.a.Id, i.e.ProjectId, i.pool.AgentScopeId, i.pool.SqlServerId, i.pool.ClusterId }.Contains(Guid.Empty) ||
-                i.root.AgentScopeId != i.pool.AgentScopeId || i.r.SqlServerId != i.pool.SqlServerId || i.r.ClusterId != i.pool.ClusterId ||
-                !SnapshotMatches(i.j, i.q, i.r, i.v, i.a, i.root, i.pool)) throw Mismatch();
+                new[] { i.q.Id, i.r.Id, i.v.Id, i.a.Id, i.e.ProjectId }.Contains(Guid.Empty)) throw Mismatch();
 
             // These reverse edges are not all constrained by unique foreign keys. Do not release a
             // reservation if another durable request/job also claims the same operation.
@@ -86,7 +84,12 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             var prior = receipts.SingleOrDefault();
             if (prior is null)
             {
-                if (i.q.State != "Pending" || i.j.State != "Pending" || i.e.State != "Requested" ||
+                // Current routing is a first-transition check, not part of replaying historical proof.
+                if (i.pool.AgentScopeId == Guid.Empty || i.pool.SqlServerId == Guid.Empty || i.pool.ClusterId == Guid.Empty ||
+                    i.root.AgentScopeId != i.pool.AgentScopeId ||
+                    i.r.SqlServerId != i.pool.SqlServerId || i.r.ClusterId != i.pool.ClusterId ||
+                    !SnapshotMatches(i.j, i.q, i.r, i.v, i.a, i.root, i.pool) ||
+                    i.q.State != "Pending" || i.j.State != "Pending" || i.e.State != "Requested" ||
                     i.r.State != "Held" || !i.e.HasUnsettledProvisioningOperation ||
                     await db.AuditEvents.AnyAsync(a => a.TargetId == environmentId && EF.Functions.Collate(a.Action, AuditMatchCollation) == AuditAction, ct)) throw Mismatch();
             }

@@ -170,6 +170,18 @@ public sealed class SqlPendingArchiveCancellationTests
         Assert.NotEqual(seed.Reservation, environment.ReservationId);
         Assert.Equal("Held", (await replayDb.EnvironmentReservations.SingleAsync(x => x.Id == environment.ReservationId, Ct)).State);
         Assert.Equal(1, await replayDb.PendingArchiveCancellations.CountAsync(Ct));
+
+        // Change live routing, not either order's historical reservation or snapshot.
+        Assert.Equal(1, await replayDb.EnvironmentPools.Where(p => p.Id == seed.Pool)
+            .ExecuteUpdateAsync(set => set.SetProperty(p => p.SqlServerId, Guid.NewGuid()), Ct));
+        var cancellationAfterRoutingChange = new SqlPendingArchiveCancellations(replayDb, enabled: true);
+        Assert.Equal(first, await cancellationAfterRoutingChange.CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct));
+        AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() => cancellationAfterRoutingChange.CancelAsync(
+            seed.Owner, replacement.EnvironmentId, new PendingArchiveCancellationRequest(replacement.JobId), Ct)));
+        Assert.Equal(terminalVersion, (await replayDb.TestEnvironments.AsNoTracking()
+            .SingleAsync(e => e.Id == seed.Order.EnvironmentId, Ct)).RowVersion);
+        Assert.Equal(1, await replayDb.PendingArchiveCancellations.CountAsync(Ct));
+        Assert.Equal(1, await replayDb.AuditEvents.CountAsync(a => a.Action == "PendingArchiveCancelled", Ct));
     }
 
     [SqlServerFact]
