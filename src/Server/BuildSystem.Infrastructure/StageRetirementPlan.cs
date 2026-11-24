@@ -45,6 +45,10 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             }
             var intent = await db.StageRetirementIntents.AsNoTracking()
                 .Where(r => r.AgentId == id.Value && r.State == "Requested" &&
+                    !db.PendingArchiveCancellations.Any(c => c.EnvironmentId == r.EnvironmentId ||
+                        c.JobId == r.JobId || c.ReservationId == r.ReservationId ||
+                        db.TestEnvironments.Any(e => e.Id == r.EnvironmentId && e.RequestId == c.RequestId) ||
+                        db.EnvironmentJobs.Any(j => j.Id == r.JobId && j.RequestId == c.RequestId)) &&
                     (retirementId.HasValue ? r.RetirementId == retirementId.Value :
                         !db.StageCleanupResults.Any(result => db.StageCleanupAuthorizations.Any(auth =>
                             auth.AuthorizationId == result.AuthorizationId && auth.RetirementId == r.RetirementId))))
@@ -69,7 +73,10 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
                            join root in db.ArchiveRoots.AsNoTracking() on a.RootId equals root.Id
                            join pool in db.EnvironmentPools.AsNoTracking() on e.PoolId equals pool.Id
                            where e.Id == intent.EnvironmentId
-                           select new { e, q, j, r, l, artifact, v, a, root, pool }).SingleOrDefaultAsync(ct);
+                           where !db.PendingArchiveCancellations.Any(c => c.EnvironmentId == e.Id || c.JobId == j.Id ||
+                                c.RequestId == q.Id || c.RequestId == j.RequestId || c.ReservationId == r.Id ||
+                                c.ReservationId == artifact.ReservationId)
+                            select new { e, q, j, r, l, artifact, v, a, root, pool }).SingleOrDefaultAsync(ct);
             if (i is null || intent.RetirementId == Guid.Empty || intent.AgentId != agent.Id ||
                 intent.JobId != i.j.Id || intent.ArtifactId != i.artifact.ArtifactId || intent.ReservationId != i.r.Id ||
                 intent.FencingToken != i.l.FencingToken || i.j.Kind != "ProvisionArchive" ||

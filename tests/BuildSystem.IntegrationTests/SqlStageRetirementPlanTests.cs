@@ -94,6 +94,33 @@ public sealed class SqlStageRetirementPlanTests
         await AssertRetainedAsync(sql, seed, audits);
     }
     [SqlServerFact]
+    public async Task Cancellation_receipt_prevents_cleanup_poll_and_explicit_claim_without_writes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var plan = Assert.IsType<StageRetirementPlan>(await PollAsync(sql, seed.Credential.Token));
+        await using var db = sql.NewContext();
+        var claim = new ClaimStageCleanup(plan.RetirementId, plan.ArtifactId);
+        var cleanup = new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true });
+        await cleanup.ClaimAsync(seed.Credential.Token, claim, Ct);
+        // Fixture-only contradiction: an actual pre-lease cancellation cannot coexist with this history.
+        db.PendingArchiveCancellations.Add(new PendingArchiveCancellationRecord
+        {
+            EnvironmentId = plan.EnvironmentId, RequestId = seed.Order.RequestId, JobId = plan.JobId,
+            ReservationId = plan.ReservationId, RootId = seed.Root, PoolId = seed.Pool,
+            ActorId = seed.Owner.UserId, CancelledAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        Assert.Null(await PollAsync(sql, seed.Credential.Token));
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => cleanup.ClaimAsync(seed.Credential.Token, claim, Ct));
+        Assert.Equal((409, "CleanupClaimMismatch"), (rejected.StatusCode, rejected.Code));
+        Assert.Equal(1, await db.StageCleanupAuthorizations.CountAsync(Ct));
+        Assert.Empty(await db.StageCleanupResults.ToListAsync(Ct));
+        Assert.Empty(await db.StagingAllocationReleases.ToListAsync(Ct));
+        await AssertRetainedAsync(sql, seed, audits);
+    }
+
+    [SqlServerFact]
     public async Task Approved_foreign_agent_in_other_pool_receives_no_plan()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
