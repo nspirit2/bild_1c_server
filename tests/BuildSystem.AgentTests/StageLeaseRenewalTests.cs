@@ -123,29 +123,46 @@ public sealed class StageLeaseRenewalTests
     public async Task CallerCancellationWaitsForCopyCleanupAndStopsRenewal()
     {
         using var f = new Fixture(); using var cancellation = new CancellationTokenSource();
-        var entered = Signal(); var cleaned = Signal(); var renewal = Signal(); var calls = 0;
-        var coordinator = f.Coordinator(async (_, ct) =>
+        var clock = new ControlledClock(); var calls = 0;
+        var cleanupStarted = Signal(); var releaseCleanup = Signal(); var cleaned = Signal();
+        var coordinator = new StageCoordinator(f.Journal, async (_, ct) =>
         {
-            entered.TrySetResult();
             try { await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, ct); }
-            finally { cleaned.TrySetResult(); }
+            finally
+            {
+                cleanupStarted.TrySetResult();
+                await releaseCleanup.Task.WaitAsync(Timeout);
+                cleaned.TrySetResult();
+            }
             throw new InvalidOperationException();
         }, (_, _) =>
         {
-            if (Interlocked.Increment(ref calls) > 1) renewal.TrySetResult();
-            return Task.FromResult(new LeaseStatus(DateTimeOffset.UtcNow.AddSeconds(5)));
-        });
+            var lifetime = Interlocked.Increment(ref calls) == 1 ? TimeSpan.FromSeconds(5) : TimeSpan.FromMinutes(5);
+            return Task.FromResult(new LeaseStatus(clock.GetUtcNow() + lifetime));
+        }, clock, Interval);
         var execution = coordinator.ExecuteAsync(f.Intent, cancellation.Token);
-        await entered.Task.WaitAsync(Timeout);
-        await renewal.Task.WaitAsync(Timeout);
-        cancellation.Cancel();
-        Assert.Equal(StageOutcome.Cancelled, await execution.WaitAsync(Timeout));
+        try
+        {
+            await clock.TickArmed.Task.WaitAsync(Timeout);
+            clock.Advance(Interval);
+            // A guard call alone does not mean its renewal was persisted and the deadline reset.
+            await clock.DeadlineExtended.Task.WaitAsync(Timeout);
+            cancellation.Cancel();
+            await cleanupStarted.Task.WaitAsync(Timeout);
+            Assert.False(execution.IsCompleted);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            releaseCleanup.TrySetResult();
+            await execution.WaitAsync(Timeout);
+        }
+        Assert.Equal(StageOutcome.Cancelled, await execution);
         Assert.True(cleaned.Task.IsCompletedSuccessfully);
         Assert.Empty(f.Journal.PendingArtifacts());
         Assert.Equal("Cancelled", f.Failure);
-        var completedCalls = calls;
-        await Task.Delay(Interval * 3);
-        Assert.Equal(completedCalls, calls);
+        clock.Advance(Interval * 3);
+        Assert.Equal(2, calls); // Initial guard and one periodic renewal; no final guard.
     }
 
     [Fact]
