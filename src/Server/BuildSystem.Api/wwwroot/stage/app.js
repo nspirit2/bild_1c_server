@@ -19,7 +19,9 @@
   let projectBusy = false, catalogBusy = false, projectIds = new Set(), selectedProject = null;
   let catalogIds = new Set(), selectedArchive = null, orderIntent = null, orderBusy = false, orderAccepted = false;
   let orderGeneration = 0, orderController = null, forgottenOrder = false;
-  const hasGuid = value => typeof value === 'string' && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+  const hasGuid = value => typeof value === 'string' && value.length === 36 && guid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+  const sameId = (left, right) => hasGuid(left) && hasGuid(right) && left.toLowerCase() === right.toLowerCase();
+  const nullableId = value => value === null || hasGuid(value);
   let environmentsGeneration = 0, environmentDetailGeneration = 0;
   let environmentsController = null, environmentDetailController = null, environmentsBusy = false;
   let environmentRows = new Map(), selectedEnvironment = null;
@@ -430,9 +432,9 @@
       cell(row, date(item.createdAt));
       const action = cell(row, ''); const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary'; button.textContent = 'Подробнее';
       button.setAttribute('aria-controls', 'detail-panel'); button.setAttribute('aria-expanded', 'false');
-      if (typeof item.environmentId === 'string' && guid.test(item.environmentId)) {
+      if ([item.environmentId, item.requestId, item.jobId].every(hasGuid)) {
         button.dataset.environment = item.environmentId;
-        button.addEventListener('click', () => loadDetail(item.environmentId, cancelled ? item : null));
+        button.addEventListener('click', () => loadDetail(item.environmentId, item));
       } else button.disabled = true;
       action.append(button); fragment.append(row);
     }
@@ -465,9 +467,9 @@
   }
   const restoreHoldExplanation = 'Постоянное удержание артефакта: retirement запрещён. Ожидается доверенное подтверждение цели; выполнение невозможно. Это не Ready, не владение целью и не разрешение на restore. Наличие файла сейчас не подтверждено. Автоматического продолжения и снятия hold нет.';
   function restoreIntentEntries(value) {
-    if (value == null) return [];
-    if (!hasGuid(value.restoreIntentId) || !hasGuid(value.targetIncarnation) ||
-        typeof value.requestedAt !== 'string' || !Number.isFinite(Date.parse(value.requestedAt)) ||
+    if (value === null) return [];
+    if (!value || !hasGuid(value.restoreIntentId) || !hasGuid(value.targetIncarnation) ||
+        !validDate(value.requestedAt) ||
         value.restoreIntentCode !== 'AwaitingTrustedTarget' || value.executable !== false || value.artifactRetained !== true)
       throw new Error('Invalid nonexecutable restore intent');
     return [['Restore intent', value.restoreIntentId], ['Инкарнация цели (не владение)', value.targetIncarnation],
@@ -485,8 +487,13 @@
       typeof observed === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$/.test(observed) &&
       Number.isFinite(Date.parse(observed)) && new Date(observed).toISOString().slice(0, 19) === observed.slice(0, 19);
   }
-  function renderRetention(value) {
-    const validDate = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
+  const validDate = value => {
+    if (typeof value !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) return false;
+    const wallTime = value.slice(0, 19);
+    return new Date(wallTime + 'Z').toISOString().slice(0, 19) === wallTime;
+  };
+  function stageRetention(value) {
     const absentArtifact = value.artifactId === null && value.artifactState === null;
     const verifiedArtifact = hasGuid(value.artifactId) && value.artifactState === 'ContentVerified';
     const common = hasGuid(value.environmentId) && hasGuid(value.requestId) && hasGuid(value.jobId) &&
@@ -510,9 +517,14 @@
       (absentArtifact || verifiedArtifact) &&
       ((value.leaseState === null && value.leaseExpiresAt === null && absentArtifact) ||
        (['Active','Completed','NeedsAttention'].includes(value.leaseState) && validDate(value.leaseExpiresAt)));
+    if (completed) return 'completed';
+    if (awaiting || running || expired || attention) return 'retained';
+    return null;
+  }
+  function renderRetention(value, retention) {
     let reasons = ['Недостаточно согласованных метаданных: не считать ресурсы свободными.'];
-    if (completed || awaiting || running || expired || attention) {
-      reasons = completed ? [
+    if (retention) {
+      reasons = retention === 'completed' ? [
         'Копирование: сервер принял квитанцию ContentVerified. Это не подтверждает формат архива или наличие файла сейчас.',
         'Лизинг stage завершён, но provisioning в целом не завершён.'
       ] : ['Ресурсы удерживаются по согласованным метаданным наблюдения; требуется проверка истории и reconciliation. Это не доказательство остановки агента, его здоровья или состояния outbox.'];
@@ -525,27 +537,27 @@
     ui['detail-retention-reasons'].replaceChildren(fragment); ui['detail-retention'].hidden = false;
   }
   const cleanupStates = { None:'Нет retirement intent', IntentRequested:'Intent запрошен', Authorized:'Разрешение записано', DeletedReported:'Удаление сообщено агентом', StagingReleased:'Staging allocation освобождена' };
-  async function loadCleanup(id, version, session, signal, expected, cancellationConfirmed) {
-    ui['cleanup-values'].replaceChildren(); ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
-    const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
+  async function loadCleanup(base, stage, current, signal, fromHistory) {
+    ui['cleanup-message'].textContent = 'Загрузка учёта cleanup…';
     try {
-      const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/cleanup-status', signal);
-      if (!current() || cancellationConfirmed()) return;
-      const nullableId = v => v === null || hasGuid(v);
+      const value = await request(base + '/cleanup-status', signal);
+      if (!current()) return;
       const amounts = ['reservedStagingBytes','heldStagingBytes','releasedStagingBytes'];
-      if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() || !hasGuid(value.jobId) ||
-          (expected && value.jobId.toLowerCase() !== expected.jobId.toLowerCase()) ||
-          !Object.hasOwn(cleanupStates, value.cleanupState) || !['artifactId','retirementId','authorizationId','resultId','releaseId'].every(k => nullableId(value[k])) ||
+      // Compare stable identities and accounting inputs, not timestamps or lease state: these are separate reads.
+      if (!value || !sameId(value.environmentId, stage.environmentId) || !sameId(value.jobId, stage.jobId) ||
+          !(stage.artifactId === null ? value.artifactId === null : sameId(value.artifactId, stage.artifactId)) ||
+          value.reservedStagingBytes !== stage.stagingBytes || value.restoreIntentHold !== (stage.restoreIntent != null) ||
+          typeof value.cleanupState !== 'string' || !Object.hasOwn(cleanupStates, value.cleanupState) ||
+          !['retirementId','authorizationId','resultId','releaseId'].every(k => nullableId(value[k])) ||
           !amounts.every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) ||
           value.heldStagingBytes + value.releasedStagingBytes !== value.reservedStagingBytes ||
-          !Number.isFinite(Date.parse(value.observedAt))) throw new Error('Invalid cleanup response');
+          !validDate(value.observedAt)) throw new Error('Invalid or mismatched cleanup response');
       const step = ['None','IntentRequested','Authorized','DeletedReported','StagingReleased'].indexOf(value.cleanupState);
       if (['retirementId','authorizationId','resultId','releaseId'].some((k, index) => (index < step) !== hasGuid(value[k])) ||
           (step > 0 && !hasGuid(value.artifactId)) ||
           (step < 4 && value.releasedStagingBytes !== 0) ||
           (step === 4 && (value.heldStagingBytes !== 0 || value.releasedStagingBytes <= 0)) ||
-          (value.restoreIntentHold !== undefined && typeof value.restoreIntentHold !== 'boolean') ||
-          (value.restoreIntentHold === true && (step !== 0 || !hasGuid(value.artifactId) || value.heldStagingBytes <= 0)))
+          (value.restoreIntentHold && (step !== 0 || !hasGuid(value.artifactId) || value.heldStagingBytes <= 0)))
         throw new Error('Inconsistent cleanup response');
       const entries = [['Состояние cleanup',cleanupStates[value.cleanupState]], ['Задание cleanup',text(value.jobId)],
         ['Артефакт cleanup',text(value.artifactId)], ['Retirement intent',text(value.retirementId)], ['Authorization',text(value.authorizationId)],
@@ -559,36 +571,39 @@
       ui['cleanup-message'].textContent = 'Исторические метаданные и логический учёт. Сообщение агента не доказывает отсутствие файла сейчас. Это не Ready; квоты БД и окружения не освобождаются.';
     } catch (error) {
       if (!current() || error.name === 'AbortError') return;
-      if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
-      if (cancellationConfirmed()) return;
+      if (error instanceof ApiError && (error.status === 401 || (fromHistory && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
       ui['cleanup-values'].replaceChildren();
       ui['cleanup-message'].textContent = error instanceof ApiError && error.status === 404
         ? 'Учёт cleanup недоступен: endpoint отсутствует в этой версии или нет доступа. Состояние неизвестно; не считать staging свободным.'
         : 'Не удалось получить учёт cleanup. Состояние неизвестно; не считать staging свободным. ' + errorText(error);
     }
   }
-  async function loadDetail(id, expected = null, fromHistory = false) {
-    if (!authenticated || busy || !guid.test(id)) return;
+  async function loadDetail(id, expected, fromHistory = false) {
+    if (!authenticated || busy || !hasGuid(id)) return;
     closeDetail(); historyStage = fromHistory; selected = id; markSelection();
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
-    let cancelled = false;
-    const expectsCancellation = expected?.cancellationCode === 'CancelledBeforeFirstLease';
+    const signal = detailController.signal, base = '/api/test-environments/' + encodeURIComponent(id);
+    const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
+    const expectsCancellation = expected.cancellationCode === 'CancelledBeforeFirstLease';
+    const cleanupSkipped = 'Учёт cleanup не запрошен: нет согласованного наблюдения stage. Состояние неизвестно; не считать staging свободным.';
     ui['detail-panel'].hidden = false; ui['detail-panel'].setAttribute('aria-busy', 'true'); ui['detail-message'].textContent = 'Загрузка сведений…';
-    if (expectsCancellation) ui['cleanup-message'].textContent = 'Учёт cleanup не запрошен; проверяется подтверждение отмены.';
-    else void loadCleanup(id, version, session, detailController.signal, expected, () => cancelled);
+    ui['cleanup-message'].textContent = 'Учёт cleanup не запрошен; проверяются сведения stage.';
     try {
-      const value = await request('/api/test-environments/' + encodeURIComponent(id) + '/stage-status', detailController.signal);
-      if (version !== detailGeneration || session !== generation || !authenticated) return;
-      if (!value || value.environmentId?.toLowerCase() !== id.toLowerCase() ||
-          (expected && (!hasGuid(value.requestId) || !hasGuid(value.jobId) || value.requestId.toLowerCase() !== expected.requestId.toLowerCase() || value.jobId.toLowerCase() !== expected.jobId.toLowerCase()))) throw new Error('Invalid detail response');
-      cancelled = isConfirmedCancellation(value);
+      const value = await request(base + '/stage-status', signal);
+      if (!current()) return;
+      if (!value || !sameId(value.environmentId, id) || !sameId(value.requestId, expected.requestId) || !sameId(value.jobId, expected.jobId))
+        throw new Error('Invalid or mismatched stage identity');
+      const cancelled = isConfirmedCancellation(value);
       if (expectsCancellation && (!cancelled || value.stagingBytes !== expected.stagingBytes))
         throw new Error('Cancellation detail does not match list');
       if (!cancelled && (value.reconciliationCode === 'CancelledBeforeFirstLease' || cancellationStates(value))) {
         ui['detail-message'].textContent = 'Недостаточно согласованных метаданных: не считать ресурсы свободными.';
+        ui['cleanup-message'].textContent = cleanupSkipped;
         return;
       }
+      const retention = cancelled ? null : stageRetention(value);
       const restoreEntries = restoreIntentEntries(value.restoreIntent);
+      if (restoreEntries.length && retention !== 'completed') throw new Error('Inconsistent stage restore intent');
       const cancelledState = 'Отменено';
       const entries = [
         ['Окружение', text(value.environmentId)], ['Запрос', text(value.requestId)], ['Задание', text(value.jobId)],
@@ -604,20 +619,20 @@
       for (const [label, content] of entries) { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = content; fragment.append(dt, dd); }
       ui['detail-values'].replaceChildren(fragment);
       if (cancelled) {
-        // Clear an earlier cleanup observation and prevent a later one from replacing this explanation.
-        ui['cleanup-values'].replaceChildren();
         ui['cleanup-message'].textContent = 'Cleanup не применим: stage-артефакт не зарегистрирован. Это не освобождение по ledger cleanup и не подтверждение удаления файлов.';
         ui['detail-message'].textContent = 'Сервер подтвердил отмену до первой выдачи агенту. Логическая квота заказа (окружение, БД и staging) освобождена. Значение staging в деталях — исторический резерв, не физическое свободное место. Это не Ready и не подтверждение удаления файлов.';
       } else {
-        renderRetention(value);
+        renderRetention(value, retention);
         ui['detail-message'].textContent = 'Сведения получены. Наличие и формат файла этой проверкой не подтверждаются.';
+        if (retention) void loadCleanup(base, value, current, signal, fromHistory);
+        else ui['cleanup-message'].textContent = cleanupSkipped;
       }
     } catch (error) {
-      if (version !== detailGeneration || session !== generation || error.name === 'AbortError') return;
-      if (error instanceof ApiError && (error.status === 401 || (expected && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
-      if (expectsCancellation) ui['cleanup-message'].textContent = 'Учёт cleanup не запрошен; детали не подтвердили отмену из списка.';
-      ui['detail-message'].textContent = (expected ? 'Наблюдение stage недоступно; состояние неизвестно. Это не отсутствие удержаний. ' : '') + errorText(error);
-    } finally { if (version === detailGeneration) ui['detail-panel'].setAttribute('aria-busy', 'false'); }
+      if (!current() || error.name === 'AbortError') return;
+      if (error instanceof ApiError && (error.status === 401 || ((fromHistory || expectsCancellation) && error.status === 403))) { showLogin('Сеанс завершён. Войдите снова.'); return; }
+      ui['cleanup-message'].textContent = cleanupSkipped;
+      ui['detail-message'].textContent = 'Наблюдение stage недоступно; состояние неизвестно. Это не отсутствие удержаний. ' + errorText(error);
+    } finally { if (current()) ui['detail-panel'].setAttribute('aria-busy', 'false'); }
   }
   async function checkSession() {
     const op = begin(); busy = true; controls();

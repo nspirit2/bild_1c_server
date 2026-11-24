@@ -87,10 +87,12 @@ const summary = (changes = {}) => ({ environmentId: id1, projectId: project, dis
 const summaryRoute = `${detailRoute}/${id1}/order-summary`;
 const stageRoute = `${detailRoute}/${id1}/stage-status`;
 const cleanupRoute = `${detailRoute}/${id1}/cleanup-status`;
-const stage = (changes = {}) => ({ environmentId: id1, requestId, jobId, ...changes });
+const stage = (changes = {}) => ({ environmentId: id1, requestId, jobId, jobState: 'Pending', environmentState: 'Requested',
+  requestState: 'Pending', reservationState: 'Held', stagingBytes: 4096, unsettled: true, artifactId: null, artifactState: null,
+  leaseState: null, leaseExpiresAt: null, reconciliationCode: 'AwaitingStage', observedAt: '2026-11-12T07:00:00Z', restoreIntent: null, ...changes });
 const cleanup = (changes = {}) => ({ environmentId: id1, jobId, cleanupState: 'None', artifactId: null, retirementId: null,
   authorizationId: null, resultId: null, releaseId: null, reservedStagingBytes: 4096, heldStagingBytes: 4096, releasedStagingBytes: 0,
-  observedAt: '2026-11-12T07:00:00Z', ...changes });
+  observedAt: '2026-11-12T07:01:00Z', restoreIntentHold: false, ...changes });
 function setup(summaryFixture = () => ok(summary()), statusFixture = route => route === stageRoute ? ok(stage()) : ok(cleanup())) {
   return harness((route, options) => {
     if (route === listRoute) return ok(page([row(), row(id2)]));
@@ -169,17 +171,19 @@ test('job-kind gate requires explicit status action and ObserveArchiveStage issu
     assert.equal(h.calls.some(c => c.route === stageRoute || c.route === cleanupRoute), false);
     assert.equal(h.nodes.get('order-stage-load').hidden, kind !== 'ProvisionArchive');
     await loadStage(h);
-    assert.equal(h.calls.filter(c => c.route === stageRoute || c.route === cleanupRoute).length, kind === 'ProvisionArchive' ? 2 : 0);
+    assert.deepEqual(h.calls.filter(c => c.route === stageRoute || c.route === cleanupRoute).map(c => c.route),
+      kind === 'ProvisionArchive' ? [stageRoute, cleanupRoute] : []);
     if (kind === 'ObserveArchiveStage') assert.match(h.nodes.get('order-summary-status').textContent, /не поддерживаются/);
   }
 });
 
-test('stage pins request and job independently while cleanup pins only its available job identity', async () => {
+test('stage pins request and job before cleanup and cleanup rejects a mismatched job', async () => {
   for (const mismatch of [{ requestId: id2 }, { jobId: id2 }]) {
     const h = setup(undefined, route => route === stageRoute ? ok(stage(mismatch)) : ok(cleanup()));
     await open(h); await load(h); await loadStage(h);
     assert.equal(h.nodes.get('detail-values').children.length, 0);
-    assert.ok(h.nodes.get('cleanup-values').children.length > 0);
+    assert.equal(h.nodes.get('cleanup-values').children.length, 0);
+    assert.equal(h.calls.some(c => c.route === cleanupRoute), false);
   }
   const h = setup(undefined, route => route === stageRoute ? ok(stage()) : ok(cleanup({ jobId: id2 })));
   await open(h); await load(h); await loadStage(h);
@@ -199,12 +203,18 @@ test('correlated status 403 clears all; 404 means unavailable/unknown, never a n
   }
 });
 
-test('history-owned pending stage and cleanup abort on history invalidation without late resurrection', async () => {
-  const bodies = { [stageRoute]: deferred(), [cleanupRoute]: deferred() }, signals = [];
-  const h = setup(undefined, (route, options) => { signals.push(options.signal); return { ok: true, json: () => bodies[route].promise }; });
-  await open(h); await load(h); await loadStage(h); await h.fire(h.buttons()[1]);
-  assert.equal(signals.length, 2); assert.ok(signals.every(signal => signal.aborted));
-  bodies[stageRoute].resolve(stage()); bodies[cleanupRoute].resolve(cleanup()); await flush();
-  assert.equal(h.nodes.get('detail-panel').hidden, true); assert.equal(h.nodes.get('detail-values').children.length, 0);
-  assert.equal(h.nodes.get('cleanup-values').children.length, 0);
+test('history invalidation aborts pending stage or cleanup and discards late response bodies', async () => {
+  for (const pendingRoute of [stageRoute, cleanupRoute]) {
+    const pending = deferred(); let signal;
+    const h = setup(undefined, (route, options) => {
+      if (route !== pendingRoute) return ok(stage());
+      signal = options.signal; return { ok: true, json: () => pending.promise };
+    });
+    await open(h); await load(h); await loadStage(h); await h.fire(h.buttons()[1]);
+    assert.equal(signal.aborted, true);
+    pending.resolve(pendingRoute === stageRoute ? stage() : cleanup()); await flush();
+    assert.equal(h.calls.some(c => c.route === cleanupRoute), pendingRoute === cleanupRoute);
+    assert.equal(h.nodes.get('detail-panel').hidden, true); assert.equal(h.nodes.get('detail-values').children.length, 0);
+    assert.equal(h.nodes.get('cleanup-values').children.length, 0);
+  }
 });

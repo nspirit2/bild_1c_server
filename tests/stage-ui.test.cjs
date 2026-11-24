@@ -28,7 +28,7 @@ test('retention completed tuple explains retained quota without format or curren
 test('retention awaiting stage does not imply release or agent absence',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Pending',leaseState:null,leaseExpiresAt:null,artifactId:null,artifactState:null,reconciliationCode:'AwaitingStage'}));const t=retentionText(nodes);assert.match(t,/требуется проверка/);assert.match(t,/Квота не освобождена/);assert.doesNotMatch(t,/Лизинг stage завершён/);});
 test('retention expired lease is not order TTL or resource deletion',async()=>{const {nodes}=await retentionHarness(retainedDetail({jobState:'Leased',leaseState:'Active',reconciliationCode:'LeaseExpired'}));const t=retentionText(nodes);assert.match(t,/TTL заказа не доказывает/);assert.match(t,/Автоочистки нет/);assert.match(t,/срок lease не является TTL/);});
 test('retention malformed conflicting and unknown tuples fall back without completion claims',async()=>{for(const overrides of [{unsettled:false},{artifactId:null},{stagingBytes:'65536'},{leaseState:'Active'},{reconciliationCode:'<script>'},{requestState:undefined}]){const {nodes}=await retentionHarness(retainedDetail(overrides));assert.equal(retentionText(nodes),'Недостаточно согласованных метаданных: не считать ресурсы свободными.');}});
-test('retention reads stage and cleanup detail endpoints and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/cleanup-status`,`/api/test-environments/${env1}/stage-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
+test('retention reads stage and cleanup detail endpoints and adds no actions or POST',async()=>{const {nodes,calls}=await retentionHarness(retainedDetail());assert.deepEqual(calls.map(c=>c.route),['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`,`/api/test-environments/${env1}/cleanup-status`]);assert.equal(calls.some(c=>c.options?.method==='POST'),false);assert.equal(nodes.get('detail-retention-reasons').querySelectorAll('button').length,0);nodes.get('close-detail').listeners.click();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');});
 test('retention stale detail after logout cannot restore explanation',async()=>{const pending=deferred();const {nodes}=await retentionHarness(pending);await nodes.get('logout').listeners.click();pending.resolve(ok(retainedDetail()));await flush();assert.equal(nodes.get('detail-retention').hidden,true);assert.equal(retentionText(nodes),'');assert.equal(nodes.get('detail-panel').hidden,true);});
 
 test('anonymous session exposes login and never requests operation data', async () => {
@@ -98,9 +98,9 @@ test('unconfirmed logout hides data but retains an explicit retry action', async
 });
 const env1 = '11111111-1111-1111-1111-111111111111';
 const env2 = '22222222-2222-2222-2222-222222222222';
-const item = environmentId => ({ environmentId, jobId: env1, jobState: 'Leased', environmentState: 'Requested', reservationState: 'Held', stagingBytes: 10, createdAt: '2026-01-01T00:00:00Z' });
+const item = environmentId => ({ environmentId, requestId: env2, jobId: env1, jobState: 'Leased', environmentState: 'Requested', reservationState: 'Held', stagingBytes: 10, createdAt: '2026-01-01T00:00:00Z' });
 const buttons = nodes => nodes.get('operations-body').querySelectorAll('button');
-const retainedDetail = overrides => ({ environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held', stagingBytes:65536, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z', reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:01:00Z', ...overrides });
+const retainedDetail = overrides => ({ environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held', stagingBytes:65536, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z', reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:01:00Z', restoreIntent:null, ...overrides });
 async function retentionHarness(detail) {
   const calls=[]; const nodes=harness(async (route,options) => { calls.push({route,options}); if(route==='/api/auth/me') return ok({name:'operator'}); if(route.startsWith('/api/stage-operations')) return ok({items:[item(env1)],nextCursor:null}); if(route.endsWith('/cleanup-status')) return denied(404); if(route.endsWith('/stage-status')) return detail?.promise || ok(detail); if(route==='/api/auth/csrf') return ok({token:'test'}); if(route==='/api/auth/logout') return ok(null); throw new Error('Unexpected route'); });
   await flush(); buttons(nodes)[0].listeners.click(); await flush(); return {nodes,calls};
@@ -222,7 +222,7 @@ test('detail renders all 15 metadata fields as text, with no mutation request', 
     if (route === `/api/test-environments/${env1}/stage-status`) return ok({
       environmentId:env1, requestId:env2, jobId:env1, jobState:'StageCompleted', environmentState:'Requested', requestState:'Pending', reservationState:'Held',
       stagingBytes:10, unsettled:true, artifactId:env2, artifactState:'ContentVerified', leaseState:'Completed', leaseExpiresAt:'2026-01-01T00:00:00Z',
-      reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:00:00Z', dangerous:'<img src=x onerror=alert(1)>'
+      reconciliationCode:'StageCompleted', observedAt:'2026-01-01T00:00:00Z', restoreIntent:null, dangerous:'<img src=x onerror=alert(1)>'
     });
     throw new Error('Unexpected route');
   });
@@ -232,7 +232,7 @@ test('detail renders all 15 metadata fields as text, with no mutation request', 
   assert.equal(nodes.get('detail-values').children[0].children.length, 30);
   assert.equal(nodes.get('detail-values').children[0].children.some(x => x.textContent?.includes('dangerous')), false);
   assert.equal(nodes.get('detail-message').textContent.includes('не подтверждаются'), true);
-  assert.deepEqual(calls, ['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/cleanup-status`,`/api/test-environments/${env1}/stage-status`]);
+  assert.deepEqual(calls, ['/api/auth/me','/api/stage-operations?limit=25',`/api/test-environments/${env1}/stage-status`,`/api/test-environments/${env1}/cleanup-status`]);
 });
 
 test('late detail is discarded after filter change and does not reopen panel', async () => {
@@ -247,7 +247,8 @@ test('late detail is discarded after filter change and does not reopen panel', a
   });
   await flush(); buttons(nodes)[0].listeners.click(); await flush();
   nodes.get('state-filter').value = 'Pending'; nodes.get('state-filter').listeners.change(); await flush();
-  pending.resolve(ok({ environmentId:env1, reconciliationCode:'StageCompleted' })); await flush();
+  pending.resolve(ok(retainedDetail())); await flush();
+  assert.equal(calls.some(call => call.route.endsWith('/cleanup-status')), false);
   assert.equal(nodes.get('detail-panel').hidden, true);
   assert.equal(nodes.get('detail-values').children.length, 0);
   assert.equal(calls.find(c => c.route.includes('/stage-status')).options.signal.aborted, true);
@@ -435,7 +436,7 @@ test('forgotten intent warning survives failed logout and explicit logout retry'
 
 const cleanupDetail = overrides => ({ environmentId:env1, jobId:env1, artifactId:env2, retirementId:env1,
   authorizationId:env2, resultId:env1, releaseId:env2, cleanupState:'StagingReleased', reservedStagingBytes:65536,
-  heldStagingBytes:0, releasedStagingBytes:65536, observedAt:'2026-01-01T00:01:00Z', ...overrides });
+  heldStagingBytes:0, releasedStagingBytes:65536, observedAt:'2026-01-01T00:02:00Z', restoreIntentHold:false, ...overrides });
 const restoreStatus = overrides => ({restoreIntentId:env1,targetIncarnation:env2,requestedAt:'2026-01-01T00:00:00Z',restoreIntentCode:'AwaitingTrustedTarget',executable:false,artifactRetained:true,...overrides});
 test('restore hold is separate from stage history and never execution or target ownership',async()=>{
   const {nodes,calls}=await retentionHarness(retainedDetail({restoreIntent:restoreStatus()}));
@@ -456,7 +457,7 @@ test('restore status allowlists fields and ignores paths snapshots and commands'
   assert.doesNotMatch(nodes.get('detail-values').querySelectorAll('dd').map(x=>x.textContent).join('\n'),/<img|sourcePath|snapshot/);
 });
 test('cleanup hold prevents apparent eligibility without adding actions',async()=>{
-  const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({cleanupState:'None',retirementId:null,authorizationId:null,resultId:null,releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0,restoreIntentHold:true})));
+  const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({cleanupState:'None',retirementId:null,authorizationId:null,resultId:null,releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0,restoreIntentHold:true})), () => ok(retainedDetail({restoreIntent:restoreStatus()})));
   assert.match(cleanupText(nodes),/retirement запрещён/);assert.match(cleanupText(nodes),/Постоянное удержание/);
   assert.equal(calls.some(x=>x.options?.method==='POST'),false);assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length,0);
 });
@@ -489,25 +490,17 @@ const assertCancellation = nodes => {
   assert.match(nodes.get('cleanup-message').textContent, /Cleanup не применим/);
 };
 
-test('coherent cancellation replaces earlier cleanup and adds no writes or controls', async () => {
+test('coherent cancellation skips cleanup entirely and adds no writes or controls', async () => {
   const stage = deferred();
   const { nodes, calls } = await cleanupHarness(() => ok(cleanupDetail()), () => stage.promise);
-  assert.match(cleanupText(nodes), /Staging allocation освобождена/);
+  assert.equal(cleanupText(nodes), '');
+  assert.equal(calls.at(-1).route, `/api/test-environments/${env1}/stage-status`);
   stage.resolve(ok(cancelledDetail())); await flush();
   assertCancellation(nodes);
+  assert.equal(calls.some(call => call.route.endsWith('/cleanup-status')), false);
   assert.equal(nodes.get('detail-values').querySelectorAll('button').length, 0);
   assert.equal(nodes.get('cleanup-values').querySelectorAll('button').length, 0);
   assert.ok(calls.every(call => (call.options.method || 'GET') === 'GET'));
-});
-
-test('late cleanup success or failure cannot replace confirmed cancellation', async () => {
-  for (const response of [ok(cleanupDetail()), denied(404), denied(503)]) {
-    const late = deferred();
-    const { nodes } = await cleanupHarness(() => late.promise, () => ok(cancelledDetail()));
-    assertCancellation(nodes);
-    late.resolve(response); await flush();
-    assertCancellation(nodes);
-  }
 });
 
 test('incomplete or contradictory cancellation never shows released quota or not-applicable cleanup', async () => {
@@ -516,7 +509,8 @@ test('incomplete or contradictory cancellation never shows released quota or not
     { artifactId:env2 }, { artifactState:'ContentVerified' }, { leaseState:'Active' }, { leaseExpiresAt:'2026-01-01T00:00:00Z' },
     { restoreIntent:restoreStatus() }, { restoreIntent:undefined }, { environmentId:env2 }, { requestId:'invalid' }, { jobId:null },
     { observedAt:'2026' }, { observedAt:'2026-02-30T00:01:00Z' }]) {
-    const { nodes } = await cleanupHarness(() => denied(404), () => ok(cancelledDetail(changes)));
+    const { nodes, calls } = await cleanupHarness(() => denied(404), () => ok(cancelledDetail(changes)));
+    assert.equal(calls.some(call => call.route.endsWith('/cleanup-status')), false);
     assert.equal(nodes.get('detail-values').children.length, 0);
     assert.doesNotMatch(nodes.get('detail-message').textContent, /квота заказа.*освобождена/);
     assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
@@ -541,6 +535,64 @@ test('stale cancellation cannot override a newer selection’s cleanup', async (
   assert.doesNotMatch(nodes.get('detail-message').textContent, /Сервер подтвердил отмену/);
 });
 
+test('cleanup waits for a valid stage body before starting and keeps independent observation times', async () => {
+  const body = deferred();
+  const { nodes, calls } = await cleanupHarness(() => ok(cleanupDetail()), () => ({ ok:true, json:() => body.promise }));
+  assert.equal(calls.at(-1).route, `/api/test-environments/${env1}/stage-status`);
+  assert.equal(cleanupText(nodes), '');
+  body.resolve(retainedDetail()); await flush();
+  assert.equal(calls.at(-1).route, `/api/test-environments/${env1}/cleanup-status`);
+  const stageTime = nodes.get('detail-values').querySelectorAll('dd').at(-1).textContent;
+  const cleanupTime = nodes.get('cleanup-values').querySelectorAll('dd').at(-1).textContent;
+  assert.notEqual(stageTime, cleanupTime);
+  assert.match(cleanupText(nodes), /Staging allocation освобождена/);
+});
+
+test('failed or mismatched stage skips cleanup and preserves ordinary operations ACL handling', async () => {
+  const failures = [denied(401), denied(403), denied(404), denied(409), denied(503),
+    {ok:true, json:async () => { throw new Error('invalid JSON'); }},
+    ok(null), ...[{environmentId:env2}, {requestId:env1}, {jobId:env2}, {stagingBytes:'65536'},
+      {artifactId:null}, {observedAt:2026}, {restoreIntent:undefined}, {restoreIntent:restoreStatus({executable:true})},
+      {reconciliationCode:'Inconsistent'}].map(changes => ok(retainedDetail(changes)))];
+  for (const failure of failures) {
+    const { nodes, calls } = await cleanupHarness(() => ok(cleanupDetail()), () => failure);
+    assert.equal(calls.some(call => call.route.endsWith('/cleanup-status')), false);
+    assert.equal(cleanupText(nodes), '');
+    if (failure.status === 401) assert.equal(nodes.get('workspace').hidden, true);
+    else {
+      assert.equal(nodes.get('workspace').hidden, false);
+      assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+    }
+  }
+});
+
+test('cleanup rejects mismatched pins and never suppresses a valid stage observation', async () => {
+  const none = {cleanupState:'None',retirementId:null,authorizationId:null,resultId:null,releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0};
+  const cases = [
+    ...[{environmentId:env2}, {jobId:env2}, {artifactId:env1}, {...none,artifactId:null},
+      {reservedStagingBytes:99,releasedStagingBytes:99}, {...none,restoreIntentHold:true}, {restoreIntentHold:undefined}, {restoreIntentHold:'false'}]
+      .map(changes => [retainedDetail(), cleanupDetail(changes)]),
+    [retainedDetail({restoreIntent:restoreStatus()}), cleanupDetail(none)],
+    [retainedDetail({jobState:'Pending',artifactId:null,artifactState:null,leaseState:null,leaseExpiresAt:null,reconciliationCode:'AwaitingStage'}), cleanupDetail(none)]
+  ];
+  for (const [stage, cleanup] of cases) {
+    const { nodes } = await cleanupHarness(() => ok(cleanup), () => ok(stage));
+    assert.ok(nodes.get('detail-values').querySelectorAll('dd').length > 0);
+    assert.equal(cleanupText(nodes), '');
+    assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+  }
+});
+
+test('ordinary cleanup 403 keeps stage visible and 401 clears protected details', async () => {
+  for (const status of [401,403]) {
+    const { nodes } = await cleanupHarness(() => denied(status));
+    assert.equal(cleanupText(nodes), '');
+    assert.equal(nodes.get('workspace').hidden, status === 401);
+    assert.equal(nodes.get('detail-values').children.length > 0, status === 403);
+    if (status === 403) assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
+  }
+});
+
 test('cleanup renders only allowlisted metadata as text and never offers mutation',async()=>{
   const hostile = '<img src=x onerror=bad>';
   const {nodes,calls}=await cleanupHarness(()=>ok(cleanupDetail({sourcePath:hostile,token:hostile,snapshot:hostile})));
@@ -552,7 +604,8 @@ test('cleanup renders only allowlisted metadata as text and never offers mutatio
   assert.equal(calls.some(x=>x.options?.method==='POST'),false);
 });
 test('cleanup late response for old selection is discarded even when fetch ignores abort',async()=>{
-  const late=deferred(); const {nodes}=await cleanupHarness(route=>route.includes(env1)?late.promise:ok(cleanupDetail({environmentId:env2,jobId:env2,reservedStagingBytes:99,releasedStagingBytes:99})));
+  const late=deferred(); const {nodes}=await cleanupHarness(route=>route.includes(env1)?late.promise:ok(cleanupDetail({environmentId:env2,reservedStagingBytes:99,releasedStagingBytes:99})),
+     route=>ok(retainedDetail(route.includes(env2)?{environmentId:env2,stagingBytes:99}:{})));
   buttons(nodes)[1].listeners.click(); await flush();
   assert.match(cleanupText(nodes),/99 байт/);
   late.resolve(ok(cleanupDetail())); await flush();

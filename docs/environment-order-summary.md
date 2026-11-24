@@ -10,7 +10,7 @@ Root12: environmentId,projectId,displayName,environmentState,requestId,requestSt
 
 ## Stage и удержания
 
-После валидного ProvisionArchive summary доступна отдельная кнопка чтения существующих stage-status/cleanup-status. Request/job pins сверяются с summary (cleanup содержит jobId, не requestId). Это независимые наблюдения, не общая атомарная truth и не новый gate. Для ObserveArchiveStage существующие status ports не поддерживают этот сценарий: кнопка не делает запрос, UI явно говорит о недоступности.
+После валидного ProvisionArchive summary доступна отдельная кнопка чтения stage-status и, при согласованном результате, cleanup-status. Идентификаторы запроса и задания сверяются с summary. Учёт cleanup сверяется с наблюдением stage; это два независимых чтения, а не одна атомарная проверка. Для подтверждённой отмены до первой аренды cleanup не запрашивается. Для ObserveArchiveStage существующие status ports не поддерживают этот сценарий: кнопка не делает запрос, UI явно говорит о недоступности.
 
 У старых stage/cleanup ports свои predicates: stage требует enabled project у non-admin, cleanup — даже у admin; оба исключают stage-only jobs. Поэтому после успешного summary статус может быть недоступен. 404/403/409/сбой не означают отсутствие удержаний или свободное место. Новая связка не меняет существующий protocol и не переводит окружение в Ready.
 
