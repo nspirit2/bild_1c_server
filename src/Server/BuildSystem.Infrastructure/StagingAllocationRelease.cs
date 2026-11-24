@@ -48,7 +48,10 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
                            join reservation in db.EnvironmentReservations.AsNoTracking() on retirement.ReservationId equals reservation.Id
                            join version in db.DiskArchiveVersions.AsNoTracking() on artifact.ArchiveVersionId equals version.Id
                            join archive in db.DiskArchives.AsNoTracking() on version.ArchiveId equals archive.Id
-                           where retirement.RetirementId == plan.RetirementId
+                           where retirement.RetirementId == plan.RetirementId && !db.PendingArchiveCancellations.Any(c =>
+                               c.EnvironmentId == plan.EnvironmentId || c.EnvironmentId == environment.Id ||
+                               c.JobId == job.Id || c.RequestId == request.Id || c.RequestId == environment.RequestId ||
+                               c.ReservationId == reservation.Id || c.ReservationId == artifact.ReservationId)
                            select new { retirement, artifact, job, lease, environment, request, reservation, version, archive }).SingleOrDefaultAsync(ct);
             if (i is null || i.retirement.State != "Requested" || i.retirement.AgentId != auth.AgentId || i.retirement.FencingToken != plan.FencingToken ||
                 i.retirement.EnvironmentId != plan.EnvironmentId || i.retirement.JobId != plan.JobId || i.retirement.ReservationId != plan.ReservationId || i.retirement.ArtifactId != plan.ArtifactId ||

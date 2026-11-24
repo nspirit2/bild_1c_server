@@ -100,6 +100,44 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal("ContentVerified", status.ArtifactState); Assert.True(status.Unsettled);
     }
     [SqlServerFact]
+    public Task Conflicting_cancellation_blocks_first_cleanup_report() => AssertConflictingCancellationAsync(acceptResult: false);
+
+    [SqlServerFact]
+    public Task Conflicting_cancellation_blocks_cleanup_replay_and_staging_release() => AssertConflictingCancellationAsync(acceptResult: true);
+
+    private static async Task AssertConflictingCancellationAsync(bool acceptResult)
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, acceptResult);
+        await using var db = sql.NewContext();
+        var plan = seed.Authorization.Plan;
+        // Deliberately contradictory history in this disposable fixture; the cancellation writer cannot produce it.
+        db.PendingArchiveCancellations.Add(new PendingArchiveCancellationRecord
+        {
+            EnvironmentId = seed.Order.EnvironmentId, RequestId = seed.Order.RequestId, JobId = seed.Order.JobId,
+            ReservationId = plan.ReservationId, RootId = seed.Root, PoolId = seed.Pool,
+            ActorId = seed.Owner.UserId, CancelledAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var report = new ReportStageCleanup(seed.ResultId, seed.Authorization.AuthorizationId, plan.RetirementId,
+            plan.JobId, plan.ArtifactId, plan.FencingToken);
+        var reportError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlStageCleanupResults(db, new StageCleanupResultOptions { Enabled = true })
+                .ReportAsync(seed.Credential.Token, report, Ct));
+        Assert.Equal((409, "CleanupResultMismatch"), (reportError.StatusCode, reportError.Code));
+        if (acceptResult)
+        {
+            var releaseError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+            Assert.Equal((409, "StagingReleaseMismatch"), (releaseError.StatusCode, releaseError.Code));
+        }
+        Assert.Equal(acceptResult ? 1 : 0, await db.StageCleanupResults.CountAsync(Ct));
+        Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal("Held", await db.EnvironmentReservations.Where(x => x.Id == plan.ReservationId).Select(x => x.State).SingleAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Six_concurrent_releases_and_replay_commit_one_ledger_and_audit_without_lifecycle_changes()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

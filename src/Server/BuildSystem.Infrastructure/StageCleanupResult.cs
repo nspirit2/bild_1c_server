@@ -50,6 +50,10 @@ public sealed class SqlStageCleanupResults(BuildSystemDbContext db, StageCleanup
             // Historical immutable identity only: disabled/deleted bindings or unrelated active leases must not lose a past deletion report.
             await Lock("BuildSystem:root:" + pins.RootId.ToString("N"), ct);
             await Lock("BuildSystem:pool:" + pins.PoolId.ToString("N"), ct);
+            if (await db.PendingArchiveCancellations.AnyAsync(c => c.EnvironmentId == plan.EnvironmentId ||
+                c.JobId == plan.JobId || c.ReservationId == plan.ReservationId ||
+                db.TestEnvironments.Any(e => e.Id == plan.EnvironmentId && e.RequestId == c.RequestId) ||
+                db.EnvironmentJobs.Any(j => j.Id == plan.JobId && j.RequestId == c.RequestId), ct)) throw Mismatch();
             var matches = await db.StageCleanupResults.Where(x => x.ResultId == input.ResultId || x.AuthorizationId == input.AuthorizationId || x.ArtifactId == input.ArtifactId).Take(2).ToListAsync(ct);
             if (matches.Count > 1) throw Mismatch();
             var prior = matches.SingleOrDefault();
