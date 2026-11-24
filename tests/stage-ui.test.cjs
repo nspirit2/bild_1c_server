@@ -527,6 +527,27 @@ test('coherent cancellation skips cleanup entirely and adds no writes or control
   assert.ok(calls.every(call => (call.options.method || 'GET') === 'GET'));
 });
 
+test('refresh replaces pending stage with confirmed cancellation and ignores old cleanup', async () => {
+  const pendingCleanup = deferred();
+  let stageReads = 0;
+  const awaiting = retainedDetail({jobState:'Pending', artifactId:null, artifactState:null,
+    leaseState:null, leaseExpiresAt:null, reconciliationCode:'AwaitingStage'});
+  const {nodes,calls} = await cleanupHarness(() => ({ok:true, json:() => pendingCleanup.promise}),
+    () => ok(++stageReads === 1 ? awaiting : cancelledDetail()));
+  assert.equal(nodes.get('cleanup-panel').attributes['aria-busy'], 'true');
+  await nodes.get('refresh-detail').listeners.click(); await flush();
+  assertCancellation(nodes);
+  const cleanupRequests = calls.filter(call => call.route.endsWith('/cleanup-status'));
+  assert.equal(cleanupRequests.length, 1);
+  assert.equal(cleanupRequests[0].options.signal.aborted, true);
+  pendingCleanup.resolve(cleanupDetail({cleanupState:'None', artifactId:null, retirementId:null,
+    authorizationId:null, resultId:null, releaseId:null, heldStagingBytes:65536, releasedStagingBytes:0}));
+  await flush();
+  assertCancellation(nodes);
+  assert.equal(nodes.get('cleanup-panel').attributes['aria-busy'], 'false');
+  assert.ok(calls.every(call => (call.options.method || 'GET') === 'GET'));
+});
+
 test('incomplete or contradictory cancellation never shows released quota or not-applicable cleanup', async () => {
   for (const changes of [{ reconciliationCode:'Inconsistent' }, { jobState:'Pending' }, { environmentState:'Requested' },
     { requestState:'Pending' }, { reservationState:'Held' }, { unsettled:true }, { stagingBytes:0 }, { stagingBytes:'65536' },
