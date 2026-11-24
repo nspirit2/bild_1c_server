@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed','order-summary-load','order-summary-status','order-summary-values','order-stage-load'].map(id => [id, $(id)]));
+  const ui = Object.fromEntries(['current-user','logout','message','login-panel','workspace','login-form','username','password','login-submit','refresh','state-filter','observed','operations-body','empty-list','previous','next','page-number','detail-panel','detail-message','detail-values','detail-retention','detail-retention-reasons','cleanup-message','cleanup-values','refresh-detail','close-detail','browse-archives','archive-browser','projects-select','projects-message','projects-observed','projects-previous','projects-next','projects-page','load-archives','catalog-message','catalog-observed','catalog-body','catalog-previous','catalog-next','catalog-page','order-panel','order-context','order-form','order-name','order-ttl','order-submit','order-message','order-receipt','order-retry','order-new','order-abandon-panel','order-abandon-ack','order-abandon','environments-panel','environments-refresh','environments-status','environments-list','environment-details','environment-detail-status','environment-previous','environment-next','environment-page','environment-observed','order-summary-load','order-summary-status','order-summary-values','order-stage-load'].map(id => [id, $(id)]));
   const states = {
     Pending: 'Ожидает подготовки', Leased: 'Выдано агенту', StageCompleted: 'Stage завершён',
     NeedsAttention: 'Требует внимания', Requested: 'Запрошено', Provisioning: 'Подготовка окружения',
@@ -12,7 +12,7 @@
   };
   const allowedFilters = new Set(['', 'Pending', 'Leased', 'StageCompleted', 'NeedsAttention', 'Cancelled']);
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  let generation = 0, detailGeneration = 0, controller = null, detailController = null;
+  let generation = 0, detailGeneration = 0, controller = null, detailController = null, refreshDetail = null;
   let authenticated = false, busy = false, history = [null], nextCursor = null, selected = null;
   let projectGeneration = 0, catalogGeneration = 0, projectController = null, catalogController = null;
   let projectHistory = [null], catalogHistory = [null], projectNext = null, catalogNext = null;
@@ -250,6 +250,7 @@
   const bytes = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? new Intl.NumberFormat('ru-RU').format(value) + ' байт' : '—';
   function closeDetail() {
     historyStage = false;
+    refreshDetail = null; ui['refresh-detail'].disabled = true;
     detailGeneration++; detailController?.abort(); detailController = null;
     selected = null; ui['detail-panel'].hidden = true; ui['detail-values'].replaceChildren();
     ui['detail-retention'].hidden = true; ui['detail-retention-reasons'].replaceChildren();
@@ -588,6 +589,8 @@
   async function loadDetail(id, expected, fromHistory = false) {
     if (!authenticated || busy || !hasGuid(id)) return;
     closeDetail(); historyStage = fromHistory; selected = id; markSelection();
+    refreshDetail = () => loadDetail(id, expected, fromHistory);
+    ui['refresh-detail'].disabled = false;
     const version = ++detailGeneration, session = generation; detailController = new AbortController();
     const signal = detailController.signal, base = '/api/test-environments/' + encodeURIComponent(id);
     const current = () => version === detailGeneration && session === generation && authenticated && selected === id;
@@ -703,6 +706,7 @@
   ui['state-filter'].addEventListener('change', () => loadList(true));
   ui.previous.addEventListener('click', () => { if (!orderIntent && !busy && history.length > 1) { history.pop(); loadList(); } });
   ui.next.addEventListener('click', () => { if (!orderIntent && !busy && nextCursor) { history.push(nextCursor); loadList(); } });
+  ui['refresh-detail'].addEventListener('click', () => refreshDetail?.());
   ui['close-detail'].addEventListener('click', closeDetail);
   ui['browse-archives'].addEventListener('click', () => {
     if (orderIntent || !authenticated || busy) return;

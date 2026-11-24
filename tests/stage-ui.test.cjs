@@ -608,6 +608,32 @@ test('cleanup accounting requires stage completion, not just a matching artifact
   assert.match(nodes.get('cleanup-message').textContent, /Состояние неизвестно/);
 });
 
+test('refresh re-reads the selected stage before cleanup and ignores the old cleanup body', async () => {
+  const oldBody = deferred();
+  let requests = 0;
+  const none = cleanupDetail({cleanupState:'None',retirementId:null,authorizationId:null,resultId:null,
+    releaseId:null,heldStagingBytes:65536,releasedStagingBytes:0});
+  const {nodes,calls} = await cleanupHarness(() => ++requests === 1
+    ? {ok:true, json:() => oldBody.promise} : ok(none));
+  const refresh = nodes.get('refresh-detail');
+  assert.equal(refresh.disabled, false);
+  await refresh.listeners.click(); await flush();
+  const detailCalls = calls.filter(call => call.route.includes('/test-environments/'));
+  assert.deepEqual(detailCalls.map(call => call.route), ['stage-status','cleanup-status','stage-status','cleanup-status']
+    .map(endpoint => `/api/test-environments/${env1}/${endpoint}`));
+  assert.equal(detailCalls[1].options.signal.aborted, true);
+  assert.equal(calls.some(call => call.options?.method === 'POST'), false);
+  assert.match(cleanupText(nodes), /Нет retirement intent/);
+  oldBody.resolve(cleanupDetail()); await flush();
+  assert.match(cleanupText(nodes), /Нет retirement intent/);
+  assert.doesNotMatch(cleanupText(nodes), /Staging allocation освобождена/);
+  nodes.get('close-detail').listeners.click();
+  assert.equal(refresh.disabled, true);
+  const count = calls.length;
+  refresh.listeners.click(); await flush();
+  assert.equal(calls.length, count);
+});
+
 test('ordinary cleanup 403 keeps stage visible and 401 clears protected details', async () => {
   for (const status of [401,403]) {
     const { nodes } = await cleanupHarness(() => denied(status));
