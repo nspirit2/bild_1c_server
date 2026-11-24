@@ -203,6 +203,33 @@ test('correlated status 403 clears all; 404 means unavailable/unknown, never a n
   }
 });
 
+test('refresh keeps history correlation and cannot reopen a superseded order', async () => {
+  const pending = deferred(); let stageReads = 0, refreshedSignal;
+  const h = setup(undefined, (route, options) => {
+    if (route === cleanupRoute) return ok(cleanup());
+    if (++stageReads === 1) return ok(stage());
+    refreshedSignal = options.signal;
+    return {ok:true, json:() => pending.promise};
+  });
+  await open(h); await load(h); await loadStage(h);
+  const refresh = h.nodes.get('refresh-detail');
+  assert.equal(refresh.disabled, false);
+  await h.fire(refresh);
+  assert.deepEqual(h.calls.filter(c => [stageRoute,cleanupRoute].includes(c.route)).map(c => c.route),
+    [stageRoute, cleanupRoute, stageRoute]);
+  assert.equal(h.nodes.get('cleanup-values').children.length, 0);
+  await h.fire(h.buttons()[1]);
+  assert.equal(refreshedSignal.aborted, true);
+  assert.equal(refresh.disabled, true);
+  pending.resolve(stage()); await flush();
+  assert.equal(h.nodes.get('detail-panel').hidden, true);
+  assert.equal(h.nodes.get('detail-values').children.length, 0);
+  await h.fire(refresh);
+  assert.equal(stageReads, 2);
+  assert.equal(h.calls.filter(c => c.route === cleanupRoute).length, 1);
+  assert.ok(h.calls.every(c => !c.options.method || c.options.method === 'GET'));
+});
+
 test('history invalidation aborts pending stage or cleanup and discards late response bodies', async () => {
   for (const pendingRoute of [stageRoute, cleanupRoute]) {
     const pending = deferred(); let signal;
