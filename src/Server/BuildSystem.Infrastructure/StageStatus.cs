@@ -52,22 +52,9 @@ public sealed class SqlStageStatus(BuildSystemDbContext db) : IStageStatus
                 await RequireCancellationProofAsync(db, environment, request, job, reservation, receipts[0], "StageStatusInconsistent", ct);
             }
             var lease = cancellationLike ? null : await db.AgentLeases.AsNoTracking().SingleOrDefaultAsync(x => x.JobId == job.Id, ct);
-            var artifacts = cancellationLike ? [] : await db.StagedArtifacts.AsNoTracking()
-                .Where(x => x.JobId == job.Id || x.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
-            if (artifacts.Count > 1) throw Inconsistent();
-            var artifact = artifacts.SingleOrDefault();
-            if (artifact is not null)
-            {
-                if (lease is null || artifact.JobId != job.Id || artifact.State != "ContentVerified" ||
-                    artifact.AgentId != lease.AgentId || artifact.FencingToken != lease.FencingToken ||
-                    artifact.ReservationId != reservation.Id || artifact.ArchiveVersionId != request.ArchiveVersionId ||
-                    artifact.SizeBytes <= 0 || artifact.SizeBytes > reservation.StagingBytes)
-                    throw Inconsistent();
-                var version = await db.DiskArchiveVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == artifact.ArchiveVersionId, ct);
-                if (version is null || version.SizeBytes != artifact.SizeBytes || version.Format != artifact.Format ||
-                    !string.Equals(version.Sha256, artifact.Sha256, StringComparison.OrdinalIgnoreCase))
-                    throw Inconsistent();
-            }
+            var receipt = cancellationLike ? null : await StagedArtifactObservation.ReadAsync(db, job, request,
+                reservation, lease, "StageStatusInconsistent", ct);
+            var artifact = receipt?.Artifact;
             var restoreIntent = cancellationLike ? null : await RestoreIntentStatus.ReadAsync(db, environment, request, job, reservation,
                 lease, artifact, "StageStatusInconsistent", ct);
             var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);

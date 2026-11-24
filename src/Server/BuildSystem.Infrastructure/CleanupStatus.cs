@@ -42,18 +42,14 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
                 return null;
             }
             var lease = await db.AgentLeases.AsNoTracking().SingleOrDefaultAsync(l => l.JobId == job.Id, ct);
-            var artifacts = await db.StagedArtifacts.AsNoTracking().Where(a => a.JobId == job.Id || a.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
-            if (artifacts.Count > 1) throw Inconsistent();
-            var artifact = artifacts.SingleOrDefault();
+            var receipt = await StagedArtifactObservation.ReadAsync(db, job, request, reservation, lease,
+                "CleanupStatusInconsistent", ct);
+            var artifact = receipt?.Artifact;
             Guid? rootId = null;
-            if (artifact is not null)
+            if (receipt is not null)
             {
-                if (lease is null || artifact.JobId != job.Id || artifact.AgentId != lease.AgentId || artifact.FencingToken != lease.FencingToken ||
-                    artifact.ReservationId != reservation.Id || artifact.ArchiveVersionId != request.ArchiveVersionId || artifact.State != "ContentVerified" ||
-                    artifact.SizeBytes <= 0 || artifact.SizeBytes > reservation.StagingBytes) throw Inconsistent();
-                var version = await db.DiskArchiveVersions.AsNoTracking().SingleOrDefaultAsync(v => v.Id == artifact.ArchiveVersionId, ct);
-                if (version is null || version.SizeBytes != artifact.SizeBytes || version.Format != artifact.Format || !string.Equals(version.Sha256, artifact.Sha256, StringComparison.OrdinalIgnoreCase)) throw Inconsistent();
-                rootId = await db.DiskArchives.AsNoTracking().Where(a => a.Id == version.ArchiveId).Select(a => (Guid?)a.RootId).SingleOrDefaultAsync(ct);
+                rootId = await db.DiskArchives.AsNoTracking().Where(a => a.Id == receipt.Version.ArchiveId)
+                    .Select(a => (Guid?)a.RootId).SingleOrDefaultAsync(ct);
                 if (rootId is null) throw Inconsistent();
             }
             var intents = await db.StageRetirementIntents.AsNoTracking().Where(i => i.EnvironmentId == env.Id || i.JobId == job.Id || i.ReservationId == reservation.Id).Take(2).ToListAsync(ct);

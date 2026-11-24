@@ -164,6 +164,10 @@ public sealed class SqlStageStatusTests
         var before = await DurableStateAsync(sql);
         var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() => StatusAsync(sql, seed));
         Assert.Equal((409, "StageStatusInconsistent"), (rejected.StatusCode, rejected.Code));
+        await using var cleanupDb = sql.NewContext();
+        var cleanupRejected = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlCleanupStatus(cleanupDb).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (cleanupRejected.StatusCode, cleanupRejected.Code));
         Assert.Equal(before, await DurableStateAsync(sql));
     }
 
