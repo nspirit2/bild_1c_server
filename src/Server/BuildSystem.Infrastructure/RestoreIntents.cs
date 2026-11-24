@@ -55,7 +55,9 @@ public sealed class SqlRestoreIntents : IRestoreIntents
                            join a in db.DiskArchives on v.ArchiveId equals a.Id
                            join root in db.ArchiveRoots on a.RootId equals root.Id
                            join pool in db.EnvironmentPools on e.PoolId equals pool.Id
-                           where e.Id == environmentId
+                           where e.Id == environmentId && !db.PendingArchiveCancellations.Any(c => c.EnvironmentId == e.Id ||
+                               c.RequestId == q.Id || c.RequestId == j.RequestId || c.JobId == j.Id ||
+                               c.ReservationId == r.Id || c.ReservationId == artifact.ReservationId)
                            select new { e, q, j, r, l, artifact, agent, v, a, root, pool }).SingleOrDefaultAsync(ct);
             if (i is null || i.j.Id != input.ExpectedStageJobId || i.artifact.ArtifactId != input.ExpectedArtifactId ||
                 !StageAdmission.IsStageJob(i.j) || i.j.State != "StageCompleted" || i.l.State != "Completed" ||

@@ -293,6 +293,20 @@ public sealed class SqlStageOperationsTests
             .CompleteAsync(credential.Token, new(order.JobId, 1, artifactId), Ct));
         Assert.Equal(before, await DurableStateAsync(sql));
 
+        await db.EnvironmentJobs.Where(x => x.Id == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "StageCompleted"), Ct);
+        await db.AgentLeases.Where(x => x.JobId == order.JobId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, "Completed"), Ct);
+        var pool = await db.EnvironmentPools.AsNoTracking().SingleAsync(x => x.Id == seed.Pool, Ct);
+        var restore = new SqlRestoreIntents(db, new RestoreIntentOptions { Enabled = true,
+            CanonicalMappings = new() { [pool.Id] = new(pool.ClusterId, pool.SqlServerId) } });
+        before = await DurableStateAsync(sql);
+        await AssertConflictAsync("StageRetirementMismatch", () => new SqlStageRetirement(db)
+            .RequestAsync(seed.Owner, order.EnvironmentId, new(order.JobId, artifactId), Ct));
+        await AssertConflictAsync("RestoreIntentMismatch", () => restore
+            .RequestAsync(seed.Owner, order.EnvironmentId, new(order.JobId, artifactId), Ct));
+        Assert.False(await db.StageRetirementIntents.AnyAsync(Ct));
+        Assert.False(await db.RestoreIntents.AnyAsync(Ct));
+        Assert.Equal(before, await DurableStateAsync(sql));
+
         static async Task AssertConflictAsync(string code, Func<Task> action)
         {
             var error = await Assert.ThrowsAsync<RequestRejectedException>(action);
