@@ -118,6 +118,8 @@ public sealed class SqlPendingArchiveCancellations(BuildSystemDbContext db, bool
             i.e.HasUnsettledProvisioningOperation = false;
             i.r.State = "Released";
             await db.SaveChangesAsync(ct);
+            // The first success must satisfy the same proof as replay, history and quota.
+            if (!await StageCancellationProof.ProvenJobIds(db).AnyAsync(id => id == jobId, ct)) throw Mismatch();
             await tx.CommitAsync(ct);
             return Receipt(receipt);
         });

@@ -412,6 +412,27 @@ public sealed class SqlPendingArchiveCancellationTests
     }
 
     [SqlServerFact]
+    public async Task First_cancellation_rolls_back_if_shared_proof_rejects_the_snapshot()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        // The command's pin checks ignore this extra property, but the shared proof requires flat JSON.
+        var snapshot = seed.Snapshot.Insert(seed.Snapshot.LastIndexOf('}'), ",\"unexpected\":{}");
+        seed = seed with { Snapshot = snapshot };
+        await using (var db = sql.NewContext())
+        {
+            (await db.EnvironmentJobs.SingleAsync(Ct)).SnapshotJson = snapshot;
+            await db.SaveChangesAsync(Ct);
+            AssertMismatch(await Assert.ThrowsAsync<RequestRejectedException>(() =>
+                new SqlPendingArchiveCancellations(db, enabled: true)
+                    .CancelAsync(seed.Owner, seed.Order.EnvironmentId, seed.Cancellation(), Ct)));
+        }
+        await using var check = sql.NewContext();
+        await AssertUncancelledAsync(check, seed, "Pending");
+        Assert.Equal(1, await check.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Completed_lease_history_blocks_cancel_even_if_the_order_looks_pending_again()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
