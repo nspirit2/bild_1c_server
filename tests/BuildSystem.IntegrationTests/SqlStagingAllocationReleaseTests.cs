@@ -100,10 +100,15 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal("ContentVerified", status.ArtifactState); Assert.True(status.Unsettled);
     }
     [SqlServerFact]
-    public async Task Conflicting_restore_hold_blocks_cleanup_report_without_changing_history()
+    public Task Conflicting_restore_hold_blocks_first_cleanup_report() => AssertConflictingRestoreHoldAsync(acceptResult: false);
+
+    [SqlServerFact]
+    public Task Conflicting_restore_hold_blocks_cleanup_replay_and_staging_release() => AssertConflictingRestoreHoldAsync(acceptResult: true);
+
+    private static async Task AssertConflictingRestoreHoldAsync(bool acceptResult)
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
-        var seed = await PrepareAsync(sql, acceptResult: false);
+        var seed = await PrepareAsync(sql, acceptResult);
         await using var db = sql.NewContext();
         var plan = seed.Authorization.Plan;
         var pool = await db.EnvironmentPools.SingleAsync(p => p.Id == seed.Pool, Ct);
@@ -130,7 +135,15 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal((409, "CleanupResultMismatch"), (rejected.StatusCode, rejected.Code));
         Assert.Equal(1, await db.RestoreIntents.CountAsync(Ct));
         Assert.Equal(1, await db.StageCleanupAuthorizations.CountAsync(Ct));
-        Assert.False(await db.StageCleanupResults.AnyAsync(Ct));
+        if (acceptResult)
+        {
+            var release = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+            Assert.Equal((409, "RestoreIntentHold"), (release.StatusCode, release.Code));
+            var prior = await db.StageCleanupResults.AsNoTracking().SingleAsync(Ct);
+            Assert.Equal((seed.ResultId, seed.Authorization.AuthorizationId, plan.ArtifactId),
+                (prior.ResultId, prior.AuthorizationId, prior.ArtifactId));
+        }
+        else Assert.False(await db.StageCleanupResults.AnyAsync(Ct));
         Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
     }
