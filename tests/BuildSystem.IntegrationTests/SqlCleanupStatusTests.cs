@@ -133,6 +133,31 @@ public sealed class SqlCleanupStatusTests
         Assert.Equal(409, error.StatusCode); Assert.Equal("CleanupStatusInconsistent", error.Code);
     }
     [SqlServerFact]
+    public async Task Cleanup_status_rejects_source_archive_or_path_mismatch_in_snapshot()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        Assert.Equal("StagingReleased", (await ReadAsync(sql, seed))!.CleanupState);
+        await using var db = sql.NewContext();
+        var job = db.EnvironmentJobs.Where(j => j.Id == seed.Order.JobId);
+        var original = await job.Select(j => j.SnapshotJson).SingleAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        foreach (var (key, value) in new[] { ("sourceArchiveId", Guid.NewGuid().ToString("D")), ("sourceRelativePath", "different.dt") })
+        {
+            var snapshot = System.Text.Json.Nodes.JsonNode.Parse(original)!.AsObject();
+            snapshot[key] = value;
+            var changed = snapshot.ToJsonString();
+            Assert.Equal(1, await job.ExecuteUpdateAsync(set => set.SetProperty(j => j.SnapshotJson, changed), Ct));
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed));
+            Assert.Equal((409, "CleanupStatusInconsistent"), (error.StatusCode, error.Code));
+        }
+        Assert.Equal(1, await job.ExecuteUpdateAsync(set => set.SetProperty(j => j.SnapshotJson, original), Ct));
+        Assert.Equal("StagingReleased", (await ReadAsync(sql, seed))!.CleanupState);
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await db.StagingAllocationReleases.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cleanup_status_and_release_reject_inconsistent_provisioning_state()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();

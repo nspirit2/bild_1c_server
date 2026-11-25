@@ -45,13 +45,10 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             var receipt = await StagedArtifactObservation.ReadAsync(db, job, request, reservation, lease,
                 "CleanupStatusInconsistent", ct);
             var artifact = receipt?.Artifact;
-            Guid? rootId = null;
-            if (receipt is not null)
-            {
-                rootId = await db.DiskArchives.AsNoTracking().Where(a => a.Id == receipt.Version.ArchiveId)
-                    .Select(a => (Guid?)a.RootId).SingleOrDefaultAsync(ct);
-                if (rootId is null) throw Inconsistent();
-            }
+            var archive = receipt is null ? null : await db.DiskArchives.AsNoTracking()
+                .Where(a => a.Id == receipt.Version.ArchiveId)
+                .Select(a => new { a.Id, a.RootId, a.RelativePath }).SingleOrDefaultAsync(ct);
+            if (receipt is not null && archive is null) throw Inconsistent();
             var intents = await db.StageRetirementIntents.AsNoTracking().Where(i => i.EnvironmentId == env.Id || i.JobId == job.Id || i.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
             if (intents.Count > 1) throw Inconsistent();
             var intent = intents.SingleOrDefault();
@@ -67,7 +64,7 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             var auth = auths.SingleOrDefault();
             if (auth is not null)
             {
-                if (intent is null || artifact is null || auth.RetirementId != intent.RetirementId || auth.ArtifactId != artifact.ArtifactId || auth.AgentId != intent.AgentId || auth.StageFencingToken != intent.FencingToken) throw Inconsistent();
+                if (intent is null || artifact is null || archive is null || auth.RetirementId != intent.RetirementId || auth.ArtifactId != artifact.ArtifactId || auth.AgentId != intent.AgentId || auth.StageFencingToken != intent.FencingToken) throw Inconsistent();
                 StageRetirementPlan? plan;
                 try { plan = JsonSerializer.Deserialize<StageRetirementPlan>(auth.PlanJson, Json); } catch (JsonException) { throw Inconsistent(); }
                 if (plan is null || plan.RetirementId != intent.RetirementId || plan.EnvironmentId != env.Id || plan.JobId != job.Id || plan.ArtifactId != artifact.ArtifactId ||
@@ -77,7 +74,9 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
                 {
                     using var snapshot = JsonDocument.Parse(job.SnapshotJson); var s = snapshot.RootElement;
                     if (s.GetProperty("reservationId").GetGuid() != reservation.Id || s.GetProperty("poolId").GetGuid() != reservation.PoolId ||
-                        s.GetProperty("sourceRootId").GetGuid() != rootId || s.GetProperty("archiveVersionId").GetGuid() != artifact.ArchiveVersionId ||
+                        s.GetProperty("sourceRootId").GetGuid() != archive.RootId || s.GetProperty("sourceArchiveId").GetGuid() != archive.Id ||
+                        s.GetProperty("sourceRelativePath").GetString() != archive.RelativePath ||
+                        s.GetProperty("archiveVersionId").GetGuid() != artifact.ArchiveVersionId ||
                         s.GetProperty("AgentScopeId").GetGuid() != auth.AgentId || s.GetProperty("stagingBytes").GetInt64() != reservation.StagingBytes ||
                         s.GetProperty("SizeBytes").GetInt64() != artifact.SizeBytes || s.GetProperty("Format").GetString() != artifact.Format ||
                         !string.Equals(s.GetProperty("Sha256").GetString(), artifact.Sha256, StringComparison.OrdinalIgnoreCase)) throw Inconsistent();
@@ -96,7 +95,7 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             if (releases.Count > 1) throw Inconsistent();
             var release = releases.SingleOrDefault();
             if (release is not null && (result is null || auth is null || artifact is null || release.ResultId != result.ResultId || release.AuthorizationId != auth.AuthorizationId ||
-                release.ReservationId != reservation.Id || release.PoolId != reservation.PoolId || release.RootId != rootId || release.ReleasedBytes != reservation.StagingBytes ||
+                release.ReservationId != reservation.Id || release.PoolId != reservation.PoolId || release.RootId != archive?.RootId || release.ReleasedBytes != reservation.StagingBytes ||
                 release.ReleasedBytes != artifact.SizeBytes || release.ReleasedBytes <= 0)) throw Inconsistent();
             var restoreIntent = await RestoreIntentStatus.ReadAsync(db, env, request, job, reservation,
                 lease, artifact, "CleanupStatusInconsistent", ct);
