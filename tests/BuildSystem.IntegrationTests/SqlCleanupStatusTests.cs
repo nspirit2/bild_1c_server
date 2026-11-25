@@ -133,6 +133,29 @@ public sealed class SqlCleanupStatusTests
         Assert.Equal(409, error.StatusCode); Assert.Equal("CleanupStatusInconsistent", error.Code);
     }
     [SqlServerFact]
+    public async Task Cleanup_status_rejects_retirement_intent_matching_only_artifact()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, depth: 1);
+        var before = Assert.IsType<CleanupStatusView>(await ReadAsync(sql, seed));
+        Assert.Equal("IntentRequested", before.CleanupState);
+        await using var db = sql.NewContext();
+        var other = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "other-cleanup-order",
+            new(seed.Project, "other", "archive", new(seed.Version), 7), Ct);
+        var otherReservation = await db.TestEnvironments.Where(e => e.Id == other.EnvironmentId)
+            .Select(e => e.ReservationId).SingleAsync(Ct);
+        // Keep valid foreign keys while moving every intent pin except the artifact.
+        Assert.Equal(1, await db.StageRetirementIntents.Where(i => i.RetirementId == before.RetirementId)
+            .ExecuteUpdateAsync(set => set.SetProperty(i => i.EnvironmentId, other.EnvironmentId)
+                .SetProperty(i => i.JobId, other.JobId).SetProperty(i => i.ReservationId, otherReservation), Ct));
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (error.StatusCode, error.Code));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cleanup_status_rejects_source_archive_or_path_mismatch_in_snapshot()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();

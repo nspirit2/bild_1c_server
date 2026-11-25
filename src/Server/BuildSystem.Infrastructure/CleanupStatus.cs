@@ -49,7 +49,9 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
                 .Where(a => a.Id == receipt.Version.ArchiveId)
                 .Select(a => new { a.Id, a.RootId, a.RelativePath }).SingleOrDefaultAsync(ct);
             if (receipt is not null && archive is null) throw Inconsistent();
-            var intents = await db.StageRetirementIntents.AsNoTracking().Where(i => i.EnvironmentId == env.Id || i.JobId == job.Id || i.ReservationId == reservation.Id).Take(2).ToListAsync(ct);
+            var artifactId = artifact?.ArtifactId;
+            var intents = await db.StageRetirementIntents.AsNoTracking().Where(i => i.EnvironmentId == env.Id ||
+                i.JobId == job.Id || i.ReservationId == reservation.Id || i.ArtifactId == artifactId).Take(2).ToListAsync(ct);
             if (intents.Count > 1) throw Inconsistent();
             var intent = intents.SingleOrDefault();
             if (intent is not null && (artifact is null || lease is null || intent.EnvironmentId != env.Id || intent.JobId != job.Id || intent.ReservationId != reservation.Id ||
@@ -57,7 +59,7 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
                 job.State != "StageCompleted" || lease.State != "Completed" || reservation.State != "Held" ||
                 !env.HasUnsettledProvisioningOperation || env.State is not ("Requested" or "Provisioning") ||
                 request.State is not ("Pending" or "Provisioning"))) throw Inconsistent();
-            var intentId = intent?.RetirementId; var artifactId = artifact?.ArtifactId;
+            var intentId = intent?.RetirementId;
             var auths = await db.StageCleanupAuthorizations.AsNoTracking().Where(a =>
                 a.RetirementId == intentId || a.ArtifactId == artifactId).Take(2).ToListAsync(ct);
             if (auths.Count > 1) throw Inconsistent();
