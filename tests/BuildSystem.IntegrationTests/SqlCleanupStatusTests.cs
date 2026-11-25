@@ -133,6 +133,44 @@ public sealed class SqlCleanupStatusTests
         Assert.Equal(409, error.StatusCode); Assert.Equal("CleanupStatusInconsistent", error.Code);
     }
     [SqlServerFact]
+    public async Task Cleanup_status_and_release_reject_inconsistent_provisioning_state()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, depth: 3);
+        await using var db = sql.NewContext();
+        var environment = db.TestEnvironments.Where(e => e.Id == seed.Order.EnvironmentId);
+        var request = db.EnvironmentRequests.Where(q => q.Id == seed.Order.RequestId);
+        var release = new SqlStagingAllocationRelease(db, new StagingAllocationReleaseOptions { Enabled = true });
+        var expected = new ReleaseStagingAllocation(seed.Authorization!.AuthorizationId, seed.Grant.Plan.ReservationId);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.State, "Ready"), Ct));
+        await AssertRejectedAsync();
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.State, "Requested")
+            .SetProperty(e => e.HasUnsettledProvisioningOperation, false), Ct));
+        await AssertRejectedAsync();
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.HasUnsettledProvisioningOperation, true), Ct));
+        Assert.Equal(1, await request.ExecuteUpdateAsync(s => s.SetProperty(q => q.State, "NeedsAttention"), Ct));
+        await AssertRejectedAsync();
+
+        Assert.Equal(1, await request.ExecuteUpdateAsync(s => s.SetProperty(q => q.State, "Pending"), Ct));
+        var receipt = await release.ReleaseAsync(seed.Admin, seed.ResultId, expected, Ct);
+        Assert.Equal("StagingReleased", (await ReadAsync(sql, seed))!.CleanupState);
+        Assert.Equal(receipt, await release.ReleaseAsync(seed.Admin, seed.ResultId, expected, Ct));
+        Assert.Equal(audits + 1, await db.AuditEvents.CountAsync(Ct));
+
+        async Task AssertRejectedAsync()
+        {
+            var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed));
+            Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
+            var releaseError = await Assert.ThrowsAsync<RequestRejectedException>(() => release.ReleaseAsync(seed.Admin, seed.ResultId, expected, Ct));
+            Assert.Equal((409, "StagingReleaseMismatch"), (releaseError.StatusCode, releaseError.Code));
+            Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
+            Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        }
+    }
+
+    [SqlServerFact]
     public async Task Disabled_current_root_pool_bindings_do_not_hide_enabled_project_history()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

@@ -57,7 +57,9 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             var intent = intents.SingleOrDefault();
             if (intent is not null && (artifact is null || lease is null || intent.EnvironmentId != env.Id || intent.JobId != job.Id || intent.ReservationId != reservation.Id ||
                 intent.ArtifactId != artifact.ArtifactId || intent.AgentId != artifact.AgentId || intent.FencingToken != artifact.FencingToken || intent.State != "Requested" ||
-                job.State != "StageCompleted" || lease.State != "Completed" || reservation.State != "Held")) throw Inconsistent();
+                job.State != "StageCompleted" || lease.State != "Completed" || reservation.State != "Held" ||
+                !env.HasUnsettledProvisioningOperation || env.State is not ("Requested" or "Provisioning") ||
+                request.State is not ("Pending" or "Provisioning"))) throw Inconsistent();
             var intentId = intent?.RetirementId; var artifactId = artifact?.ArtifactId;
             var auths = await db.StageCleanupAuthorizations.AsNoTracking().Where(a =>
                 a.RetirementId == intentId || a.ArtifactId == artifactId).Take(2).ToListAsync(ct);

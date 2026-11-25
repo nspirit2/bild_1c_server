@@ -61,6 +61,8 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
                 i.artifact.SizeBytes != plan.SizeBytes || i.artifact.Sha256 != plan.Sha256 || i.artifact.Format != plan.Format ||
                 i.reservation.State != "Held" || i.reservation.Id != plan.ReservationId || i.reservation.StagingBytes != plan.SizeBytes || i.reservation.PoolId != poolId.Value ||
                 i.environment.Id != plan.EnvironmentId || i.environment.ReservationId != plan.ReservationId || i.environment.PoolId != poolId.Value ||
+                 !i.environment.HasUnsettledProvisioningOperation || i.environment.State is not ("Requested" or "Provisioning") ||
+                 i.request.State is not ("Pending" or "Provisioning") ||
                 i.environment.RequestId != i.request.Id || i.request.EnvironmentId != plan.EnvironmentId || i.request.JobId != plan.JobId || i.request.ArchiveVersionId != plan.ArchiveVersionId ||
                 i.request.OwnerId != i.environment.OwnerId || i.request.OwnerId != i.reservation.OwnerId || i.request.ProjectId != i.environment.ProjectId ||
                 i.version.Id != plan.ArchiveVersionId || i.version.SizeBytes != plan.SizeBytes || i.version.Format != plan.Format ||
