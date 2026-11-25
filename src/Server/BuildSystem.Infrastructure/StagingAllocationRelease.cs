@@ -79,7 +79,7 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
             }
             catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or ArgumentException) { throw Mismatch(); }
             if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == plan.ArtifactId ||
-                x.EnvironmentId == plan.EnvironmentId || x.StageJobId == plan.JobId || x.ReservationId == plan.ReservationId, ct))
+                x.EnvironmentId == plan.EnvironmentId || x.RequestId == i.request.Id || x.StageJobId == plan.JobId || x.ReservationId == plan.ReservationId, ct))
                 throw new RequestRejectedException(409, "RestoreIntentHold");
             var priors = await db.StagingAllocationReleases.Where(x => x.ResultId == resultId || x.ReservationId == plan.ReservationId).Take(2).ToListAsync(ct);
             if (priors.Count > 1) throw Mismatch();

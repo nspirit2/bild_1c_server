@@ -130,7 +130,7 @@ public sealed class SqlRestoreIntents : IRestoreIntents
                 await db.StageCleanupResults.AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId, ct) ||
                 await db.StagingAllocationReleases.AnyAsync(x => x.ReservationId == i.r.Id, ct))
                 throw Reject(409, "RestoreIntentConflict");
-            var priors = await db.RestoreIntents.Where(x => x.EnvironmentId == environmentId || x.StageJobId == i.j.Id ||
+            var priors = await db.RestoreIntents.Where(x => x.EnvironmentId == environmentId || x.RequestId == i.q.Id || x.StageJobId == i.j.Id ||
                 x.ReservationId == i.r.Id || x.ArtifactId == i.artifact.ArtifactId ||
                 (x.CanonicalClusterId == mapping.CanonicalClusterId && x.InfobaseName == name) ||
                 (x.CanonicalSqlServerId == mapping.CanonicalSqlServerId && x.SqlDbName == name)).Take(2).ToListAsync(ct);

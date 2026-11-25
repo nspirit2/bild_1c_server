@@ -18,7 +18,7 @@ internal static class RestoreIntentStatus
         var artifactId = artifact?.ArtifactId;
         // A misplaced row is an inconsistency, not an absent hold. Do not sample only by environment.
         var rows = await db.RestoreIntents.AsNoTracking().Where(x => x.EnvironmentId == environment.Id ||
-            x.StageJobId == job.Id || x.ReservationId == reservation.Id || x.ArtifactId == artifactId).Take(2).ToListAsync(ct);
+            x.RequestId == request.Id || x.StageJobId == job.Id || x.ReservationId == reservation.Id || x.ArtifactId == artifactId).Take(2).ToListAsync(ct);
         if (rows.Count > 1) throw Inconsistent();
         var intent = rows.SingleOrDefault();
         if (intent is null) return null;

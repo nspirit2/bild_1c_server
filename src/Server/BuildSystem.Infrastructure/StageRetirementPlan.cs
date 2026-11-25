@@ -118,7 +118,7 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             { throw Mismatch(); }
             // Shared by poll and claim: no retirement authority may cross a retained hold.
             if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId ||
-                x.EnvironmentId == i.e.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
+                x.EnvironmentId == i.e.Id || x.RequestId == i.q.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
                 throw new RequestRejectedException(409, "RestoreIntentHold");
             var result = new StageRetirementPlan(intent.RetirementId, i.e.Id, i.j.Id, i.artifact.ArtifactId,
                 i.r.Id, i.v.Id, i.l.FencingToken, i.artifact.Sha256, i.artifact.SizeBytes, i.artifact.Format);

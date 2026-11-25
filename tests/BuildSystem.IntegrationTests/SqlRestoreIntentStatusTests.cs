@@ -140,6 +140,30 @@ public sealed class SqlRestoreIntentStatusTests
     }
 
     [SqlServerFact]
+    public async Task Restore_intent_matching_only_request_is_a_conflict_not_an_absent_hold()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var receipt = await RequestAsync(sql, seed);
+        await using var db = sql.NewContext();
+        var versionId = await db.DiskArchiveVersions.Select(v => v.Id).SingleAsync(Ct);
+        var otherOrder = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "other-restore-status-order",
+            new(seed.Project, "other", "archive", new(versionId), 7), Ct);
+        var other = seed with { Order = otherOrder };
+        Assert.Null((await StatusAsync(sql, other))!.RestoreIntent);
+        Assert.False((await CleanupAsync(sql, other))!.RestoreIntentHold);
+
+        // Introduce a conflicting request pin solely in the disposable SQL fixture.
+        Assert.Equal(1, await db.RestoreIntents.Where(i => i.RestoreIntentId == receipt.RestoreIntentId)
+            .ExecuteUpdateAsync(set => set.SetProperty(i => i.RequestId, otherOrder.RequestId), Ct));
+        var before = await DurableStateAsync(sql);
+        var stage = await Assert.ThrowsAsync<RequestRejectedException>(() => StatusAsync(sql, other));
+        Assert.Equal((409, "StageStatusInconsistent"), (stage.StatusCode, stage.Code));
+        var cleanup = await Assert.ThrowsAsync<RequestRejectedException>(() => CleanupAsync(sql, other));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (cleanup.StatusCode, cleanup.Code));
+        Assert.Equal(before, await DurableStateAsync(sql));
+    }
+
+    [SqlServerFact]
     public async Task Corrupt_restore_tuple_is_a_conflict_not_a_hidden_or_reconstructed_hold_and_reads_do_not_repair_it()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
