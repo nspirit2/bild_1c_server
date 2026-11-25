@@ -100,6 +100,42 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal("ContentVerified", status.ArtifactState); Assert.True(status.Unsettled);
     }
     [SqlServerFact]
+    public async Task Conflicting_restore_hold_blocks_cleanup_report_without_changing_history()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, acceptResult: false);
+        await using var db = sql.NewContext();
+        var plan = seed.Authorization.Plan;
+        var pool = await db.EnvironmentPools.SingleAsync(p => p.Id == seed.Pool, Ct);
+        var targetName = "bs_test_" + plan.ReservationId.ToString("N");
+        // The public commands cannot create both records; seed the contradiction in disposable SQL only.
+        db.RestoreIntents.Add(new RestoreIntentRecord
+        {
+            RestoreIntentId = Guid.NewGuid(), EnvironmentId = plan.EnvironmentId, RequestId = seed.Order.RequestId,
+            StageJobId = plan.JobId, ReservationId = plan.ReservationId, ArtifactId = plan.ArtifactId,
+            PoolId = seed.Pool, RootId = seed.Root, ArchiveVersionId = seed.Version,
+            Sha256 = plan.Sha256, SizeBytes = plan.SizeBytes, Format = plan.Format,
+            CanonicalClusterId = pool.ClusterId, CanonicalSqlServerId = pool.SqlServerId,
+            InfobaseName = targetName, SqlDbName = targetName, TargetIncarnation = Guid.NewGuid(),
+            AgentId = seed.Credential.AgentId, FencingToken = plan.FencingToken,
+            RequestedBy = seed.Owner.UserId, RequestedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var report = new ReportStageCleanup(seed.ResultId, seed.Authorization.AuthorizationId, plan.RetirementId,
+            plan.JobId, plan.ArtifactId, plan.FencingToken);
+        var rejected = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlStageCleanupResults(db, new StageCleanupResultOptions { Enabled = true })
+                .ReportAsync(seed.Credential.Token, report, Ct));
+        Assert.Equal((409, "CleanupResultMismatch"), (rejected.StatusCode, rejected.Code));
+        Assert.Equal(1, await db.RestoreIntents.CountAsync(Ct));
+        Assert.Equal(1, await db.StageCleanupAuthorizations.CountAsync(Ct));
+        Assert.False(await db.StageCleanupResults.AnyAsync(Ct));
+        Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public Task Conflicting_cancellation_blocks_first_cleanup_report() => AssertConflictingCancellationAsync(acceptResult: false);
 
     [SqlServerFact]
