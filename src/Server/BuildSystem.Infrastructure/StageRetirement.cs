@@ -87,11 +87,14 @@ public sealed class SqlStageRetirement(BuildSystemDbContext db) : IStageRetireme
             if (await db.RestoreIntents.AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId ||
                 x.EnvironmentId == i.e.Id || x.RequestId == i.q.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
                 throw Reject(409, "RestoreIntentHold");
-            var prior = await db.StageRetirementIntents.SingleOrDefaultAsync(x => x.EnvironmentId == environmentId, ct);
+            var priors = await db.StageRetirementIntents.Where(x => x.EnvironmentId == environmentId ||
+                x.JobId == i.j.Id || x.ReservationId == i.r.Id || x.ArtifactId == i.artifact.ArtifactId).Take(2).ToListAsync(ct);
+            if (priors.Count > 1) throw Mismatch();
+            var prior = priors.SingleOrDefault();
             if (prior is not null)
             {
                 // RequestedBy remains the original authorized requester, including an admin/owner replay.
-                if (prior.JobId != i.j.Id || prior.ArtifactId != i.artifact.ArtifactId || prior.ReservationId != i.r.Id ||
+                if (prior.EnvironmentId != environmentId || prior.JobId != i.j.Id || prior.ArtifactId != i.artifact.ArtifactId || prior.ReservationId != i.r.Id ||
                     prior.AgentId != i.agent.Id || prior.FencingToken != i.l.FencingToken || prior.State != "Requested") throw Mismatch();
                 await tx.CommitAsync(ct);
                 return Receipt(prior);

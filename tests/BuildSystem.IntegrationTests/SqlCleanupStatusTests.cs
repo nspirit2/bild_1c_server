@@ -133,7 +133,7 @@ public sealed class SqlCleanupStatusTests
         Assert.Equal(409, error.StatusCode); Assert.Equal("CleanupStatusInconsistent", error.Code);
     }
     [SqlServerFact]
-    public async Task Cleanup_status_rejects_retirement_intent_matching_only_artifact()
+    public async Task Cleanup_status_and_retirement_request_reject_intent_matching_only_artifact()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
         var seed = await PrepareAsync(sql, depth: 1);
@@ -151,6 +151,10 @@ public sealed class SqlCleanupStatusTests
         var audits = await db.AuditEvents.CountAsync(Ct);
         var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed));
         Assert.Equal((409, "CleanupStatusInconsistent"), (error.StatusCode, error.Code));
+        var retirementError = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageRetirement(db)
+            .RequestAsync(seed.Owner, seed.Order.EnvironmentId, new(seed.Order.JobId, before.ArtifactId!.Value), Ct));
+        Assert.Equal((409, "StageRetirementMismatch"), (retirementError.StatusCode, retirementError.Code));
+        Assert.Equal(1, await db.StageRetirementIntents.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
     }
