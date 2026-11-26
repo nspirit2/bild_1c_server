@@ -115,7 +115,11 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     auth.StageFencingToken == intent.FencingToken && intent.FencingToken == artifact.FencingToken &&
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
-                    release.ReleasedBytes == artifact.SizeBytes
+                    release.ReleasedBytes == artifact.SizeBytes &&
+                    !db.RestoreIntents.Any(hold => hold.EnvironmentId == intent.EnvironmentId ||
+                        hold.StageJobId == intent.JobId || hold.ReservationId == reservation.Id || hold.ArtifactId == artifact.ArtifactId ||
+                        db.EnvironmentJobs.Any(job => job.Id == intent.JobId && job.RequestId == hold.RequestId) ||
+                        db.TestEnvironments.Any(env => env.Id == intent.EnvironmentId && env.RequestId == hold.RequestId))
                 select release;
             var heldStaging = db.EnvironmentReservations.Where(r =>
                 !coherentStagingReleases.Any(release => release.ReservationId == r.Id));

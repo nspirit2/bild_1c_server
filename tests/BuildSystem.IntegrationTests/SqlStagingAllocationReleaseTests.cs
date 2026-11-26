@@ -111,21 +111,7 @@ public sealed class SqlStagingAllocationReleaseTests
         var seed = await PrepareAsync(sql, acceptResult);
         await using var db = sql.NewContext();
         var plan = seed.Authorization.Plan;
-        var pool = await db.EnvironmentPools.SingleAsync(p => p.Id == seed.Pool, Ct);
-        var targetName = "bs_test_" + plan.ReservationId.ToString("N");
-        // The public commands cannot create both records; seed the contradiction in disposable SQL only.
-        db.RestoreIntents.Add(new RestoreIntentRecord
-        {
-            RestoreIntentId = Guid.NewGuid(), EnvironmentId = plan.EnvironmentId, RequestId = seed.Order.RequestId,
-            StageJobId = plan.JobId, ReservationId = plan.ReservationId, ArtifactId = plan.ArtifactId,
-            PoolId = seed.Pool, RootId = seed.Root, ArchiveVersionId = seed.Version,
-            Sha256 = plan.Sha256, SizeBytes = plan.SizeBytes, Format = plan.Format,
-            CanonicalClusterId = pool.ClusterId, CanonicalSqlServerId = pool.SqlServerId,
-            InfobaseName = targetName, SqlDbName = targetName, TargetIncarnation = Guid.NewGuid(),
-            AgentId = seed.Credential.AgentId, FencingToken = plan.FencingToken,
-            RequestedBy = seed.Owner.UserId, RequestedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync(Ct);
+        await SeedConflictingRestoreHoldAsync(db, seed);
         var audits = await db.AuditEvents.CountAsync(Ct);
         var report = new ReportStageCleanup(seed.ResultId, seed.Authorization.AuthorizationId, plan.RetirementId,
             plan.JobId, plan.ArtifactId, plan.FencingToken);
@@ -145,6 +131,50 @@ public sealed class SqlStagingAllocationReleaseTests
         }
         else Assert.False(await db.StageCleanupResults.AnyAsync(Ct));
         Assert.False(await db.StagingAllocationReleases.AnyAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    private static async Task SeedConflictingRestoreHoldAsync(BuildSystemDbContext db, Seed seed)
+    {
+        var plan = seed.Authorization.Plan;
+        var pool = await db.EnvironmentPools.SingleAsync(p => p.Id == seed.Pool, Ct);
+        var targetName = "bs_test_" + plan.ReservationId.ToString("N");
+        // The public commands cannot create both records; seed the contradiction in disposable SQL only.
+        db.RestoreIntents.Add(new RestoreIntentRecord
+        {
+            RestoreIntentId = Guid.NewGuid(), EnvironmentId = plan.EnvironmentId, RequestId = seed.Order.RequestId,
+            StageJobId = plan.JobId, ReservationId = plan.ReservationId, ArtifactId = plan.ArtifactId,
+            PoolId = seed.Pool, RootId = seed.Root, ArchiveVersionId = seed.Version,
+            Sha256 = plan.Sha256, SizeBytes = plan.SizeBytes, Format = plan.Format,
+            CanonicalClusterId = pool.ClusterId, CanonicalSqlServerId = pool.SqlServerId,
+            InfobaseName = targetName, SqlDbName = targetName, TargetIncarnation = Guid.NewGuid(),
+            AgentId = seed.Credential.AgentId, FencingToken = plan.FencingToken,
+            RequestedBy = seed.Owner.UserId, RequestedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(Ct);
+    }
+
+    [SqlServerFact]
+    public async Task Conflicting_restore_hold_keeps_staging_reserved_on_root_and_pool()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var receipt = await ReleaseAsync(sql, seed);
+        await using var db = sql.NewContext();
+        await SeedConflictingRestoreHoldAsync(db, seed);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var root = db.ArchiveRoots.Where(r => r.Id == seed.Root);
+        var pool = db.EnvironmentPools.Where(p => p.Id == seed.Pool);
+
+        Assert.Equal(1, await root.ExecuteUpdateAsync(s => s.SetProperty(r => r.MaxStagingBytes, 10L), Ct));
+        await RejectOrderAsync(sql, seed, "restore-conflict-root");
+        Assert.Equal(1, await root.ExecuteUpdateAsync(s => s.SetProperty(r => r.MaxStagingBytes, 10000L), Ct));
+        Assert.Equal(1, await pool.ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 10L), Ct));
+        await RejectOrderAsync(sql, seed, "restore-conflict-pool");
+
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(1, await db.RestoreIntents.CountAsync(Ct));
+        Assert.Equal(receipt.ReleaseId, await db.StagingAllocationReleases.Select(r => r.ReleaseId).SingleAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
     }
 
