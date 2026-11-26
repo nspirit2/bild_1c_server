@@ -160,7 +160,7 @@ public sealed class SqlCleanupStatusTests
     }
 
     [SqlServerFact]
-    public async Task Retirement_replay_poll_and_claim_reject_staging_bytes_out_of_sync_with_snapshot()
+    public async Task Cleanup_status_retirement_replay_poll_and_claim_reject_staging_bytes_out_of_sync_with_snapshot()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
         var seed = await PrepareAsync(sql, depth: 1);
@@ -173,6 +173,8 @@ public sealed class SqlCleanupStatusTests
         var reservation = db.EnvironmentReservations.Where(r => r.Id == seed.Grant.Plan.ReservationId);
         Assert.Equal(1, await reservation.ExecuteUpdateAsync(set => set.SetProperty(r => r.StagingBytes, 11L), Ct));
         var audits = await db.AuditEvents.CountAsync(Ct);
+        var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReadAsync(sql, seed));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
         var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageRetirement(db)
             .RequestAsync(seed.Owner, seed.Order.EnvironmentId, new(seed.Order.JobId, artifactId), Ct));
         Assert.Equal((409, "StageRetirementMismatch"), (replayError.StatusCode, replayError.Code));
