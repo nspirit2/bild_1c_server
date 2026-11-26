@@ -105,7 +105,10 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 join auth in db.StageCleanupAuthorizations on release.AuthorizationId equals auth.AuthorizationId
                 join intent in db.StageRetirementIntents on auth.RetirementId equals intent.RetirementId
                 join artifact in db.StagedArtifacts on auth.ArtifactId equals artifact.ArtifactId
-                join lease in db.AgentLeases on intent.JobId equals lease.JobId
+                join job in db.EnvironmentJobs on intent.JobId equals job.Id
+                join environment in db.TestEnvironments on intent.EnvironmentId equals environment.Id
+                join request in db.EnvironmentRequests on environment.RequestId equals request.Id
+                join lease in db.AgentLeases on job.Id equals lease.JobId
                 join version in db.DiskArchiveVersions on artifact.ArchiveVersionId equals version.Id
                 join archive in db.DiskArchives on version.ArchiveId equals archive.Id
                 where result.AuthorizationId == auth.AuthorizationId && result.ArtifactId == artifact.ArtifactId &&
@@ -117,13 +120,18 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     EF.Functions.Collate(lease.State, "Latin1_General_100_BIN2") == "Completed" &&
                     EF.Functions.DataLength(lease.State) == 18 && lease.AgentId == artifact.AgentId &&
                     lease.FencingToken == artifact.FencingToken &&
+                    job.EnvironmentId == environment.Id && job.RequestId == request.Id &&
+                    request.EnvironmentId == environment.Id && request.JobId == job.Id && request.ArchiveVersionId == version.Id &&
+                    environment.ReservationId == reservation.Id && environment.PoolId == reservation.PoolId &&
+                    request.OwnerId == environment.OwnerId && request.OwnerId == reservation.OwnerId && request.ProjectId == environment.ProjectId &&
+                    EF.Functions.Collate(job.Kind, "Latin1_General_100_BIN2") == "ProvisionArchive" && EF.Functions.DataLength(job.Kind) == 32 &&
+                    EF.Functions.Collate(job.State, "Latin1_General_100_BIN2") == "StageCompleted" && EF.Functions.DataLength(job.State) == 28 &&
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes &&
                     !db.RestoreIntents.Any(hold => hold.EnvironmentId == intent.EnvironmentId ||
                         hold.StageJobId == intent.JobId || hold.ReservationId == reservation.Id || hold.ArtifactId == artifact.ArtifactId ||
-                        db.EnvironmentJobs.Any(job => job.Id == intent.JobId && job.RequestId == hold.RequestId) ||
-                        db.TestEnvironments.Any(env => env.Id == intent.EnvironmentId && env.RequestId == hold.RequestId))
+                        hold.RequestId == request.Id)
                 select release;
             var heldStaging = db.EnvironmentReservations.Where(r =>
                 !coherentStagingReleases.Any(release => release.ReservationId == r.Id));

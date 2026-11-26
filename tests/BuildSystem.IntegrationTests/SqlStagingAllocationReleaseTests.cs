@@ -417,6 +417,15 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(1, await lease.ExecuteUpdateAsync(s => s.SetProperty(l => l.FencingToken, token), Ct));
+        var job = db.EnvironmentJobs.Where(j => j.Id == seed.Order.JobId);
+        Assert.Equal(1, await job.ExecuteUpdateAsync(s => s.SetProperty(j => j.State, "stagecompleted"), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-job-state");
+        Assert.Equal(1, await job.ExecuteUpdateAsync(s => s.SetProperty(j => j.State, "StageCompleted")
+            .SetProperty(j => j.Kind, "ObserveArchiveStage"), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-job-kind");
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await job.ExecuteUpdateAsync(s => s.SetProperty(j => j.Kind, "ProvisionArchive"), Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }
