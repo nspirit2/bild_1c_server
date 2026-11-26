@@ -443,6 +443,19 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await reservation.ExecuteUpdateAsync(s => s.SetProperty(r => r.State, "Held"), Ct));
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        var intent = db.StageRetirementIntents.Where(i => i.RetirementId == seed.Authorization.Plan.RetirementId);
+        Assert.Equal(1, await intent.ExecuteUpdateAsync(s => s.SetProperty(i => i.State, "Requested "), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-intent-state");
+        Assert.Equal(1, await intent.ExecuteUpdateAsync(s => s.SetProperty(i => i.State, "Requested"), Ct));
+        var artifact = db.StagedArtifacts.Where(a => a.ArtifactId == seed.Authorization.Plan.ArtifactId);
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.State, "contentverified"), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-artifact-state");
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.State, "ContentVerified")
+            .SetProperty(a => a.Sha256, new string('B', 64)), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-artifact-hash");
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Sha256, Hash.ToLowerInvariant()), Ct));
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }

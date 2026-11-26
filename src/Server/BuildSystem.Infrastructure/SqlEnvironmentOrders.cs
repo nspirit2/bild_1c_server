@@ -114,6 +114,13 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 where result.AuthorizationId == auth.AuthorizationId && result.ArtifactId == artifact.ArtifactId &&
                     intent.ArtifactId == artifact.ArtifactId && intent.ReservationId == reservation.Id &&
                     artifact.ReservationId == reservation.Id && artifact.JobId == intent.JobId &&
+                    EF.Functions.Collate(intent.State, "Latin1_General_100_BIN2") == "Requested" && EF.Functions.DataLength(intent.State) == 18 &&
+                    EF.Functions.Collate(artifact.State, "Latin1_General_100_BIN2") == "ContentVerified" && EF.Functions.DataLength(artifact.State) == 30 &&
+                    artifact.SizeBytes == version.SizeBytes &&
+                    EF.Functions.Collate(artifact.Format, "Latin1_General_100_BIN2") == EF.Functions.Collate(version.Format, "Latin1_General_100_BIN2") &&
+                    EF.Functions.DataLength(artifact.Format) == EF.Functions.DataLength(version.Format) &&
+                    EF.Functions.Collate(artifact.Sha256, "Latin1_General_100_CI_AS") == EF.Functions.Collate(version.Sha256, "Latin1_General_100_CI_AS") &&
+                    EF.Functions.DataLength(artifact.Sha256) == EF.Functions.DataLength(version.Sha256) &&
                     result.AgentId == auth.AgentId && auth.AgentId == intent.AgentId && intent.AgentId == artifact.AgentId &&
                     artifact.FencingToken > 0 && result.StageFencingToken == auth.StageFencingToken &&
                     auth.StageFencingToken == intent.FencingToken && intent.FencingToken == artifact.FencingToken &&
