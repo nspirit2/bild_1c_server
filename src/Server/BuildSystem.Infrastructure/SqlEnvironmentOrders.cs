@@ -110,6 +110,9 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 where result.AuthorizationId == auth.AuthorizationId && result.ArtifactId == artifact.ArtifactId &&
                     intent.ArtifactId == artifact.ArtifactId && intent.ReservationId == reservation.Id &&
                     artifact.ReservationId == reservation.Id && artifact.JobId == intent.JobId &&
+                    result.AgentId == auth.AgentId && auth.AgentId == intent.AgentId && intent.AgentId == artifact.AgentId &&
+                    artifact.FencingToken > 0 && result.StageFencingToken == auth.StageFencingToken &&
+                    auth.StageFencingToken == intent.FencingToken && intent.FencingToken == artifact.FencingToken &&
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes

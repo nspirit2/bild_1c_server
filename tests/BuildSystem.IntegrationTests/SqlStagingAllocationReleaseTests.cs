@@ -346,7 +346,7 @@ public sealed class SqlStagingAllocationReleaseTests
         }
     }
     [SqlServerFact]
-    public async Task Ledger_with_wrong_byte_count_does_not_free_root_or_pool_staging_quota()
+    public async Task Conflicting_ledger_bytes_or_report_token_do_not_free_staging_quota()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
         var seed = await PrepareAsync(sql);
@@ -368,6 +368,13 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(9L, await ledger.Select(r => r.ReleasedBytes).SingleAsync(Ct));
 
         Assert.Equal(1, await ledger.ExecuteUpdateAsync(s => s.SetProperty(r => r.ReleasedBytes, release.ReleasedBytes), Ct));
+        var result = db.StageCleanupResults.Where(r => r.ResultId == seed.ResultId);
+        var token = seed.Grant.FencingToken;
+        Assert.Equal(1, await result.ExecuteUpdateAsync(s => s.SetProperty(r => r.StageFencingToken, token + 1), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-token");
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await result.ExecuteUpdateAsync(s => s.SetProperty(r => r.StageFencingToken, token), Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }
