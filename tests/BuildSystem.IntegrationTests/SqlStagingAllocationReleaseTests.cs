@@ -301,7 +301,14 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(audits + 1, await db.AuditEvents.CountAsync(Ct));
 
         Assert.Equal(1, await secondRow.ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, authorization.AuthorizationId), Ct));
-        Assert.NotEqual(other.EnvironmentId, (await OrderAsync(sql, seed, "distinct-release-authorizations")).EnvironmentId);
+        var secondIntent = db.StageRetirementIntents.Where(i => i.RetirementId == retirement.RetirementId);
+        Assert.Equal(1, await secondIntent.ExecuteUpdateAsync(set =>
+            set.SetProperty(i => i.ArtifactId, seed.Authorization.Plan.ArtifactId), Ct));
+        await RejectOrderAsync(sql, seed, "shared-retirement-artifact");
+        Assert.Equal(2, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits + 1, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await secondIntent.ExecuteUpdateAsync(set => set.SetProperty(i => i.ArtifactId, artifact), Ct));
+        Assert.NotEqual(other.EnvironmentId, (await OrderAsync(sql, seed, "distinct-cleanup-lineages")).EnvironmentId);
     }
 
     [SqlServerFact]

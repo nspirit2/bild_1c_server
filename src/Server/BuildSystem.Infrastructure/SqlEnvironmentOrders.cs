@@ -144,6 +144,9 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     release.ReleasedBytes == artifact.SizeBytes &&
                     !db.StagingAllocationReleases.Any(other => other.AuthorizationId == release.AuthorizationId &&
                         other.ReleaseId != release.ReleaseId) &&
+                    !db.StageRetirementIntents.Any(other => other.RetirementId != intent.RetirementId &&
+                        (other.EnvironmentId == environment.Id || other.JobId == job.Id ||
+                         other.ReservationId == reservation.Id || other.ArtifactId == artifact.ArtifactId)) &&
                     !db.RestoreIntents.Any(hold => hold.EnvironmentId == intent.EnvironmentId ||
                         hold.StageJobId == intent.JobId || hold.ReservationId == reservation.Id || hold.ArtifactId == artifact.ArtifactId ||
                         hold.RequestId == request.Id)
