@@ -405,6 +405,18 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(1, await result.ExecuteUpdateAsync(s => s.SetProperty(r => r.StageFencingToken, token), Ct));
+        var lease = db.AgentLeases.Where(l => l.JobId == seed.Order.JobId);
+        foreach (var (key, state) in new[] { ("active", "Active"), ("case", "completed"), ("padding", "Completed ") })
+        {
+            Assert.Equal(1, await lease.ExecuteUpdateAsync(s => s.SetProperty(l => l.State, state), Ct));
+            await RejectOrderAsync(sql, seed, "inconsistent-lease-state-" + key);
+        }
+        Assert.Equal(1, await lease.ExecuteUpdateAsync(s => s.SetProperty(l => l.State, "Completed")
+            .SetProperty(l => l.FencingToken, token + 1), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-lease-token");
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await lease.ExecuteUpdateAsync(s => s.SetProperty(l => l.FencingToken, token), Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }

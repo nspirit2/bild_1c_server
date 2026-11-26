@@ -105,6 +105,7 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 join auth in db.StageCleanupAuthorizations on release.AuthorizationId equals auth.AuthorizationId
                 join intent in db.StageRetirementIntents on auth.RetirementId equals intent.RetirementId
                 join artifact in db.StagedArtifacts on auth.ArtifactId equals artifact.ArtifactId
+                join lease in db.AgentLeases on intent.JobId equals lease.JobId
                 join version in db.DiskArchiveVersions on artifact.ArchiveVersionId equals version.Id
                 join archive in db.DiskArchives on version.ArchiveId equals archive.Id
                 where result.AuthorizationId == auth.AuthorizationId && result.ArtifactId == artifact.ArtifactId &&
@@ -113,6 +114,9 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     result.AgentId == auth.AgentId && auth.AgentId == intent.AgentId && intent.AgentId == artifact.AgentId &&
                     artifact.FencingToken > 0 && result.StageFencingToken == auth.StageFencingToken &&
                     auth.StageFencingToken == intent.FencingToken && intent.FencingToken == artifact.FencingToken &&
+                    EF.Functions.Collate(lease.State, "Latin1_General_100_BIN2") == "Completed" &&
+                    EF.Functions.DataLength(lease.State) == 18 && lease.AgentId == artifact.AgentId &&
+                    lease.FencingToken == artifact.FencingToken &&
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes &&
