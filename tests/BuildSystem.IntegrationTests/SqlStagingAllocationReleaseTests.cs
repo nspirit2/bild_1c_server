@@ -280,13 +280,28 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await db.StagingAllocationReleases.Where(r => r.ReleaseId == first.ReleaseId)
             .ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, authorization.AuthorizationId), Ct));
         var audits = await db.AuditEvents.CountAsync(Ct);
-        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed, result: resultId,
-            expected: new(authorization.AuthorizationId, grant.Plan.ReservationId)));
+        var expected = new ReleaseStagingAllocation(authorization.AuthorizationId, grant.Plan.ReservationId);
+        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed, result: resultId, expected: expected));
         Assert.Equal((409, "StagingReleaseMismatch"), (error.StatusCode, error.Code));
         var ledger = await db.StagingAllocationReleases.AsNoTracking().SingleAsync(Ct);
         Assert.Equal((first.ReleaseId, first.ResultId, first.ReservationId, authorization.AuthorizationId),
             (ledger.ReleaseId, ledger.ResultId, ledger.ReservationId, ledger.AuthorizationId));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+
+        // Restore the valid first row and record the second release before creating a duplicate authorization pin.
+        Assert.Equal(1, await db.StagingAllocationReleases.Where(r => r.ReleaseId == first.ReleaseId)
+            .ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, seed.Authorization.AuthorizationId), Ct));
+        var second = await ReleaseAsync(sql, seed, result: resultId, expected: expected);
+        var secondRow = db.StagingAllocationReleases.Where(r => r.ReleaseId == second.ReleaseId);
+        Assert.Equal(1, await secondRow.ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, seed.Authorization.AuthorizationId), Ct));
+        Assert.Equal(1, await db.EnvironmentPools.Where(p => p.Id == seed.Pool)
+            .ExecuteUpdateAsync(set => set.SetProperty(p => p.MaxStagingBytes, 20L), Ct));
+        await RejectOrderAsync(sql, seed, "duplicate-release-authorization");
+        Assert.Equal(2, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits + 1, await db.AuditEvents.CountAsync(Ct));
+
+        Assert.Equal(1, await secondRow.ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, authorization.AuthorizationId), Ct));
+        Assert.NotEqual(other.EnvironmentId, (await OrderAsync(sql, seed, "distinct-release-authorizations")).EnvironmentId);
     }
 
     [SqlServerFact]
