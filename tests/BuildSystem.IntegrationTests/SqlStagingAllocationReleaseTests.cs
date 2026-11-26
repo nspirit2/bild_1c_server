@@ -224,6 +224,42 @@ public sealed class SqlStagingAllocationReleaseTests
         await AssertRetainedAsync(sql, seed);
     }
     [SqlServerFact]
+    public async Task Release_rejects_existing_ledger_matching_only_cleanup_authorization()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var first = await ReleaseAsync(sql, seed);
+        var other = await OrderAsync(sql, seed, "other-release-authorization");
+        await using var db = sql.NewContext();
+        var grant = Assert.IsType<StageLeaseGrant>(await new SqlArchiveStageControl(db, new ArchiveStageOptions { Enabled = true })
+            .PollAsync(seed.Credential.Token, Ct));
+        Assert.Equal(other.JobId, grant.JobId);
+        var artifact = ArtifactId(grant.Plan.ReservationId, seed.Version);
+        await new SqlArtifactReceipts(db).ReportAsync(seed.Credential.Token,
+            new(grant.JobId, grant.FencingToken, grant.Plan.ReservationId, seed.Version, artifact, Hash, 10, "dt"), Ct);
+        await new SqlStageCompletion(db, new ArchiveStageOptions { Enabled = true })
+            .CompleteAsync(seed.Credential.Token, new(grant.JobId, grant.FencingToken, artifact), Ct);
+        var retirement = await new SqlStageRetirement(db).RequestAsync(seed.Owner, other.EnvironmentId, new(other.JobId, artifact), Ct);
+        var authorization = await new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true })
+            .ClaimAsync(seed.Credential.Token, new(retirement.RetirementId, artifact), Ct);
+        var resultId = Guid.NewGuid();
+        await new SqlStageCleanupResults(db, new StageCleanupResultOptions { Enabled = true }).ReportAsync(seed.Credential.Token,
+            new(resultId, authorization.AuthorizationId, retirement.RetirementId, other.JobId, artifact, grant.FencingToken), Ct);
+
+        // Keep the foreign key valid while making the existing ledger conflict with the second order.
+        Assert.Equal(1, await db.StagingAllocationReleases.Where(r => r.ReleaseId == first.ReleaseId)
+            .ExecuteUpdateAsync(set => set.SetProperty(r => r.AuthorizationId, authorization.AuthorizationId), Ct));
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed, result: resultId,
+            expected: new(authorization.AuthorizationId, grant.Plan.ReservationId)));
+        Assert.Equal((409, "StagingReleaseMismatch"), (error.StatusCode, error.Code));
+        var ledger = await db.StagingAllocationReleases.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((first.ReleaseId, first.ResultId, first.ReservationId, authorization.AuthorizationId),
+            (ledger.ReleaseId, ledger.ResultId, ledger.ReservationId, ledger.AuthorizationId));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Conflicting_cancellation_rejects_exact_release_replay_and_preserves_existing_ledger()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();

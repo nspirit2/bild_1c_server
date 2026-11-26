@@ -81,7 +81,8 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
             if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == plan.ArtifactId ||
                 x.EnvironmentId == plan.EnvironmentId || x.RequestId == i.request.Id || x.StageJobId == plan.JobId || x.ReservationId == plan.ReservationId, ct))
                 throw new RequestRejectedException(409, "RestoreIntentHold");
-            var priors = await db.StagingAllocationReleases.Where(x => x.ResultId == resultId || x.ReservationId == plan.ReservationId).Take(2).ToListAsync(ct);
+            var priors = await db.StagingAllocationReleases.Where(x => x.ResultId == resultId ||
+                 x.ReservationId == plan.ReservationId || x.AuthorizationId == auth.AuthorizationId).Take(2).ToListAsync(ct);
             if (priors.Count > 1) throw Mismatch();
             var prior = priors.SingleOrDefault();
             if (prior is not null)
