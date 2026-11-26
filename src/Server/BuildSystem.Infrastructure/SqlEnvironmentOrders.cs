@@ -126,6 +126,12 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     request.OwnerId == environment.OwnerId && request.OwnerId == reservation.OwnerId && request.ProjectId == environment.ProjectId &&
                     EF.Functions.Collate(job.Kind, "Latin1_General_100_BIN2") == "ProvisionArchive" && EF.Functions.DataLength(job.Kind) == 32 &&
                     EF.Functions.Collate(job.State, "Latin1_General_100_BIN2") == "StageCompleted" && EF.Functions.DataLength(job.State) == 28 &&
+                    environment.HasUnsettledProvisioningOperation &&
+                    (EF.Functions.Collate(environment.State, "Latin1_General_100_BIN2") == "Requested" && EF.Functions.DataLength(environment.State) == 18 ||
+                     EF.Functions.Collate(environment.State, "Latin1_General_100_BIN2") == "Provisioning" && EF.Functions.DataLength(environment.State) == 24) &&
+                    (EF.Functions.Collate(request.State, "Latin1_General_100_BIN2") == "Pending" && EF.Functions.DataLength(request.State) == 14 ||
+                     EF.Functions.Collate(request.State, "Latin1_General_100_BIN2") == "Provisioning" && EF.Functions.DataLength(request.State) == 24) &&
+                    EF.Functions.Collate(reservation.State, "Latin1_General_100_BIN2") == "Held" && EF.Functions.DataLength(reservation.State) == 8 &&
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes &&

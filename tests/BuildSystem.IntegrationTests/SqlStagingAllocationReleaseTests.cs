@@ -426,6 +426,23 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(1, await job.ExecuteUpdateAsync(s => s.SetProperty(j => j.Kind, "ProvisionArchive"), Ct));
+        var environment = db.TestEnvironments.Where(e => e.Id == seed.Order.EnvironmentId);
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.State, "Ready"), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-environment-state");
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.State, "Requested")
+            .SetProperty(e => e.HasUnsettledProvisioningOperation, false), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-settled");
+        Assert.Equal(1, await environment.ExecuteUpdateAsync(s => s.SetProperty(e => e.HasUnsettledProvisioningOperation, true), Ct));
+        var request = db.EnvironmentRequests.Where(q => q.Id == seed.Order.RequestId);
+        Assert.Equal(1, await request.ExecuteUpdateAsync(s => s.SetProperty(q => q.State, "Pending "), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-request-state");
+        Assert.Equal(1, await request.ExecuteUpdateAsync(s => s.SetProperty(q => q.State, "Pending"), Ct));
+        var reservation = db.EnvironmentReservations.Where(r => r.Id == release.ReservationId);
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(s => s.SetProperty(r => r.State, "held"), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-reservation-state");
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(s => s.SetProperty(r => r.State, "Held"), Ct));
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }
