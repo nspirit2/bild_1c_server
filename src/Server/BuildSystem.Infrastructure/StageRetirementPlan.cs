@@ -110,7 +110,7 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
                     s.GetProperty("sourceRelativePath").GetString() != i.a.RelativePath ||
                     !string.Equals(s.GetProperty("Sha256").GetString(), i.artifact.Sha256, StringComparison.OrdinalIgnoreCase) ||
                     s.GetProperty("SizeBytes").GetInt64() != i.artifact.SizeBytes ||
-                    s.GetProperty("Format").GetString() != i.artifact.Format || s.GetProperty("stagingBytes").GetInt64() < i.artifact.SizeBytes)
+                    s.GetProperty("Format").GetString() != i.artifact.Format || s.GetProperty("stagingBytes").GetInt64() != i.r.StagingBytes)
                     throw Mismatch();
                 Guid Id(string name) => s.GetProperty(name).GetGuid();
             }

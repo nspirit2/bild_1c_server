@@ -160,6 +160,34 @@ public sealed class SqlCleanupStatusTests
     }
 
     [SqlServerFact]
+    public async Task Retirement_replay_poll_and_claim_reject_staging_bytes_out_of_sync_with_snapshot()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, depth: 1);
+        var before = Assert.IsType<CleanupStatusView>(await ReadAsync(sql, seed));
+        var retirementId = before.RetirementId!.Value;
+        var artifactId = before.ArtifactId!.Value;
+        await using var db = sql.NewContext();
+        var plans = new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true });
+        Assert.NotNull(await plans.PollAsync(seed.Credential.Token, Ct));
+        var reservation = db.EnvironmentReservations.Where(r => r.Id == seed.Grant.Plan.ReservationId);
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(set => set.SetProperty(r => r.StagingBytes, 11L), Ct));
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageRetirement(db)
+            .RequestAsync(seed.Owner, seed.Order.EnvironmentId, new(seed.Order.JobId, artifactId), Ct));
+        Assert.Equal((409, "StageRetirementMismatch"), (replayError.StatusCode, replayError.Code));
+        var pollError = await Assert.ThrowsAsync<RequestRejectedException>(() => plans.PollAsync(seed.Credential.Token, Ct));
+        Assert.Equal((409, "RetirementPlanMismatch"), (pollError.StatusCode, pollError.Code));
+        var claimError = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true })
+            .ClaimAsync(seed.Credential.Token, new(retirementId, artifactId), Ct));
+        Assert.Equal((409, "RetirementPlanMismatch"), (claimError.StatusCode, claimError.Code));
+        Assert.False(await db.StageCleanupAuthorizations.AnyAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(set => set.SetProperty(r => r.StagingBytes, 10L), Ct));
+        Assert.NotNull(await plans.PollAsync(seed.Credential.Token, Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cleanup_status_rejects_source_archive_or_path_mismatch_in_snapshot()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
