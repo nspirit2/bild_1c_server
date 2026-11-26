@@ -160,6 +160,38 @@ public sealed class SqlCleanupStatusTests
     }
 
     [SqlServerFact]
+    public async Task Cleanup_claim_rejects_authorization_matching_only_artifact()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, depth: 2);
+        var existing = seed.Authorization!;
+        var plan = existing.Plan;
+        await using var db = sql.NewContext();
+        var other = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "other-cleanup-authorization",
+            new(seed.Project, "other", "archive", new(seed.Version), 7), Ct);
+        var otherReservation = await db.TestEnvironments.Where(e => e.Id == other.EnvironmentId)
+            .Select(e => e.ReservationId).SingleAsync(Ct);
+        var foreign = new StageRetirementIntent
+        {
+            RetirementId = Guid.NewGuid(), EnvironmentId = other.EnvironmentId, JobId = other.JobId,
+            ReservationId = otherReservation, ArtifactId = plan.ArtifactId, AgentId = seed.Credential.AgentId,
+            FencingToken = plan.FencingToken, RequestedBy = seed.Owner.UserId, RequestedAt = existing.AuthorizedAt
+        };
+        // Keep all foreign keys valid while pointing the authorization at a different intent.
+        db.StageRetirementIntents.Add(foreign);
+        await db.SaveChangesAsync(Ct);
+        Assert.Equal(1, await db.StageCleanupAuthorizations.Where(a => a.AuthorizationId == existing.AuthorizationId)
+            .ExecuteUpdateAsync(set => set.SetProperty(a => a.RetirementId, foreign.RetirementId), Ct));
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        var error = await Assert.ThrowsAsync<RequestRejectedException>(() => new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true })
+            .ClaimAsync(seed.Credential.Token, new(plan.RetirementId, plan.ArtifactId), Ct));
+        Assert.Equal((409, "CleanupClaimMismatch"), (error.StatusCode, error.Code));
+        var unchanged = await db.StageCleanupAuthorizations.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((existing.AuthorizationId, foreign.RetirementId), (unchanged.AuthorizationId, unchanged.RetirementId));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cleanup_status_retirement_replay_poll_and_claim_reject_staging_bytes_out_of_sync_with_snapshot()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();

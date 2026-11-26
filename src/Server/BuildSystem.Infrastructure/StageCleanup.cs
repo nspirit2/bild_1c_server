@@ -29,13 +29,16 @@ public sealed class SqlStageCleanup(BuildSystemDbContext db, StageCleanupOptions
             if (plan is null || plan.RetirementId != request.ExpectedRetirementId || plan.ArtifactId != request.ExpectedArtifactId)
                 throw Mismatch();
             var intent = await db.StageRetirementIntents.AsNoTracking().SingleAsync(x => x.RetirementId == plan.RetirementId, ct);
-            var prior = await db.StageCleanupAuthorizations.SingleOrDefaultAsync(x => x.RetirementId == plan.RetirementId, ct);
+            var priors = await db.StageCleanupAuthorizations.Where(x => x.RetirementId == plan.RetirementId ||
+                x.ArtifactId == plan.ArtifactId).Take(2).ToListAsync(ct);
+            if (priors.Count > 1) throw Mismatch();
+            var prior = priors.SingleOrDefault();
             if (prior is not null)
             {
                 StageRetirementPlan? stored;
                 try { stored = JsonSerializer.Deserialize<StageRetirementPlan>(prior.PlanJson); }
                 catch (JsonException) { throw Mismatch(); }
-                if (prior.AuthorizationId == Guid.Empty || prior.ArtifactId != plan.ArtifactId ||
+                if (prior.AuthorizationId == Guid.Empty || prior.RetirementId != plan.RetirementId || prior.ArtifactId != plan.ArtifactId ||
                     prior.AgentId != intent.AgentId || prior.StageFencingToken != plan.FencingToken || stored != plan)
                     throw Mismatch();
                 await tx.CommitAsync(ct);
