@@ -98,8 +98,24 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                 new PoolBudget(pool.Enabled, pool.CapacityBytes, pool.MaxEnvironmentBytes, pool.MaxConcurrentProvisioning), snapshot);
             if (!decision.Allowed) throw Reject(409, "QuotaExceeded");
             // The separate cleanup ledger still releases staging only. A bare Released state never does.
+            var coherentStagingReleases =
+                from release in db.StagingAllocationReleases
+                join reservation in db.EnvironmentReservations on release.ReservationId equals reservation.Id
+                join result in db.StageCleanupResults on release.ResultId equals result.ResultId
+                join auth in db.StageCleanupAuthorizations on release.AuthorizationId equals auth.AuthorizationId
+                join intent in db.StageRetirementIntents on auth.RetirementId equals intent.RetirementId
+                join artifact in db.StagedArtifacts on auth.ArtifactId equals artifact.ArtifactId
+                join version in db.DiskArchiveVersions on artifact.ArchiveVersionId equals version.Id
+                join archive in db.DiskArchives on version.ArchiveId equals archive.Id
+                where result.AuthorizationId == auth.AuthorizationId && result.ArtifactId == artifact.ArtifactId &&
+                    intent.ArtifactId == artifact.ArtifactId && intent.ReservationId == reservation.Id &&
+                    artifact.ReservationId == reservation.Id && artifact.JobId == intent.JobId &&
+                    release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
+                    release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
+                    release.ReleasedBytes == artifact.SizeBytes
+                select release;
             var heldStaging = db.EnvironmentReservations.Where(r =>
-                !db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id));
+                !coherentStagingReleases.Any(release => release.ReservationId == r.Id));
             var poolStaging = await heldStaging.Where(r => r.PoolId == poolId &&
                 !provenCancellations.Any(c => c.ReservationId == r.Id && c.PoolId == poolId))
                 .Select(r => r.StagingBytes).ToListAsync(ct);
@@ -116,7 +132,7 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id && release.RootId == rootId)) &&
                 !provenCancellations.Any(c => c.ReservationId == r.Id && c.RootId == rootId))
                 .Select(r => new { r.StagingBytes, r.State,
-                    HasRelease = db.StagingAllocationReleases.Any(release => release.ReservationId == r.Id),
+                    HasRelease = coherentStagingReleases.Any(release => release.ReservationId == r.Id && release.RootId == rootId),
                     HasCancellationReceipt = db.PendingArchiveCancellations.Any(c => c.ReservationId == r.Id ||
                         db.TestEnvironments.Any(e => e.ReservationId == r.Id && (c.EnvironmentId == e.Id || c.RequestId == e.RequestId ||
                             db.EnvironmentRequests.Any(q => q.Id == e.RequestId && q.JobId == c.JobId)))) }).ToListAsync(ct);

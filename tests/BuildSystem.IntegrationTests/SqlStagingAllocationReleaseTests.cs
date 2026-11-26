@@ -346,6 +346,33 @@ public sealed class SqlStagingAllocationReleaseTests
         }
     }
     [SqlServerFact]
+    public async Task Ledger_with_wrong_byte_count_does_not_free_root_or_pool_staging_quota()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var release = await ReleaseAsync(sql, seed);
+        await using var db = sql.NewContext();
+        var ledger = db.StagingAllocationReleases.Where(r => r.ReleaseId == release.ReleaseId);
+        Assert.Equal(1, await ledger.ExecuteUpdateAsync(s => s.SetProperty(r => r.ReleasedBytes, 9L), Ct));
+        var root = db.ArchiveRoots.Where(r => r.Id == seed.Root);
+        var pool = db.EnvironmentPools.Where(p => p.Id == seed.Pool);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+
+        Assert.Equal(1, await root.ExecuteUpdateAsync(s => s.SetProperty(r => r.MaxStagingBytes, 10L), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-root");
+        Assert.Equal(1, await root.ExecuteUpdateAsync(s => s.SetProperty(r => r.MaxStagingBytes, 10000L), Ct));
+        Assert.Equal(1, await pool.ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 10L), Ct));
+        await RejectOrderAsync(sql, seed, "inconsistent-release-pool");
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(9L, await ledger.Select(r => r.ReleasedBytes).SingleAsync(Ct));
+
+        Assert.Equal(1, await ledger.ExecuteUpdateAsync(s => s.SetProperty(r => r.ReleasedBytes, release.ReleasedBytes), Ct));
+        var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
+        Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
+    }
+
+    [SqlServerFact]
     public async Task Stage_release_does_not_free_owner_environment_storage_or_pool_database_capacity()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql); await ReleaseAsync(sql, seed);
