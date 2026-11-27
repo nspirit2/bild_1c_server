@@ -1,13 +1,29 @@
-# Cleanup lifecycle status и net staging bytes
+# Статус очистки и логический резерв staging
 
-Предыдущий70cca95: [Build40723276661](https://github.com/nspirit2/bild_1c_server/actions/runs/40723276661) и [SQL40723276703](https://github.com/nspirit2/bild_1c_server/actions/runs/40723276703) success.
+`GET /api/test-environments/{id}/cleanup-status` — операция только для чтения. Статус доступен текущему владельцу с доступом к проекту или администратору; в обоих случаях проект должен быть включён. Для просмотра истории не требуется, чтобы корень архива и пул по-прежнему были включены или привязаны к проекту. Недоступное окружение и отсутствие применимого статуса дают `404`. Подтверждённая отмена до первой выдачи задания агенту также не имеет статуса cleanup: её подтверждает `stage-status`, а не журнал очистки.
 
-GET `/api/test-environments/{id}/cleanup-status` — normalhuman auth, enabledproject+owner либоadmin; enabledproject требуетсядажеadmin. Currentroot/poolenabledbindingsдляhistoryнеобязательны. Внеscope404. ReadonlySerializable, SQLUTC, noaudit/writes. Separateendpointсохраняетстарыйstage-status wirecompatibility.
+В ответе 13 полей: `environmentId`, `jobId`, `artifactId`, `retirementId`, `authorizationId`, `resultId`, `releaseId`, `cleanupState`, `reservedStagingBytes`, `heldStagingBytes`, `releasedStagingBytes`, `observedAt`, `restoreIntentHold`. Идентификаторы артефакта и шагов цепочки могут быть `null`. Ответ не содержит путей, хешей или учётных данных и не проверяет файловую систему. Время наблюдения берётся из SQL Server в UTC. Запрос статуса не меняет записи или аудит.
 
-View ровно12полей EnvironmentId/JobId/ArtifactId?/RetirementId?/AuthorizationId?/ResultId?/ReleaseId?/CleanupState/ReservedStagingBytes/HeldStagingBytes/ReleasedStagingBytes/ObservedAt. Exactimmutabletuplechecks, invalidchain409CleanupStatusInconsistent. Нетhash/path/source/credentials ифизическогопроверенногоfileexistence. ReservedStagingBytes — историческийreservation.StagingBytes, HeldStagingBytes — текущийлогическийstagingcharge, ReleasedStagingBytes — validatedfullledgerrelease. Ledgerединственныйsourceосвобождения;receiptбезledgerнеуменьшаетheldbytes.
+## Как читать состояние
 
-Состояния None→IntentRequested→Authorized→DeletedReported→StagingReleased. DeletedReported означаетутверждениеагента, StagingReleased — accountingrelease, НЕReady/Restored/EnvironmentDeleted. Нельзя поSelectedcleanupstate включатьFile.Delete илиclearunsettled. DB/envquota отдельно ипо-прежнемуудерживаются.
+| Состояние | Что подтверждено метаданными |
+| --- | --- |
+| `None` | Записи о намерении очистки и последующих шагах нет. Это не подтверждение отсутствия файла. |
+| `IntentRequested` | Записано намерение очистки. Это не разрешение на удаление. |
+| `Authorized` | Записано разрешение на очистку конкретного артефакта. Это не отчёт об удалении. |
+| `DeletedReported` | Сервер принял отчёт агента. Это утверждение агента, а не независимая проверка удаления и не списание резерва. |
+| `StagingReleased` | Подтверждено логическое списание staging. Это не освобождение квоты окружений или БД, не физическое свободное место и не переход в `Ready`. |
 
-Панель показывает исторический резерв, логически удерживаемый и освобождённый staging отдельно. Сначала она проверяет ответ stage, затем читает cleanup и сверяет окружение, задание, артефакт, исторический объём и признак удержания restore. Если наблюдения не совпали, учёт cleanup неизвестен: нужно заново открыть детали. Время наблюдения stage и cleanup остаётся раздельным. При подтверждённой отмене до первой аренды запрос cleanup не нужен. Панель не запускает очистку и не освобождает квоту.
+`reservedStagingBytes` — исторический объём резерва; `heldStagingBytes` и `releasedStagingBytes` — логически удерживаемая и списанная части. `restoreIntentHold` сообщает о подтверждённом удержании для восстановления; это не разрешение выполнить восстановление. Если цепочка противоречива, сервер возвращает `409 CleanupStatusInconsistent` вместо подтверждения статуса.
 
-Проверено: **105APIpassed**, **38Nodepassed** (30старых+8новых), readonlyHTTP3cases. **WindowsSQL96passed,0failed,0skipped**,34s,portableVSTest18.0.1,TRXTestRuns\\CleanupStatus-20261028; пакетвключает6newreadmodelfacts. Послеэтогопакета snapshotchainchecksдополнительноусилены root/pool/agent/size pin; следующийполныйSQLпрогон2E2Eпакетаповторитвсё. EFмиграцийвэтомпакетенет. Первоначальныйraw'/cleanup'ban встаромHTTPUItest уточнён только дляallowlistedGET'/cleanup-status'; mutationroutebanсохранён. Сейчасвworktreeготовитсяотдельныйagentdeliveryпакет, его240Agenttestsнеприписываютсяэтомуstatuscommit. Browser/IISdeploymentнепроводился;UIдоказанNodefakeDOM+HTTPstaticassettests,неbrowserE2E.6SQLfacts+3HTTPcases, UIcasesmetadata/stale/abort/releasednotReady/errorclear/reporthonesty. NoDBmigrationnew;readmodelтребуетпредыдущиесхемныепакеты, текущийIISнеобновляем.
+## Как списание влияет на приём заказов
+
+Расчёт квоты пула и корня архива, статус `StagingReleased`, первое списание и его повтор используют общую проверку метаданных списания. Для подтверждения должны совпасть связи заказа, артефакта, намерения, разрешения, отчёта и резерва, а также агент, fencing token и объём. Требуется ровно одна запись аудита `StagingAllocationReleased` с идентификатором списания, тем же автором и временем. Конфликтующее намерение очистки или удержание для восстановления исключает подтверждение. При проверке первого списания несогласованная запись откатывается вместе с аудитом.
+
+Если списание не подтверждено, резерв продолжает учитываться в staging-квоте; при исчерпанном лимите новый заказ получает `409 QuotaExceeded`. Тот же код может означать некорректные данные расчёта, например отрицательный объём резерва в общем пуле, даже если он относится к другому корню. Ошибка не является основанием для ручного освобождения резерва, удаления файлов или повторного запуска очистки.
+
+## Что показывает панель
+
+Панель сначала проверяет ответ stage, затем сверяет наблюдение cleanup с выбранным окружением, заданием, артефактом, историческим объёмом и удержанием для восстановления. Время наблюдения stage и cleanup показано раздельно. Если ответы расходятся или один из них недоступен, не считайте staging свободным. Нажмите **«Обновить сведения»**: панель повторит чтение для текущего заказа, не запуская очистку, восстановление или списание.
+
+Сценарии согласованности и отсутствия записей при отказе проверяются в интеграционных тестах на одноразовом SQL Server. Поведение панели проверяется тестами Node с имитацией DOM; это не приёмка в браузере на стенде.
