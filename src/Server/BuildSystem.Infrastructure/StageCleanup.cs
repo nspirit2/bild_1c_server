@@ -25,7 +25,8 @@ public sealed class SqlStageCleanup(BuildSystemDbContext db, StageCleanupOptions
             // The shared inspection owns global->root->pool locks and all token/binding/snapshot rechecks,
             // but no nested transaction, expiry sweep or writes. Explicit claims inspect exactly the expected intent,
             // including historical exact replays; polling independently advances past accepted cleanup results.
-            var plan = await new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true }).InspectAsync(credential, ct, request.ExpectedRetirementId);
+            var plans = new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true });
+            var plan = await plans.InspectAsync(credential, ct, request.ExpectedRetirementId);
             if (plan is null || plan.RetirementId != request.ExpectedRetirementId || plan.ArtifactId != request.ExpectedArtifactId)
                 throw Mismatch();
             var intent = await db.StageRetirementIntents.AsNoTracking().SingleAsync(x => x.RetirementId == plan.RetirementId, ct);
@@ -41,6 +42,12 @@ public sealed class SqlStageCleanup(BuildSystemDbContext db, StageCleanupOptions
                 if (prior.AuthorizationId == Guid.Empty || prior.RetirementId != plan.RetirementId || prior.ArtifactId != plan.ArtifactId ||
                     prior.AgentId != intent.AgentId || prior.StageFencingToken != plan.FencingToken || stored != plan)
                     throw Mismatch();
+            }
+            // Preserve claim-specific mismatches before checking other intents. Neither a new grant
+            // nor an exact replay may bypass the conflict check under the inspection locks.
+            await plans.EnsureNoConflictingIntentsAsync(plan, ct);
+            if (prior is not null)
+            {
                 await tx.CommitAsync(ct);
                 return new StageCleanupAuthorization(prior.AuthorizationId, plan, prior.AuthorizedAt);
             }

@@ -160,6 +160,39 @@ public sealed class SqlCleanupStatusTests
     }
 
     [SqlServerFact]
+    public async Task Retirement_plan_poll_and_new_claim_reject_conflicting_intent_without_writes()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql, depth: 1);
+        await using var db = sql.NewContext();
+        var plans = new SqlStageRetirementPlans(db, new StageRetirementOptions { Enabled = true });
+        var plan = Assert.IsType<StageRetirementPlan>(await plans.PollAsync(seed.Credential.Token, Ct));
+        var intent = await db.StageRetirementIntents.AsNoTracking().SingleAsync(Ct);
+        var other = await new SqlEnvironmentOrders(db).CreateAsync(seed.Owner, "other-retirement-plan",
+            new(seed.Project, "other", "archive", new(seed.Version), 7), Ct);
+        var otherReservation = await db.TestEnvironments.Where(e => e.Id == other.EnvironmentId)
+            .Select(e => e.ReservationId).SingleAsync(Ct);
+        db.StageRetirementIntents.Add(new StageRetirementIntent
+        {
+            RetirementId = Guid.NewGuid(), EnvironmentId = other.EnvironmentId, JobId = other.JobId,
+            ReservationId = otherReservation, ArtifactId = plan.ArtifactId, AgentId = intent.AgentId,
+            FencingToken = plan.FencingToken, RequestedBy = intent.RequestedBy,
+            RequestedAt = intent.RequestedAt.AddMinutes(1)
+        });
+        await db.SaveChangesAsync(Ct);
+        var audits = await db.AuditEvents.CountAsync(Ct);
+
+        var pollError = await Assert.ThrowsAsync<RequestRejectedException>(() => plans.PollAsync(seed.Credential.Token, Ct));
+        Assert.Equal((409, "RetirementPlanMismatch"), (pollError.StatusCode, pollError.Code));
+        var claims = new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true });
+        var claimError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            claims.ClaimAsync(seed.Credential.Token, new(plan.RetirementId, plan.ArtifactId), Ct));
+        Assert.Equal((409, "RetirementPlanMismatch"), (claimError.StatusCode, claimError.Code));
+        Assert.False(await db.StageCleanupAuthorizations.AnyAsync(Ct));
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Cleanup_claim_rejects_authorization_matching_only_artifact()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();

@@ -20,6 +20,7 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
         {
             await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             var result = await InspectAsync(credential, ct);
+            if (result is not null) await EnsureNoConflictingIntentsAsync(result, ct);
             await tx.CommitAsync(ct);
             return result;
         });
@@ -120,13 +121,18 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId ||
                 x.EnvironmentId == i.e.Id || x.RequestId == i.q.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
                 throw new RequestRejectedException(409, "RestoreIntentHold");
-            if (await db.StageRetirementIntents.AsNoTracking().AnyAsync(other => other.RetirementId != intent.RetirementId &&
-                (other.EnvironmentId == i.e.Id || other.JobId == i.j.Id || other.ReservationId == i.r.Id ||
-                 other.ArtifactId == i.artifact.ArtifactId), ct)) throw Mismatch();
-            var result = new StageRetirementPlan(intent.RetirementId, i.e.Id, i.j.Id, i.artifact.ArtifactId,
+            return new StageRetirementPlan(intent.RetirementId, i.e.Id, i.j.Id, i.artifact.ArtifactId,
                 i.r.Id, i.v.Id, i.l.FencingToken, i.artifact.Sha256, i.artifact.SizeBytes, i.artifact.Format);
-            return result;
     }
+
+    // Call under the inspection locks before returning a plan or issuing/replaying an authorization.
+    internal async Task EnsureNoConflictingIntentsAsync(StageRetirementPlan plan, CancellationToken ct)
+    {
+        if (await db.StageRetirementIntents.AsNoTracking().AnyAsync(other => other.RetirementId != plan.RetirementId &&
+            (other.EnvironmentId == plan.EnvironmentId || other.JobId == plan.JobId ||
+             other.ReservationId == plan.ReservationId || other.ArtifactId == plan.ArtifactId), ct)) throw Mismatch();
+    }
+
     private Task Lock(string resource, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r = sys.sp_getapplock @Resource={resource}, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=15000; IF @r IN (-1, -3) THROW 51001, 'Transient retirement plan lock contention', 1; IF @r < 0 THROW 51000, 'Retirement plan lock cancelled or invalid', 1;", ct);
     private static RequestRejectedException Mismatch() => new(409, "RetirementPlanMismatch");
 }
