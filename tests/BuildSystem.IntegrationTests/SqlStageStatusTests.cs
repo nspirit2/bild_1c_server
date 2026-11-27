@@ -189,6 +189,35 @@ public sealed class SqlStageStatusTests
     }
 
     [SqlServerFact]
+    public async Task Matching_invalid_artifact_and_version_metadata_are_rejected_by_both_observations()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);
+        var report = await ReportAsync(sql, seed, await PollAsync(sql, seed));
+        await using var db = sql.NewContext();
+        var artifact = db.StagedArtifacts.Where(a => a.ArtifactId == report.ArtifactId);
+        var versionId = await artifact.Select(a => a.ArchiveVersionId).SingleAsync(Ct);
+        var version = db.DiskArchiveVersions.Where(v => v.Id == versionId);
+        foreach (var (format, hash) in new[] { ("dt ", Hash), ("dt", "AA"), ("dt", new string('G', 64)) })
+        {
+            Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Format, format)
+                .SetProperty(a => a.Sha256, hash), Ct));
+            Assert.Equal(1, await version.ExecuteUpdateAsync(s => s.SetProperty(v => v.Format, format)
+                .SetProperty(v => v.Sha256, hash), Ct));
+            var before = await DurableStateAsync(sql);
+            var stage = await Assert.ThrowsAsync<RequestRejectedException>(() => StatusAsync(sql, seed));
+            Assert.Equal((409, "StageStatusInconsistent"), (stage.StatusCode, stage.Code));
+            var cleanup = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+                new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+            Assert.Equal((409, "CleanupStatusInconsistent"), (cleanup.StatusCode, cleanup.Code));
+            Assert.Equal(before, await DurableStateAsync(sql));
+        }
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Sha256, Hash.ToLowerInvariant()), Ct));
+        Assert.Equal(1, await version.ExecuteUpdateAsync(s => s.SetProperty(v => v.Sha256, Hash), Ct));
+        Assert.Equal(report.ArtifactId, (await StatusAsync(sql, seed))!.ArtifactId);
+        Assert.Equal(report.ArtifactId, (await new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct))!.ArtifactId);
+    }
+
+    [SqlServerFact]
     public async Task Expired_active_read_reports_expiry_without_sweep_then_observes_control_plane_needs_attention()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql);

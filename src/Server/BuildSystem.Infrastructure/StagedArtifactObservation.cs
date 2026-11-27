@@ -20,7 +20,9 @@ internal static class StagedArtifactObservation
         if (lease is null || artifact.JobId != job.Id || artifact.State != "ContentVerified" ||
             artifact.AgentId != lease.AgentId || artifact.FencingToken != lease.FencingToken ||
             artifact.ReservationId != reservation.Id || artifact.ArchiveVersionId != request.ArchiveVersionId ||
-            artifact.SizeBytes <= 0 || artifact.SizeBytes > reservation.StagingBytes) throw Inconsistent();
+            artifact.FencingToken <= 0 || artifact.SizeBytes <= 0 || artifact.SizeBytes > reservation.StagingBytes ||
+            artifact.Format is not ("dt" or "bak") || artifact.Sha256 is not { Length: 64 } ||
+            !artifact.Sha256.All(Uri.IsHexDigit)) throw Inconsistent();
         var version = await db.DiskArchiveVersions.AsNoTracking().SingleOrDefaultAsync(v => v.Id == artifact.ArchiveVersionId, ct);
         if (version is null || version.SizeBytes != artifact.SizeBytes || version.Format != artifact.Format ||
             !string.Equals(version.Sha256, artifact.Sha256, StringComparison.OrdinalIgnoreCase)) throw Inconsistent();
