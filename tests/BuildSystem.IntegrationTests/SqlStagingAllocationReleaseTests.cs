@@ -483,6 +483,40 @@ public sealed class SqlStagingAllocationReleaseTests
     }
 
     [SqlServerFact]
+    public async Task Staging_quota_requires_one_matching_release_audit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        var receipt = await ReleaseAsync(sql, seed);
+        await using var db = sql.NewContext();
+        var audit = db.AuditEvents.Where(a => a.TargetId == receipt.ReleaseId);
+        var original = await audit.AsNoTracking().SingleAsync(Ct);
+        var auditCount = await db.AuditEvents.CountAsync(Ct);
+        Assert.Equal(1, await db.EnvironmentPools.Where(p => p.Id == seed.Pool)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 10L), Ct));
+
+        Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.Action, "stagingallocationreleased "), Ct));
+        await RejectOrderAsync(sql, seed, "noncanonical-release-audit");
+        Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.Action, original.Action)
+            .SetProperty(a => a.ActorId, seed.Owner.UserId), Ct));
+        await RejectOrderAsync(sql, seed, "wrong-release-audit-actor");
+        Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.ActorId, seed.Admin.UserId), Ct));
+
+        var duplicate = new AuditEvent { Id = Guid.NewGuid(), TargetId = original.TargetId, ActorId = original.ActorId,
+            CreatedAt = original.CreatedAt, Action = "stagingallocationreleased" };
+        db.AuditEvents.Add(duplicate);
+        await db.SaveChangesAsync(Ct);
+        await RejectOrderAsync(sql, seed, "duplicate-release-audit");
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        Assert.Equal(auditCount + 1, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(receipt.ReleaseId, await db.StagingAllocationReleases.Select(r => r.ReleaseId).SingleAsync(Ct));
+
+        Assert.Equal(1, await audit.Where(a => a.Id == duplicate.Id).ExecuteDeleteAsync(Ct));
+        var accepted = await OrderAsync(sql, seed, "matching-release-audit");
+        Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
+    }
+
+    [SqlServerFact]
     public async Task Stage_release_does_not_free_owner_environment_storage_or_pool_database_capacity()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync(); var seed = await PrepareAsync(sql); await ReleaseAsync(sql, seed);

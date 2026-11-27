@@ -142,6 +142,12 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes &&
+                    db.AuditEvents.Count(audit => audit.TargetId == release.ReleaseId &&
+                        EF.Functions.Collate(audit.Action, "Latin1_General_100_CI_AS") == "StagingAllocationReleased") == 1 &&
+                    db.AuditEvents.Any(audit => audit.TargetId == release.ReleaseId && audit.ActorId == release.ActorId &&
+                        audit.CreatedAt == release.ReleasedAt &&
+                        EF.Functions.Collate(audit.Action, "Latin1_General_100_BIN2") == "StagingAllocationReleased" &&
+                        EF.Functions.DataLength(audit.Action) == 50) &&
                     !db.StagingAllocationReleases.Any(other => other.AuthorizationId == release.AuthorizationId &&
                         other.ReleaseId != release.ReleaseId) &&
                     !db.StageRetirementIntents.Any(other => other.RetirementId != intent.RetirementId &&
