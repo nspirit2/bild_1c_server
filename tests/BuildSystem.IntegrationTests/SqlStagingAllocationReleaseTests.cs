@@ -507,11 +507,18 @@ public sealed class SqlStagingAllocationReleaseTests
         db.AuditEvents.Add(duplicate);
         await db.SaveChangesAsync(Ct);
         await RejectOrderAsync(sql, seed, "duplicate-release-audit");
+        var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
+        var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+        Assert.Equal((409, "StagingReleaseMismatch"), (replayError.StatusCode, replayError.Code));
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(auditCount + 1, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(receipt.ReleaseId, await db.StagingAllocationReleases.Select(r => r.ReleaseId).SingleAsync(Ct));
 
         Assert.Equal(1, await audit.Where(a => a.Id == duplicate.Id).ExecuteDeleteAsync(Ct));
+        Assert.Equal(receipt, await ReleaseAsync(sql, seed));
+        Assert.Equal("StagingReleased", (await new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct))!.CleanupState);
         var accepted = await OrderAsync(sql, seed, "matching-release-audit");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
     }

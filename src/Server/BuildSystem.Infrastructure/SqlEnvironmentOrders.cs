@@ -99,7 +99,7 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
             if (!decision.Allowed) throw Reject(409, "QuotaExceeded");
             // The separate cleanup ledger still releases staging only. A bare Released state never does.
             var coherentStagingReleases =
-                from release in db.StagingAllocationReleases
+                from release in StagingReleaseAudit.Confirmed(db)
                 join reservation in db.EnvironmentReservations on release.ReservationId equals reservation.Id
                 join result in db.StageCleanupResults on release.ResultId equals result.ResultId
                 join auth in db.StageCleanupAuthorizations on release.AuthorizationId equals auth.AuthorizationId
@@ -142,12 +142,6 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
                     release.PoolId == reservation.PoolId && release.RootId == archive.RootId &&
                     release.ReleasedBytes > 0 && release.ReleasedBytes == reservation.StagingBytes &&
                     release.ReleasedBytes == artifact.SizeBytes &&
-                    db.AuditEvents.Count(audit => audit.TargetId == release.ReleaseId &&
-                        EF.Functions.Collate(audit.Action, "Latin1_General_100_CI_AS") == "StagingAllocationReleased") == 1 &&
-                    db.AuditEvents.Any(audit => audit.TargetId == release.ReleaseId && audit.ActorId == release.ActorId &&
-                        audit.CreatedAt == release.ReleasedAt &&
-                        EF.Functions.Collate(audit.Action, "Latin1_General_100_BIN2") == "StagingAllocationReleased" &&
-                        EF.Functions.DataLength(audit.Action) == 50) &&
                     !db.StagingAllocationReleases.Any(other => other.AuthorizationId == release.AuthorizationId &&
                         other.ReleaseId != release.ReleaseId) &&
                     !db.StageRetirementIntents.Any(other => other.RetirementId != intent.RetirementId &&

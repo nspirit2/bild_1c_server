@@ -102,6 +102,8 @@ public sealed class SqlCleanupStatus(BuildSystemDbContext db) : ICleanupStatus
             if (release is not null && (result is null || auth is null || artifact is null || release.ResultId != result.ResultId || release.AuthorizationId != auth.AuthorizationId ||
                 release.ReservationId != reservation.Id || release.PoolId != reservation.PoolId || release.RootId != archive?.RootId || release.ReleasedBytes != reservation.StagingBytes ||
                 release.ReleasedBytes != artifact.SizeBytes || release.ReleasedBytes <= 0)) throw Inconsistent();
+            if (release is not null && !await StagingReleaseAudit.Confirmed(db).AnyAsync(r => r.ReleaseId == release.ReleaseId, ct))
+                throw Inconsistent();
             var restoreIntent = await RestoreIntentStatus.ReadAsync(db, env, request, job, reservation,
                 lease, artifact, "CleanupStatusInconsistent", ct);
             var state = release is not null ? "StagingReleased" : result is not null ? "DeletedReported" : auth is not null ? "Authorized" : intent is not null ? "IntentRequested" : "None";
