@@ -59,6 +59,9 @@ public sealed class SqlStageCleanupResults(BuildSystemDbContext db, StageCleanup
                 db.TestEnvironments.Any(e => e.Id == plan.EnvironmentId && e.RequestId == x.RequestId) ||
                 db.EnvironmentJobs.Any(j => j.Id == plan.JobId && j.RequestId == x.RequestId), ct))
                 throw Mismatch(); // Terminal conflict under the existing cleanup-result wire contract.
+            if (await db.StageRetirementIntents.AsNoTracking().AnyAsync(other => other.RetirementId != plan.RetirementId &&
+                (other.EnvironmentId == plan.EnvironmentId || other.JobId == plan.JobId ||
+                 other.ReservationId == plan.ReservationId || other.ArtifactId == plan.ArtifactId), ct)) throw Mismatch();
             var matches = await db.StageCleanupResults.Where(x => x.ResultId == input.ResultId || x.AuthorizationId == input.AuthorizationId || x.ArtifactId == input.ArtifactId).Take(2).ToListAsync(ct);
             if (matches.Count > 1) throw Mismatch();
             var prior = matches.SingleOrDefault();
