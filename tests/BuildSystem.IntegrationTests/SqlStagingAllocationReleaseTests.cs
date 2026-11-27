@@ -522,7 +522,7 @@ public sealed class SqlStagingAllocationReleaseTests
     }
 
     [SqlServerFact]
-    public async Task Staging_quota_requires_one_matching_release_audit()
+    public async Task Quota_status_and_replay_require_one_matching_release_audit()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
         var seed = await PrepareAsync(sql);
@@ -535,22 +535,23 @@ public sealed class SqlStagingAllocationReleaseTests
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 10L), Ct));
 
         Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.Action, "stagingallocationreleased "), Ct));
-        await RejectOrderAsync(sql, seed, "noncanonical-release-audit");
+        await AssertRejectedAsync("noncanonical-release-audit");
         Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.Action, original.Action)
             .SetProperty(a => a.ActorId, seed.Owner.UserId), Ct));
-        await RejectOrderAsync(sql, seed, "wrong-release-audit-actor");
-        Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.ActorId, seed.Admin.UserId), Ct));
+        await AssertRejectedAsync("wrong-release-audit-actor");
+        Assert.Equal(1, await audit.ExecuteUpdateAsync(s => s.SetProperty(a => a.ActorId, original.ActorId)
+            .SetProperty(a => a.CreatedAt, original.CreatedAt.AddTicks(1)), Ct));
+        await AssertRejectedAsync("wrong-release-audit-time");
+        Assert.Equal(1, await audit.ExecuteDeleteAsync(Ct));
+        await AssertRejectedAsync("missing-release-audit");
+        db.AuditEvents.Add(original);
+        await db.SaveChangesAsync(Ct);
 
         var duplicate = new AuditEvent { Id = Guid.NewGuid(), TargetId = original.TargetId, ActorId = original.ActorId,
             CreatedAt = original.CreatedAt, Action = "stagingallocationreleased" };
         db.AuditEvents.Add(duplicate);
         await db.SaveChangesAsync(Ct);
-        await RejectOrderAsync(sql, seed, "duplicate-release-audit");
-        var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
-            new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
-        Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
-        var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
-        Assert.Equal((409, "StagingReleaseMismatch"), (replayError.StatusCode, replayError.Code));
+        await AssertRejectedAsync("duplicate-release-audit");
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(auditCount + 1, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(receipt.ReleaseId, await db.StagingAllocationReleases.Select(r => r.ReleaseId).SingleAsync(Ct));
@@ -560,6 +561,19 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal("StagingReleased", (await new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct))!.CleanupState);
         var accepted = await OrderAsync(sql, seed, "matching-release-audit");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
+
+        async Task AssertRejectedAsync(string key)
+        {
+            var auditRows = await db.AuditEvents.CountAsync(Ct);
+            await RejectOrderAsync(sql, seed, key);
+            var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+                new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+            Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
+            var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+            Assert.Equal((409, "StagingReleaseMismatch"), (replayError.StatusCode, replayError.Code));
+            Assert.Equal(auditRows, await db.AuditEvents.CountAsync(Ct));
+            Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+        }
     }
 
     [SqlServerFact]
