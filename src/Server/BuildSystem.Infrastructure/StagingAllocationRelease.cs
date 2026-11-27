@@ -97,7 +97,9 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
                 ReservationId = plan.ReservationId, RootId = rootId.Value, PoolId = poolId.Value, ReleasedBytes = plan.SizeBytes, ReleasedAt = now, ActorId = actor.UserId };
             db.StagingAllocationReleases.Add(row);
             db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = actor.UserId, Action = StagingReleaseAudit.Action, TargetId = row.ReleaseId, CreatedAt = now });
-            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return Receipt(row);
+            await db.SaveChangesAsync(ct);
+            if (!await StagingReleaseAudit.Confirmed(db).AnyAsync(r => r.ReleaseId == row.ReleaseId, ct)) throw Mismatch();
+            await tx.CommitAsync(ct); return Receipt(row);
         });
     }
     private static StagingAllocationReleaseReceipt Receipt(StagingAllocationReleaseRecord row) => new(row.ReleaseId, row.ResultId, row.ReservationId, row.ReleasedBytes, row.ReleasedAt);

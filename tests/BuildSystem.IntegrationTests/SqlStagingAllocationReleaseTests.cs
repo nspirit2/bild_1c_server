@@ -5,6 +5,7 @@ using BuildSystem.Application;
 using BuildSystem.Contracts;
 using BuildSystem.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Xunit;
 
 namespace BuildSystem.IntegrationTests;
@@ -480,6 +481,44 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
         Assert.NotEqual(seed.Order.EnvironmentId, accepted.EnvironmentId);
+    }
+
+    [SqlServerFact]
+    public async Task First_release_rolls_back_if_audit_proof_fails_before_commit()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await using var verify = sql.NewContext();
+        var auditCount = await verify.AuditEvents.CountAsync(Ct);
+        var interceptor = new DistortReleaseAudit();
+        await using (var db = new BuildSystemDbContext(new DbContextOptionsBuilder<BuildSystemDbContext>()
+            .UseSqlServer(sql.ConnectionString).AddInterceptors(interceptor).Options))
+        {
+            var error = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+                new SqlStagingAllocationRelease(db, new StagingAllocationReleaseOptions { Enabled = true })
+                    .ReleaseAsync(seed.Admin, seed.ResultId, Expected(seed), Ct));
+            Assert.Equal((409, "StagingReleaseMismatch"), (error.StatusCode, error.Code));
+        }
+        Assert.Equal(1, interceptor.ChangedRows);
+        Assert.False(await verify.StagingAllocationReleases.AnyAsync(Ct));
+        Assert.Equal(auditCount, await verify.AuditEvents.CountAsync(Ct));
+        Assert.Equal(10L, (await ReleaseAsync(sql, seed)).ReleasedBytes);
+    }
+
+    private sealed class DistortReleaseAudit : SaveChangesInterceptor
+    {
+        public int ChangedRows { get; private set; }
+
+        public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            var db = (BuildSystemDbContext)eventData.Context!;
+            var release = db.ChangeTracker.Entries<StagingAllocationReleaseRecord>().Single().Entity;
+            // Inject a noncanonical audit action within the release transaction, on disposable SQL only.
+            ChangedRows = await db.AuditEvents.Where(a => a.TargetId == release.ReleaseId && a.Action == "StagingAllocationReleased")
+                .ExecuteUpdateAsync(set => set.SetProperty(a => a.Action, "stagingallocationreleased"), cancellationToken);
+            return result;
+        }
     }
 
     [SqlServerFact]
