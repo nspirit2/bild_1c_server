@@ -125,6 +125,7 @@ public sealed class SqlEnvironmentOrders(BuildSystemDbContext db) : IEnvironment
             // on this root may be outside the owner/pool snapshot and already have a cleanup release.
             var heldOnRoot = rootStaging.Where(x => !x.HasRelease).ToList();
             if (rootStaging.Any(x => x.HasCancellationReceipt) || heldOnRoot.Any(x => x.StagingBytes < 0 || IsReleased(x.State)) ||
+                poolStaging.Any(bytes => bytes < 0) ||
                 poolStaging.Sum(x => (decimal)x) + source.Version.SizeBytes > pool.MaxStagingBytes ||
                 heldOnRoot.Sum(x => (decimal)x.StagingBytes) + source.Version.SizeBytes > source.Root.MaxStagingBytes)
                 throw Reject(409, "QuotaExceeded");

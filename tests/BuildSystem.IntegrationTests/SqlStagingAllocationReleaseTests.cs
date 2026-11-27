@@ -343,6 +343,41 @@ public sealed class SqlStagingAllocationReleaseTests
     }
 
     [SqlServerFact]
+    public async Task Negative_staging_reservation_on_another_root_cannot_offset_shared_pool_usage()
+    {
+        await using var sql = await SqlServerTestDatabase.CreateAsync();
+        var seed = await PrepareAsync(sql);
+        await using var db = sql.NewContext();
+        var otherRoot = Guid.NewGuid();
+        var otherArchive = Guid.NewGuid();
+        var otherVersion = Guid.NewGuid();
+        db.ArchiveRoots.Add(new ArchiveRoot { Id = otherRoot, AgentScopeId = seed.Credential.AgentId,
+            Enabled = true, IsolationPolicyId = "isolated", MaxArchiveBytes = 10000, MaxStagingBytes = 10000 });
+        db.ArchiveRootProjects.Add(new ArchiveRootProject { RootId = otherRoot, ProjectId = seed.Project });
+        db.DiskArchives.Add(new DiskArchive { Id = otherArchive, RootId = otherRoot, RelativePath = "other-root.dt" });
+        db.DiskArchiveVersions.Add(new DiskArchiveVersion { Id = otherVersion, ArchiveId = otherArchive,
+            Sha256 = Hash, SizeBytes = 10, Format = "dt", State = "Ready", EstimatedDbBytes = 100 });
+        await db.SaveChangesAsync(Ct);
+        var pool = db.EnvironmentPools.Where(p => p.Id == seed.Pool);
+        Assert.Equal(1, await pool.ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 19L), Ct));
+        var onOtherRoot = seed with { Version = otherVersion };
+        await RejectOrderAsync(sql, onOtherRoot, "full-shared-pool");
+
+        // Only disposable SQL: the public order path cannot create a negative staging reservation.
+        var reservation = db.EnvironmentReservations.Where(r => r.Id == seed.Grant.Plan.ReservationId);
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(s => s.SetProperty(r => r.StagingBytes, -10L), Ct));
+        var audits = await db.AuditEvents.CountAsync(Ct);
+        await RejectOrderAsync(sql, onOtherRoot, "negative-shared-pool-reservation");
+        Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
+        Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
+
+        Assert.Equal(1, await reservation.ExecuteUpdateAsync(s => s.SetProperty(r => r.StagingBytes, 10L), Ct));
+        Assert.Equal(1, await pool.ExecuteUpdateAsync(s => s.SetProperty(p => p.MaxStagingBytes, 20L), Ct));
+        var accepted = await OrderAsync(sql, onOtherRoot, "exact-shared-pool-limit");
+        Assert.Equal(seed.Pool, await db.TestEnvironments.Where(e => e.Id == accepted.EnvironmentId).Select(e => e.PoolId).SingleAsync(Ct));
+    }
+
+    [SqlServerFact]
     public async Task Conflicting_cancellation_after_cleanup_release_blocks_admission_on_shared_root()
     {
         await using var sql = await SqlServerTestDatabase.CreateAsync();
