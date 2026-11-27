@@ -120,6 +120,9 @@ public sealed class SqlStageRetirementPlans(BuildSystemDbContext db, StageRetire
             if (await db.RestoreIntents.AsNoTracking().AnyAsync(x => x.ArtifactId == i.artifact.ArtifactId ||
                 x.EnvironmentId == i.e.Id || x.RequestId == i.q.Id || x.StageJobId == i.j.Id || x.ReservationId == i.r.Id, ct))
                 throw new RequestRejectedException(409, "RestoreIntentHold");
+            if (await db.StageRetirementIntents.AsNoTracking().AnyAsync(other => other.RetirementId != intent.RetirementId &&
+                (other.EnvironmentId == i.e.Id || other.JobId == i.j.Id || other.ReservationId == i.r.Id ||
+                 other.ArtifactId == i.artifact.ArtifactId), ct)) throw Mismatch();
             var result = new StageRetirementPlan(intent.RetirementId, i.e.Id, i.j.Id, i.artifact.ArtifactId,
                 i.r.Id, i.v.Id, i.l.FencingToken, i.artifact.Sha256, i.artifact.SizeBytes, i.artifact.Format);
             return result;

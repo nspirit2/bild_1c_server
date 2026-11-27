@@ -305,6 +305,11 @@ public sealed class SqlStagingAllocationReleaseTests
         var secondIntent = db.StageRetirementIntents.Where(i => i.RetirementId == retirement.RetirementId);
         Assert.Equal(1, await secondIntent.ExecuteUpdateAsync(set =>
             set.SetProperty(i => i.ArtifactId, seed.Authorization.Plan.ArtifactId), Ct));
+        var claims = new SqlStageCleanup(db, new StageCleanupOptions { Enabled = true });
+        var claimError = await Assert.ThrowsAsync<RequestRejectedException>(() => claims.ClaimAsync(seed.Credential.Token,
+            new(seed.Authorization.Plan.RetirementId, seed.Authorization.Plan.ArtifactId), Ct));
+        Assert.Equal((409, "RetirementPlanMismatch"), (claimError.StatusCode, claimError.Code));
+        Assert.Equal(2, await db.StageCleanupAuthorizations.CountAsync(Ct));
         var report = new ReportStageCleanup(seed.ResultId, seed.Authorization.AuthorizationId,
             seed.Authorization.Plan.RetirementId, seed.Order.JobId, seed.Authorization.Plan.ArtifactId, seed.Grant.FencingToken);
         var reports = new SqlStageCleanupResults(db, new StageCleanupResultOptions { Enabled = true });
