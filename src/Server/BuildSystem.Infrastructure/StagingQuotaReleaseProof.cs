@@ -25,9 +25,13 @@ internal static class StagingQuotaReleaseProof
             EF.Functions.Collate(artifact.State, "Latin1_General_100_BIN2") == "ContentVerified" && EF.Functions.DataLength(artifact.State) == 30 &&
             artifact.SizeBytes == version.SizeBytes &&
             EF.Functions.Collate(artifact.Format, "Latin1_General_100_BIN2") == EF.Functions.Collate(version.Format, "Latin1_General_100_BIN2") &&
-            EF.Functions.DataLength(artifact.Format) == EF.Functions.DataLength(version.Format) &&
+            (EF.Functions.Collate(artifact.Format, "Latin1_General_100_BIN2") == "dt" && EF.Functions.DataLength(artifact.Format) == 4 ||
+              EF.Functions.Collate(artifact.Format, "Latin1_General_100_BIN2") == "bak" && EF.Functions.DataLength(artifact.Format) == 6) &&
+             EF.Functions.DataLength(artifact.Format) == EF.Functions.DataLength(version.Format) &&
             EF.Functions.Collate(artifact.Sha256, "Latin1_General_100_CI_AS") == EF.Functions.Collate(version.Sha256, "Latin1_General_100_CI_AS") &&
-            EF.Functions.DataLength(artifact.Sha256) == EF.Functions.DataLength(version.Sha256) &&
+            EF.Functions.DataLength(artifact.Sha256) == 128 && EF.Functions.DataLength(version.Sha256) == 128 &&
+             !EF.Functions.Like(EF.Functions.Collate(artifact.Sha256, "Latin1_General_100_BIN2"), "%[^0-9a-fA-F]%") &&
+             !EF.Functions.Like(EF.Functions.Collate(version.Sha256, "Latin1_General_100_BIN2"), "%[^0-9a-fA-F]%") &&
             result.AgentId == auth.AgentId && auth.AgentId == intent.AgentId && intent.AgentId == artifact.AgentId &&
             artifact.FencingToken > 0 && result.StageFencingToken == auth.StageFencingToken &&
             auth.StageFencingToken == intent.FencingToken && intent.FencingToken == artifact.FencingToken &&

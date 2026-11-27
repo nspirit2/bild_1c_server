@@ -517,7 +517,26 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.State, "ContentVerified")
             .SetProperty(a => a.Sha256, new string('B', 64)), Ct));
         await RejectOrderAsync(sql, seed, "inconsistent-release-artifact-hash");
-        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Sha256, Hash.ToLowerInvariant()), Ct));
+        var version = db.DiskArchiveVersions.Where(v => v.Id == seed.Version);
+        var archiveId = await version.Select(v => v.ArchiveId).SingleAsync(Ct);
+        var healthyVersion = Guid.NewGuid();
+        db.DiskArchiveVersions.Add(new DiskArchiveVersion { Id = healthyVersion, ArchiveId = archiveId,
+            Sha256 = new string('C', 64), SizeBytes = 10, Format = "dt", State = "Ready", EstimatedDbBytes = 100 });
+        await db.SaveChangesAsync(Ct);
+        var healthySource = seed with { Version = healthyVersion };
+        foreach (var (key, invalidHash) in new[] { ("short", "AA"), ("non-hex", new string('G', 64)) })
+        {
+            Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Sha256, invalidHash), Ct));
+            Assert.Equal(1, await version.ExecuteUpdateAsync(s => s.SetProperty(v => v.Sha256, invalidHash), Ct));
+            await RejectOrderAsync(sql, healthySource, "matching-invalid-release-hash-" + key);
+        }
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Sha256, Hash.ToLowerInvariant())
+            .SetProperty(a => a.Format, "dt "), Ct));
+        Assert.Equal(1, await version.ExecuteUpdateAsync(s => s.SetProperty(v => v.Sha256, Hash)
+            .SetProperty(v => v.Format, "dt "), Ct));
+        await RejectOrderAsync(sql, healthySource, "matching-padded-release-format");
+        Assert.Equal(1, await artifact.ExecuteUpdateAsync(s => s.SetProperty(a => a.Format, "dt"), Ct));
+        Assert.Equal(1, await version.ExecuteUpdateAsync(s => s.SetProperty(v => v.Format, "dt"), Ct));
         Assert.Equal(1, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits, await db.AuditEvents.CountAsync(Ct));
         var accepted = await OrderAsync(sql, seed, "coherent-release-pool");
