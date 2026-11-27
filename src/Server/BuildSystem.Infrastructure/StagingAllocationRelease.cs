@@ -89,7 +89,7 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
             {
                 if (prior.ResultId != resultId || prior.AuthorizationId != auth.AuthorizationId || prior.ReservationId != plan.ReservationId ||
                     prior.RootId != rootId.Value || prior.PoolId != poolId.Value || prior.ReleasedBytes != plan.SizeBytes) throw Mismatch();
-                if (!await StagingReleaseAudit.Confirmed(db).AnyAsync(r => r.ReleaseId == prior.ReleaseId, ct)) throw Mismatch();
+                if (!await StagingQuotaReleaseProof.Confirmed(db).AnyAsync(r => r.ReleaseId == prior.ReleaseId, ct)) throw Mismatch();
                 await tx.CommitAsync(ct); return Receipt(prior);
             }
             var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') AS [Value]").SingleAsync(ct);
@@ -98,7 +98,7 @@ public sealed class SqlStagingAllocationRelease(BuildSystemDbContext db, Staging
             db.StagingAllocationReleases.Add(row);
             db.AuditEvents.Add(new AuditEvent { Id = Guid.NewGuid(), ActorId = actor.UserId, Action = StagingReleaseAudit.Action, TargetId = row.ReleaseId, CreatedAt = now });
             await db.SaveChangesAsync(ct);
-            if (!await StagingReleaseAudit.Confirmed(db).AnyAsync(r => r.ReleaseId == row.ReleaseId, ct)) throw Mismatch();
+            if (!await StagingQuotaReleaseProof.Confirmed(db).AnyAsync(r => r.ReleaseId == row.ReleaseId, ct)) throw Mismatch();
             await tx.CommitAsync(ct); return Receipt(row);
         });
     }

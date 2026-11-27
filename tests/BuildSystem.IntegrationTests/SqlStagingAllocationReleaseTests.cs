@@ -306,6 +306,12 @@ public sealed class SqlStagingAllocationReleaseTests
         Assert.Equal(1, await secondIntent.ExecuteUpdateAsync(set =>
             set.SetProperty(i => i.ArtifactId, seed.Authorization.Plan.ArtifactId), Ct));
         await RejectOrderAsync(sql, seed, "shared-retirement-artifact");
+        var statusError = await Assert.ThrowsAsync<RequestRejectedException>(() =>
+            new SqlCleanupStatus(db).GetAsync(seed.Owner, seed.Order.EnvironmentId, Ct));
+        Assert.Equal((409, "CleanupStatusInconsistent"), (statusError.StatusCode, statusError.Code));
+        var replayError = await Assert.ThrowsAsync<RequestRejectedException>(() => ReleaseAsync(sql, seed));
+        Assert.Equal((409, "StagingReleaseMismatch"), (replayError.StatusCode, replayError.Code));
+        Assert.Equal(2, await db.StagingAllocationReleases.CountAsync(Ct));
         Assert.Equal(2, await db.EnvironmentReservations.CountAsync(Ct));
         Assert.Equal(audits + 1, await db.AuditEvents.CountAsync(Ct));
         Assert.Equal(1, await secondIntent.ExecuteUpdateAsync(set => set.SetProperty(i => i.ArtifactId, artifact), Ct));
